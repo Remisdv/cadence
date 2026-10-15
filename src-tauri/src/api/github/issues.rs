@@ -49,6 +49,9 @@ pub struct RawIssue {
     pub updated_at: String,
     #[serde(default)]
     pub created_at: Option<String>,
+    /// Fermeture (burndown), absente pour une issue ouverte.
+    #[serde(default)]
+    pub closed_at: Option<String>,
     #[serde(default)]
     pub html_url: Option<String>,
     #[serde(default)]

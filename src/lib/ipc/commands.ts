@@ -35,6 +35,7 @@ import type {
   Version,
   VersionCloseInput,
   VersionDetail,
+  VersionReport,
   WebFlowStart,
 } from "@/lib/types";
 
@@ -64,6 +65,7 @@ export interface Commands {
   // Versions
   versions_list: { args: NoArgs; result: Version[] };
   version_current: { args: NoArgs; result: VersionDetail };
+  version_detail: { args: { title: string | null }; result: VersionReport };
   version_close: { args: { input: VersionCloseInput }; result: CloseReport };
   // Issues
   issues_list: { args: { filter: IssueFilter }; result: IssueRow[] };

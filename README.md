@@ -209,5 +209,16 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   `curl` interdits à l'agent, aucun assistant d'identifiants dans son environnement, `pushurl`
   invalide sur la copie, et Cadence refuse de pousser sur la branche par défaut. Pause (après
   l'étape en cours), arrêt, et intervention depuis le terminal (reprise à l'étape suivante).
-- **À venir** : l'agent CEO, puis les autres écrans (Sprint, détail de version, console des
-  agents…), aujourd'hui des placeholders qui pointent vers leur maquette.
+- **Sprint en cours** (écran d'accueil) et **détail d'une version** (barre latérale › Versions, ou
+  une carte de la roadmap) : `version_detail(title?)` assemble depuis le cache la version, ses
+  issues reliées à leur PR (ouverte d'abord ; CI en échec signalée), ses PR (milestone ou issue
+  fermée), ses voisines et son tag si elle est livrée ; `version_current` en renvoie le rythme.
+  Burndown jour par jour du début du sprint (échéance du précédent) à aujourd'hui, d'après la
+  date de fermeture des issues (portée actuelle du milestone) ; vélocité = issues fermées dans le
+  sprint par jour écoulé ; retard = écart en jours avec la droite idéale. Sprint : KPI, tableau
+  par état (une carte ouvre l'issue), activité des agents, points à traiter (questions du CTO,
+  revues de plus d'un jour). Version : portée, progression par état, aperçu des notes de version
+  (issues fermées par type), conditions de clôture, PR de la version ; clôture de la version en
+  cours. Les PR comptées sont celles du cache (ouvertes et 30 dernières fusionnées ou fermées).
+- **À venir** : l'agent CEO, puis les autres écrans (console des agents…), aujourd'hui des
+  placeholders qui pointent vers leur maquette.

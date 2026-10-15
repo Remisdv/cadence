@@ -152,6 +152,17 @@ export const useVersions = () =>
 export const useCurrentVersion = () =>
   useQuery({ queryKey: keys.versionCurrent(), queryFn: () => call("version_current") });
 
+/**
+ * Détail d'une version (sans titre : la version en cours) : rythme, issues reliées à leurs
+ * PR, PR de la version. `live` : relit toutes les 60 s (cache côté Rust, ETag).
+ */
+export const useVersionDetail = (title: string | null = null, options: { live?: boolean } = {}) =>
+  useQuery({
+    queryKey: keys.versionDetail(title),
+    queryFn: () => call("version_detail", { title }),
+    refetchInterval: options.live ? 60_000 : false,
+  });
+
 export function useCloseVersion() {
   const qc = useQueryClient();
   return useMutation({

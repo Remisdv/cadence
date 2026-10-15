@@ -214,6 +214,16 @@ pub fn add_days(date: &str, days: i64) -> Option<String> {
     Some(format!("{y:04}-{m:02}-{d:02}"))
 }
 
+/// Jours civils de `from` à `to` (négatif si `to` est avant). `None` si une date est illisible.
+pub fn days_between(from: &str, to: &str) -> Option<i64> {
+    let day = |date: &str| -> Option<i64> {
+        let mut parts = date_part(date).split('-').map(|p| p.parse::<i64>().ok());
+        let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
+        Some(days_from_civil(y, m, d))
+    };
+    Some(day(to)? - day(from)?)
+}
+
 /// Instant présent (UTC), `YYYY-MM-DDTHH:MM:SSZ`.
 pub fn now_iso() -> String {
     let secs = std::time::SystemTime::now()
@@ -343,6 +353,9 @@ mod tests {
         assert_eq!(add_days("2028-02-20T07:00:00Z", 14).as_deref(), Some("2028-03-05"));
         assert_eq!(add_days("2026-12-25", 14).as_deref(), Some("2027-01-08"));
         assert_eq!(add_days("nope", 1), None);
+        assert_eq!(days_between("2026-09-09T07:00:00Z", "2026-09-23"), Some(14));
+        assert_eq!(days_between("2026-03-01", "2026-02-27"), Some(-2));
+        assert_eq!(days_between("2026-09-09", "nope"), None);
         assert_eq!(today().len(), 10);
         assert!(now_iso().starts_with(&today()) && now_iso().ends_with('Z'));
     }

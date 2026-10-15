@@ -35,6 +35,7 @@ export type { VersionState } from "./bindings/VersionState";
 export type { Version } from "./bindings/Version";
 export type { BurndownPoint } from "./bindings/BurndownPoint";
 export type { VersionDetail } from "./bindings/VersionDetail";
+export type { VersionReport } from "./bindings/VersionReport";
 export type { CarryOver } from "./bindings/CarryOver";
 export type { VersionCloseInput } from "./bindings/VersionCloseInput";
 export type { CloseReport } from "./bindings/CloseReport";

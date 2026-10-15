@@ -44,7 +44,12 @@ export const registry: Registry = {
   },
 
   // 2 · Travail quotidien — sprint et issues
-  sprint: app("Sprint en cours", "Main.dc.html"),
+  sprint: {
+    title: "Sprint en cours",
+    mockup: "Main.dc.html",
+    layout: "app",
+    component: lazy(() => import("./sprint/SprintView")),
+  },
   issues: {
     title: "Issues",
     mockup: "Issues.dc.html",
@@ -79,7 +84,12 @@ export const registry: Registry = {
   },
 
   // 4 · Versions et pilotage des agents
-  version: app("Détail d'une version", "Version-Detail.dc.html"),
+  version: {
+    title: "Détail d'une version",
+    mockup: "Version-Detail.dc.html",
+    layout: "app",
+    component: lazy(() => import("./versions/VersionView")),
+  },
   agents: app("Console des agents", "Agents-Hub.dc.html"),
   agent: {
     title: "Agent",

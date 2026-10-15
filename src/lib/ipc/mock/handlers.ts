@@ -17,6 +17,7 @@ import { mockBus } from "./bus";
 import * as data from "./fixtures";
 import { ctoMock } from "./cto";
 import { devMock } from "./dev";
+import { versionReport } from "./versions";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -218,6 +219,11 @@ const handlers: Handlers = {
 
   versions_list: () => data.versions,
   version_current: () => data.currentVersion,
+  version_detail: ({ title }) => {
+    const report = versionReport(title ?? state.project?.currentVersion ?? null);
+    if (!report) fail("version_detail", `La version ${title ?? ""} n'est pas un milestone du dépôt.`);
+    return report;
+  },
   version_close: ({ input }) => {
     const closed = data.project.currentVersion ?? "0.1.2";
     if (data.versions.some((v) => v.title === input.next && v.state === "closed"))

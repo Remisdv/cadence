@@ -3,10 +3,11 @@ use tauri::State;
 use serde_json::json;
 
 use crate::{
-    api::github::{repos, writes},
+    api::github::{issues, pulls, repos, writes},
     domain::{
         sync::SyncResource,
         version::{self, CarryOver, CloseReport, CloseRules, Version, VersionCloseInput, VersionDetail},
+        version_report::{self, ScopeIssue, VersionReport},
     },
     error::{AppError, AppResult},
     state::AppState,
@@ -35,8 +36,61 @@ pub async fn versions_list(state: State<'_, AppState>) -> AppResult<Vec<Version>
 /// Version en cours : portée, burndown, rythme.
 #[tauri::command]
 pub async fn version_current(state: State<'_, AppState>) -> AppResult<VersionDetail> {
-    state.require_project().await?;
-    Err(AppError::NotImplemented("version_current"))
+    Ok(report(&state, None).await?.detail)
+}
+
+/// Détail d'une version (`title`), ou de la version en cours sans titre : rythme et
+/// burndown, issues reliées à leurs PR, PR de la version, voisines, tag si elle est livrée.
+/// Lu dans le cache (milestones, issues et PR resynchronisés au plus une fois par minute).
+#[tauri::command]
+pub async fn version_detail(state: State<'_, AppState>, title: Option<String>) -> AppResult<VersionReport> {
+    report(&state, title).await
+}
+
+async fn report(state: &AppState, title: Option<String>) -> AppResult<VersionReport> {
+    let project = state.require_project().await?;
+    let cache = state.repo_cache().await?;
+    for resource in [SyncResource::Milestones, SyncResource::Issues, SyncResource::PullRequests] {
+        sync::refresh(state, &cache, resource).await?;
+    }
+    let (versions, _) = repos::to_versions(&cache.milestones().await?);
+    let current = project.current_version.clone().or_else(|| repos::current_version(&versions));
+    let wanted = match title {
+        Some(t) => version::parse(&t).map(|v| v.to_string()).unwrap_or(t),
+        None => current.clone().ok_or_else(|| AppError::Validation("Aucune version ouverte dans ce dépôt.".into()))?,
+    };
+    let target = versions
+        .iter()
+        .find(|v| v.title == wanted)
+        .ok_or_else(|| AppError::Validation(format!("La version {wanted} n'est pas un milestone du dépôt.")))?;
+
+    let me = state.github.read().await.as_ref().and_then(|g| g.login.clone());
+    let scope = cache
+        .issues()
+        .await?
+        .iter()
+        .map(|raw| ScopeIssue {
+            row: issues::to_row(raw, me.as_deref()),
+            // Une issue fermée sans date (cache ancien) l'a été au plus tard à sa dernière modification.
+            closed_at: (raw.state == "closed").then(|| raw.closed_at.clone().unwrap_or_else(|| raw.updated_at.clone())),
+        })
+        .filter(|i| i.row.version.as_deref() == Some(wanted.as_str()))
+        .collect();
+    let prs: Vec<_> = cache.pulls().await?.iter().map(|raw| pulls::to_row(raw, me.as_deref())).collect();
+    // Le préfixe de tag vient de `.cadence/config.toml` ; illisible (hors ligne), celui par défaut.
+    let tag_prefix = match crate::commands::settings::load(state).await {
+        Ok(loaded) => loaded.config.project.tag_prefix,
+        Err(_) => CloseRules::default().tag_prefix,
+    };
+    Ok(version_report::build(
+        target,
+        &versions,
+        scope,
+        &prs,
+        current.as_deref() == Some(wanted.as_str()),
+        &tag_prefix,
+        &version::today(),
+    ))
 }
 
 /// Clôture la version en cours et passe à `input.next`. Non réversible, jamais mise en
