@@ -14,6 +14,7 @@ export const keys = {
   versions: ["milestones"] as const,
   versionList: () => ["milestones", "list"] as const,
   versionCurrent: () => ["milestones", "current"] as const,
+  versionDetail: (title: string | null) => ["milestones", "detail", title ?? ""] as const,
 
   issues: ["issues"] as const,
   issueList: (filter: IssueFilter) => ["issues", "list", filter] as const,
@@ -44,7 +45,7 @@ export const keys = {
 export const keysForResource: Record<SyncResource, readonly (readonly string[])[]> = {
   milestones: [keys.versions],
   issues: [keys.issues, keys.versions],
-  "pull-requests": [keys.prs, keys.issues],
+  "pull-requests": [keys.prs, keys.issues, keys.versions],
   reviews: [keys.reviews, keys.prs],
   labels: [keys.issues],
   releases: [keys.versions],

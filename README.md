@@ -231,5 +231,15 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   par défaut et accès aux autres dépôts restent interdits, fusion automatique pas encore
   disponible. La barre latérale suit `agents_overview` (rafraîchi par `agent://state`) : pastille
   repos / attente / en cours par agent, carte « Agent … en cours » pour chaque exécution active.
-- **À venir** : l'agent CEO, puis les autres écrans (Sprint, détail de version…), aujourd'hui des
-  placeholders qui pointent vers leur maquette.
+- **Sprint en cours** (écran d'accueil) et **détail d'une version** (barre latérale › Versions, ou
+  une carte de la roadmap) : `version_detail(title?)` assemble depuis le cache la version, ses
+  issues reliées à leur PR (ouverte d'abord ; CI en échec signalée), ses PR (milestone ou issue
+  fermée), ses voisines et son tag si elle est livrée ; `version_current` en renvoie le rythme.
+  Burndown jour par jour du début du sprint (échéance du précédent) à aujourd'hui, d'après la
+  date de fermeture des issues (portée actuelle du milestone) ; vélocité = issues fermées dans le
+  sprint par jour écoulé ; retard = écart en jours avec la droite idéale. Sprint : KPI, tableau
+  par état (une carte ouvre l'issue), activité des agents, points à traiter (questions du CTO,
+  revues de plus d'un jour). Version : portée, progression par état, aperçu des notes de version
+  (issues fermées par type), conditions de clôture, PR de la version ; clôture de la version en
+  cours. Les PR comptées sont celles du cache (ouvertes et 30 dernières fusionnées ou fermées).
+- **À venir** : l'agent CEO et l'agent déploiement (0.2.x), le mode hors-ligne complet (1.0.0).

@@ -62,6 +62,7 @@ pub fn run() {
             commands::project::project_create,
             commands::versions::versions_list,
             commands::versions::version_current,
+            commands::versions::version_detail,
             commands::versions::version_close,
             commands::issues::issues_list,
             commands::issues::issue_get,

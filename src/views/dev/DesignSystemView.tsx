@@ -39,6 +39,7 @@ import {
   PrStateIcon,
 } from "@/components/domain/Inline";
 import { KanbanColumn } from "@/components/domain/IssueCard";
+import { IssueLine } from "@/components/domain/IssueLine";
 import {
   EmptyValue,
   FooterBar,
@@ -446,6 +447,13 @@ export default function DesignSystemView() {
                 />
               ))}
             </div>
+          </Card>
+          <Card className="overflow-hidden">
+            {issues
+              .filter((i) => [156, 142, 133, 131].includes(i.number))
+              .map((issue) => (
+                <IssueLine key={issue.number} issue={issue} />
+              ))}
           </Card>
         </Section>
 

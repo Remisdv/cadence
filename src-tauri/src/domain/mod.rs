@@ -10,12 +10,14 @@
 pub mod agent;
 pub mod agent_history;
 pub mod auth;
+pub mod burndown;
 pub mod issue;
 pub mod pr;
 pub mod project;
 pub mod settings;
 pub mod sync;
 pub mod version;
+pub mod version_report;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
