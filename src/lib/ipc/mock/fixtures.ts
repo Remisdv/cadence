@@ -4,16 +4,17 @@
  */
 import type {
   AgentEngines,
-  ProjectPreview,
   AgentOverview,
   AuthStatus,
   CliAgentInfo,
   Config,
   GithubAuth,
+  GithubSources,
   IssueDetail,
   IssueRow,
   PrRow,
   ProjectState,
+  RepoOwner,
   Repo,
   ReviewRow,
   UserRef,
@@ -71,14 +72,24 @@ export const cliNotFound: CliAgentInfo = {
   test: null,
 };
 
+/** Moyens de connexion détectés sur la machine (comme sur le poste de dev). */
+export const githubSources: GithubSources = {
+  ghCli: "rlhuillier",
+  credentialManager: true,
+  oauthApp: false,
+  deviceFlow: false,
+};
+
 export const authConnected: AuthStatus = {
   github: githubConnected,
+  githubSources,
   claudeCode: claudeConnected,
   codex: cliNotFound,
 };
 
 export const authDisconnected: AuthStatus = {
   github: githubDisconnected,
+  githubSources,
   claudeCode: claudeDetected,
   codex: cliNotFound,
 };
@@ -525,20 +536,16 @@ export const agentsOverview: AgentOverview[] = [
   },
 ];
 
-/** Prévisualisation d'un dépôt avant ouverture (onboarding 3). */
-export function projectPreview(fullName: string): ProjectPreview {
+/** Comptes sous lesquels créer un dépôt (mock). */
+export const repoOwners: RepoOwner[] = [
+  { login: me.login, kind: "user", avatarUrl: null },
+  { login: "cadence-app", kind: "organization", avatarUrl: null },
+];
+
+/** Projet ouvert pour un dépôt donné (sélecteur de dépôt de la barre latérale). */
+export function projectFor(fullName: string): ProjectState {
   const repo = repos.find((r) => r.fullName === fullName) ?? repos[0]!;
-  if (repo.fullName === "cadence-app/desktop") {
-    return { repo, versions, currentVersion: "0.1.2", ignoredMilestones: [], hasConfig: true };
-  }
-  if (repo.fullName === "cadence-app/actions") {
-    return {
-      repo,
-      versions: [{ ...versions[4]!, milestoneNumber: 1 }],
-      currentVersion: "0.2.0",
-      ignoredMilestones: ["Backlog"],
-      hasConfig: false,
-    };
-  }
-  return { repo, versions: [], currentVersion: null, ignoredMilestones: [], hasConfig: false };
+  const currentVersion =
+    repo.fullName === "cadence-app/desktop" ? "0.1.2" : repo.milestones > 0 ? "0.2.0" : null;
+  return { repo, currentVersion, hasConfig: repo.fullName === "cadence-app/desktop" };
 }

@@ -24,14 +24,16 @@ import type {
   IssueRow,
   PrFilter,
   PrRow,
-  ProjectPreview,
   ProjectState,
   ProposedAction,
   Repo,
+  RepoCreateInput,
+  RepoOwner,
   ReviewRow,
   Version,
   VersionCloseInput,
   VersionDetail,
+  WebFlowStart,
 } from "@/lib/types";
 
 /** Commande sans argument : `keyof` vide, l'argument devient facultatif dans `call()`. */
@@ -40,6 +42,8 @@ type NoArgs = Record<never, never>;
 export interface Commands {
   // Auth
   auth_start_device_flow: { args: NoArgs; result: DeviceFlowStart };
+  auth_start_web_flow: { args: NoArgs; result: WebFlowStart };
+  auth_use_gh_cli: { args: NoArgs; result: GithubAuth };
   auth_status: { args: NoArgs; result: AuthStatus };
   auth_set_token: { args: { token: string }; result: GithubAuth };
   auth_sign_out: { args: NoArgs; result: null };
@@ -52,8 +56,9 @@ export interface Commands {
   // Projet
   project_current: { args: NoArgs; result: ProjectState | null };
   project_list_repos: { args: { query: string }; result: Repo[] };
-  project_preview: { args: { repo: string }; result: ProjectPreview };
   project_open: { args: { repo: string }; result: ProjectState };
+  project_owners: { args: NoArgs; result: RepoOwner[] };
+  project_create: { args: { input: RepoCreateInput }; result: ProjectState };
   // Versions
   versions_list: { args: NoArgs; result: Version[] };
   version_current: { args: NoArgs; result: VersionDetail };

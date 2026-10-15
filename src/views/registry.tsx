@@ -42,16 +42,15 @@ export const registry: Registry = {
     layout: "onboarding",
     component: lazy(() => import("./onboarding/AgentsView")),
   },
-  "onboarding-project": {
-    title: "Choisir un projet et vérifier le mapping",
-    mockup: "Onboarding-Projet.dc.html",
-    layout: "onboarding",
-    component: lazy(() => import("./onboarding/ProjectView")),
-  },
 
   // 2 · Travail quotidien — sprint et issues
   sprint: app("Sprint en cours", "Main.dc.html"),
-  issues: app("Issues", "Issues.dc.html"),
+  issues: {
+    title: "Issues",
+    mockup: "Issues.dc.html",
+    layout: "app",
+    component: lazy(() => import("./issues/IssuesView")),
+  },
   issue: app("Détail d'une issue", "Issue-Detail.dc.html"),
 
   // 3 · Code, revues et planification

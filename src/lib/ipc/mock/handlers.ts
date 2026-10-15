@@ -7,8 +7,8 @@
  * - `?scenario=onboarding` : compte GitHub non connecté ;
  * - `?scenario=no-project` : connecté, aucun projet choisi.
  *
- * Issue du device flow simulé : `&flow=ok` (défaut, autorisé après 6 s), `denied`, `expired`,
- * `config` (client ID absent). Session de test de Claude Code : `&cli=ok` (défaut) ou `fail`.
+ * Issue de la connexion GitHub simulée (navigateur ou code) : `&flow=ok` (défaut, autorisée
+ * après quelques secondes), `denied`, `expired`, `config` (client ID / secret absent). Session de test de Claude Code : `&cli=ok` (défaut) ou `fail`.
  */
 import type { AuthChanged, CliAgentInfo, ProjectState } from "@/lib/types";
 import type { CommandArgs, CommandName, CommandResult } from "../commands";
@@ -77,7 +77,41 @@ const handlers: Handlers = {
       expiresIn: flow === "expired" ? 8 : 900,
     };
   },
-  auth_status: () => ({ github: state.github, claudeCode: state.claudeCode, codex: state.codex }),
+  auth_start_web_flow: () => {
+    if (flow === "config") {
+      fail(
+        "auth_start_web_flow",
+        "Client secret GitHub absent : définir CADENCE_GITHUB_CLIENT_SECRET pour la connexion par navigateur. Le code d'appairage et le jeton personnel restent disponibles.",
+        "config",
+      );
+    }
+    // Sans OAuth App propre (cas par défaut), c'est Git Credential Manager qui pilote le navigateur.
+    const authorizeUrl = data.githubSources.oauthApp
+      ? "https://github.com/login/oauth/authorize?client_id=mock"
+      : null;
+    window.clearTimeout(flowTimer);
+    flowTimer = window.setTimeout(() => {
+      if (flow === "denied") return emitAuth({ status: "error", reason: "denied", message: null });
+      if (flow === "expired")
+        return emitAuth({ status: "error", reason: "expired", message: null });
+      state.github = data.githubConnected;
+      emitAuth({ status: "connected", reason: null, message: null });
+    }, 4000);
+    return { authorizeUrl };
+  },
+  auth_use_gh_cli: async () => {
+    await delay(500);
+    window.clearTimeout(flowTimer);
+    state.github = data.githubConnected;
+    emitAuth({ status: "connected", reason: null, message: null });
+    return state.github;
+  },
+  auth_status: () => ({
+    github: state.github,
+    githubSources: data.githubSources,
+    claudeCode: state.claudeCode,
+    codex: state.codex,
+  }),
   auth_set_token: ({ token }) => {
     if (!token.trim()) fail("auth_set_token", "Le jeton est vide.");
     if (!/^(ghp_|github_pat_|gho_)/.test(token.trim()))
@@ -146,18 +180,37 @@ const handlers: Handlers = {
       (r) => r.fullName.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q),
     );
   },
-  project_preview: async ({ repo }) => {
-    await delay(300);
-    return data.projectPreview(repo);
+  project_owners: () => data.repoOwners,
+  project_create: async ({ input }) => {
+    await delay(700);
+    const name = input.name.trim();
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(name) || name === "." || name === "..") {
+      fail(
+        "project_create",
+        "Nom de dépôt invalide : lettres, chiffres, « - », « _ » et « . » uniquement.",
+      );
+    }
+    const fullName = `${input.owner}/${name}`;
+    if (data.repos.some((r) => r.fullName.toLowerCase() === fullName.toLowerCase())) {
+      fail("project_create", "Un dépôt porte déjà ce nom sur ce compte.");
+    }
+    data.repos.unshift({
+      fullName,
+      owner: input.owner,
+      name,
+      description: input.description?.trim() || null,
+      private: input.private ?? false,
+      defaultBranch: "main",
+      openIssues: 0,
+      milestones: 0,
+      pushedAt: new Date().toISOString(),
+    });
+    state.project = data.projectFor(fullName);
+    return state.project;
   },
   project_open: async ({ repo }) => {
     await delay(400);
-    const preview = data.projectPreview(repo);
-    state.project = {
-      repo: preview.repo,
-      currentVersion: preview.currentVersion,
-      hasConfig: preview.hasConfig,
-    };
+    state.project = data.projectFor(repo);
     return state.project;
   },
 

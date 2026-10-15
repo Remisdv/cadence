@@ -1,11 +1,12 @@
 /**
  * Onboarding 1/3 — Connexion GitHub (maquette Onboarding-Welcome.dc.html).
  *
- * Device flow : Rust demande un code, l'utilisateur le saisit sur github.com, Rust attend le
- * jeton et le range dans le trousseau. L'issue arrive par `auth://changed`.
+ * Méthode principale : navigateur (flux web OAuth). Rust ouvre la page d'autorisation, attend le
+ * retour sur 127.0.0.1 et range le jeton dans le trousseau. Alternatives : code d'appairage
+ * (device flow, sans navigateur sur la machine) et jeton personnel. L'issue arrive par `auth://changed`.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { AuthFailure, DeviceFlowStart, GithubAuth } from "@/lib/types";
+import type { AuthFailure, DeviceFlowStart, GithubAuth, GithubSources } from "@/lib/types";
 import { OnboardingLayout } from "@/components/layout/OnboardingLayout";
 import { Icon, type IconName } from "@/components/icons/Icon";
 import { Avatar, initialsOf } from "@/components/ui/Avatar";
@@ -22,7 +23,13 @@ import { useCountdown } from "@/lib/hooks/useCountdown";
 import { CommandError } from "@/lib/ipc/errors";
 import { subscribe } from "@/lib/ipc/events";
 import { copyText, openExternal } from "@/lib/platform";
-import { useAuthStatus, useSignOut, useStartDeviceFlow } from "@/lib/query/queries";
+import {
+  useAuthStatus,
+  useSignInWithGhCli,
+  useSignOut,
+  useStartDeviceFlow,
+  useStartWebFlow,
+} from "@/lib/query/queries";
 import { useNavigation } from "@/stores/navigation";
 import { PairingCode } from "./PairingCode";
 import { PatDialog } from "./PatDialog";
@@ -59,6 +66,7 @@ export default function GithubView() {
   const connected = github?.status === "connected";
   const navigate = useNavigation((s) => s.navigate);
   const [patOpen, setPatOpen] = useState(false);
+  const [mode, setMode] = useState<"browser" | "code">("browser");
 
   // Précharge l'étape suivante : pas d'écran de chargement au clic sur « Continuer ».
   useEffect(() => {
@@ -69,13 +77,7 @@ export default function GithubView() {
     <OnboardingLayout
       step={0}
       title="Connecter votre compte GitHub"
-      intro={
-        <>
-          Cadence utilise le <em className="text-tx not-italic">device flow</em> OAuth : aucun
-          secret client n'est embarqué dans l'application, et vous validez la connexion depuis votre
-          navigateur.
-        </>
-      }
+      intro="Autorisez Cadence depuis votre navigateur : GitHub vous demande de confirmer, puis vous revenez ici automatiquement. Le jeton est rangé dans le trousseau du système, jamais dans l'application."
     >
       <div className="flex max-w-[860px] gap-[26px]">
         <div className="w-[400px] shrink-0">
@@ -88,19 +90,35 @@ export default function GithubView() {
               github={github}
               onContinue={() => navigate({ id: "onboarding-agents" })}
             />
+          ) : mode === "browser" && auth.data ? (
+            <BrowserSignInCard
+              sources={auth.data.githubSources}
+              onUseCode={() => setMode("code")}
+              onUsePat={() => setPatOpen(true)}
+            />
           ) : (
             <DeviceFlowCard onUsePat={() => setPatOpen(true)} />
           )}
           {!connected && (
             <div className="mt-3.5 text-small leading-[1.6] text-tx3">
-              Vous préférez un jeton personnel ?{" "}
-              <button
-                type="button"
-                className="text-clay hover:text-clay-hover"
-                onClick={() => setPatOpen(true)}
-              >
-                Utiliser un PAT à la place
-              </button>{" "}
+              {mode === "code" ? (
+                <>
+                  <LinkButton onClick={() => setMode("browser")}>
+                    Se connecter plutôt via le navigateur
+                  </LinkButton>
+                  <br />
+                </>
+              ) : auth.data?.githubSources.deviceFlow ? (
+                <>
+                  Pas de navigateur sur cette machine ?{" "}
+                  <LinkButton onClick={() => setMode("code")}>
+                    Utiliser un code d'appairage
+                  </LinkButton>
+                  <br />
+                </>
+              ) : null}
+              Ou{" "}
+              <LinkButton onClick={() => setPatOpen(true)}>utiliser un jeton personnel</LinkButton>{" "}
               — utile pour GitHub Enterprise Server.
             </div>
           )}
@@ -126,7 +144,201 @@ export default function GithubView() {
   );
 }
 
-/* ---------- Device flow ---------- */
+function LinkButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" className="text-clay hover:text-clay-hover" onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+/* ---------- Connexion par le navigateur ---------- */
+
+type BrowserFlow =
+  | { kind: "idle" }
+  | { kind: "opening" }
+  /** `authorizeUrl` nul : Git Credential Manager pilote lui-même le navigateur. */
+  | { kind: "waiting"; authorizeUrl: string | null }
+  | { kind: "failed"; reason: FailReason; message: string | null };
+
+const browserFailureLabel: Record<FailReason, string> = {
+  expired: "Délai dépassé",
+  denied: "Autorisation refusée",
+  config: "Connexion par navigateur indisponible",
+  error: "Connexion impossible",
+};
+
+function BrowserSignInCard({
+  sources,
+  onUseCode,
+  onUsePat,
+}: {
+  sources: GithubSources;
+  onUseCode: () => void;
+  onUsePat: () => void;
+}) {
+  const { mutate: startWebFlow } = useStartWebFlow();
+  const useGh = useSignInWithGhCli();
+  const [flow, setFlow] = useState<BrowserFlow>({ kind: "idle" });
+  const browserAvailable = sources.oauthApp || sources.credentialManager;
+
+  const start = () => {
+    setFlow({ kind: "opening" });
+    startWebFlow(undefined, {
+      onSuccess: ({ authorizeUrl }) => setFlow({ kind: "waiting", authorizeUrl }),
+      onError: (error) =>
+        setFlow({
+          kind: "failed",
+          reason: error instanceof CommandError && error.kind === "config" ? "config" : "error",
+          message: error.message,
+        }),
+    });
+  };
+
+  // Échec côté navigateur (refus, délai dépassé). Le succès passe par `useAuthStatus`.
+  useEffect(
+    () =>
+      subscribe("auth://changed", (event) => {
+        if (event.provider !== "github" || event.status !== "error") return;
+        setFlow({ kind: "failed", reason: event.reason ?? "error", message: event.message });
+      }),
+    [],
+  );
+
+  const failed = flow.kind === "failed" ? flow : null;
+  const failureText: Record<FailReason, ReactNode> = {
+    expired: "Aucune réponse du navigateur dans les 10 minutes. Relancez la connexion.",
+    denied: "L'autorisation a été refusée sur github.com. Vous pouvez recommencer.",
+    config: failed?.message,
+    error: failed?.message ?? "GitHub n'a pas répondu comme prévu.",
+  };
+
+  return (
+    <Card className="px-6 py-[26px]">
+      <div className="flex items-center gap-[9px] text-body-sm text-tx2">
+        <Icon name="github" size={17} />
+        github.com
+      </div>
+
+      {failed ? (
+        <div className="mt-5 flex flex-col gap-4">
+          <Callout tone={failed.reason === "config" ? "warning" : "danger"}>
+            {failureText[failed.reason]}
+          </Callout>
+          {failed.reason === "config" ? (
+            <div className="flex gap-[9px]">
+              {sources.deviceFlow && (
+                <Button variant="primary" size="lg" className="grow" onClick={onUseCode}>
+                  Utiliser un code
+                </Button>
+              )}
+              <Button className="h-[38px] grow" icon="key" onClick={onUsePat}>
+                Jeton personnel
+              </Button>
+            </div>
+          ) : (
+            <Button variant="primary" size="lg" icon="refresh" block onClick={start}>
+              Relancer la connexion
+            </Button>
+          )}
+        </div>
+      ) : (
+        <>
+          {sources.ghCli && (
+            <div className="mt-5 rounded-field border border-line bg-p2 px-3.5 py-3">
+              <div className="flex items-center gap-2.5">
+                <Avatar size={24} tone="neutral" initials={initialsOf(sources.ghCli)} />
+                <div className="min-w-0 grow">
+                  <div className="truncate text-body font-medium">@{sources.ghCli}</div>
+                  <div className="text-caption text-tx3">
+                    Compte de la CLI GitHub sur cette machine
+                  </div>
+                </div>
+                <Button
+                  variant="primary"
+                  icon={useGh.isPending ? undefined : "check"}
+                  disabled={useGh.isPending}
+                  onClick={() => useGh.mutate()}
+                >
+                  {useGh.isPending && <Spinner className="text-clay-ink" />}
+                  Utiliser
+                </Button>
+              </div>
+              {useGh.error && <p className="mt-2 text-caption text-red">{useGh.error.message}</p>}
+            </div>
+          )}
+
+          <h3 className="mt-5 text-title-sm">
+            {sources.ghCli ? "Ou autorisez un autre compte" : "Autorisez Cadence sur GitHub"}
+          </h3>
+          <p className="mt-2 text-body-sm leading-[1.6] text-tx3">
+            {browserAvailable
+              ? "Votre navigateur s'ouvre sur GitHub. Une fois la connexion validée, Cadence récupère la main tout seul : aucun code à recopier."
+              : "Connexion par navigateur indisponible : installez Git pour Windows (Git Credential Manager) ou connectez la CLI GitHub avec gh auth login."}
+          </p>
+          <div className="mt-5 flex gap-[9px]">
+            {flow.kind === "waiting" ? (
+              flow.authorizeUrl ? (
+                <Button
+                  size="lg"
+                  icon="github"
+                  className="grow"
+                  onClick={() => flow.authorizeUrl && openExternal(flow.authorizeUrl)}
+                >
+                  Rouvrir la page GitHub
+                </Button>
+              ) : (
+                <Button size="lg" className="grow" disabled>
+                  <Spinner />
+                  Connexion dans le navigateur…
+                </Button>
+              )
+            ) : (
+              <Button
+                variant={sources.ghCli ? "secondary" : "primary"}
+                size="lg"
+                icon={flow.kind === "opening" ? undefined : "github"}
+                className="grow"
+                autoFocus={!sources.ghCli}
+                disabled={flow.kind === "opening" || !browserAvailable}
+                onClick={start}
+              >
+                {flow.kind === "opening" && <Spinner className="text-clay-ink" />}
+                Se connecter avec GitHub
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+
+      <div className="mt-[18px] flex items-center gap-[9px] border-t border-line pt-4">
+        {flow.kind === "waiting" ? (
+          <>
+            <StatusDot tone="amber" size={8} pulse />
+            <span className="grow text-body-sm text-tx2">
+              Terminez la connexion dans le navigateur…
+            </span>
+            <button type="button" className="text-small text-tx3 hover:text-tx" onClick={start}>
+              Recommencer
+            </button>
+          </>
+        ) : failed ? (
+          <>
+            <StatusDot tone="red" size={8} />
+            <span className="text-body-sm text-tx2">{browserFailureLabel[failed.reason]}</span>
+          </>
+        ) : (
+          <>
+            <StatusDot tone="neutral" size={8} />
+            <span className="text-body-sm text-tx2">Non connecté</span>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------- Code d'appairage (device flow) ---------- */
 
 function DeviceFlowCard({ onUsePat }: { onUsePat: () => void }) {
   const { mutate: startFlow } = useStartDeviceFlow();

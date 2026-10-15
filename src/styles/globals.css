@@ -157,6 +157,12 @@
   }
 }
 
+/*
+ * Écran bas : 1080p avec mise à l'échelle Windows à 125 % ou plus (≈ 790 px utiles).
+ * `short:py-7` resserre les espacements verticaux sans toucher au rendu des maquettes (900 px).
+ */
+@custom-variant short (@media (max-height: 880px));
+
 @utility mono {
   font-family: var(--font-mono);
   font-variant-ligatures: none;

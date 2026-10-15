@@ -28,25 +28,47 @@ pnpm tauri:mock   # app de bureau, back mocké (tant que les commandes Rust ne s
 
 ### Connexion GitHub
 
-Le device flow a besoin d'une **OAuth App** GitHub (seul son client ID, public, est embarqué) :
+**Aucune configuration n'est nécessaire** sur une machine où la CLI GitHub ou Git sont installés.
+Méthodes, dans l'ordre proposé à l'écran :
 
-1. github.com › Settings › Developer settings › OAuth Apps › New OAuth App
-   (URL de callback quelconque, elle n'est pas utilisée) ;
-2. cocher **Enable Device Flow** ;
-3. exporter le client ID avant `pnpm tauri dev` (lu à l'exécution, ou figé au build) :
+| Méthode | Comment | Besoin |
+| --- | --- | --- |
+| Compte de la CLI GitHub | reprend la session de `gh` en un clic (`gh auth token`) | `gh` connecté |
+| Navigateur | Git Credential Manager ouvre GitHub dans le navigateur et rend la main tout seul (il a sa propre application OAuth) | Git pour Windows / GCM |
+| Navigateur, OAuth App de Cadence | flux web direct : redirection vers `127.0.0.1`, PKCE | client ID + client secret |
+| Code d'appairage | device flow : un code à saisir sur github.com/login/device | client ID, device flow activé |
+| Jeton personnel | jeton classique collé dans l'app | rien |
 
-```bash
-export CADENCE_GITHUB_CLIENT_ID=Ov23li...
+Dans tous les cas, le jeton est validé auprès de GitHub puis copié dans le trousseau de l'OS sous
+l'entrée de Cadence ; il n'est jamais affiché ni renvoyé au webview. Seule la portée `repo` est
+bloquante : l'écran signale les autres portées manquantes.
+
+#### Optionnel : OAuth App propre à Cadence
+
+Utile pour une distribution publique (l'écran d'autorisation GitHub affiche alors « Cadence »).
+Créer l'**OAuth App** : github.com › Settings › Developer settings › OAuth Apps › New OAuth App.
+
+1. **Authorization callback URL** : `http://127.0.0.1/callback` (GitHub accepte tout port sur cette
+   adresse loopback ; Cadence en choisit un libre à chaque connexion) ;
+2. cocher **Enable Device Flow** (pour le code d'appairage) ;
+3. générer un client secret ;
+4. exporter les deux valeurs avant `pnpm tauri dev` (lues à l'exécution, ou figées au build) :
+
+```powershell
+$env:CADENCE_GITHUB_CLIENT_ID="Ov23li..."
+$env:CADENCE_GITHUB_CLIENT_SECRET="..."
 ```
 
-Sans client ID, l'écran propose le repli par jeton personnel (portées `repo`, `read:org`, `workflow`).
-Le jeton est rangé dans le trousseau de l'OS (Keychain, Credential Manager, Secret Service).
+Le client secret est compilé dans l'app : dans une app native il ne peut pas rester confidentiel
+(RFC 8252, même choix que la CLI `gh`). PKCE et le paramètre `state` empêchent qu'un code
+d'autorisation intercepté soit utilisable. Le jeton obtenu est rangé dans le trousseau de l'OS
+(Keychain, Credential Manager, Secret Service), jamais dans le webview ni sur disque.
 
 ### Mode mock
 
 En mode navigateur, l'URL pilote le scénario mocké :
 
-- `?scenario=onboarding` : compte GitHub non connecté ; `?scenario=no-project` : aucun projet choisi ;
+- `?scenario=onboarding` : compte GitHub non connecté ; `?scenario=no-project` : aucun dépôt choisi (sélecteur ouvert) ;
 - `&flow=denied|expired|config` : issue du device flow simulé (par défaut, autorisé après 6 s) ;
 - `&cli=fail` : session de test de Claude Code en échec ;
 - `?view=<id>` force un écran (`?view=design-system`, `?view=issue&number=156`, `?view=agent&kind=dev`).
@@ -112,16 +134,22 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
 
 ## État
 
-- **Fondations** : design system complet, architecture front/back, contrat IPC typé (29 commandes,
+- **Fondations** : design system complet, architecture front/back, contrat IPC typé (32 commandes,
   toutes mockées), navigation et palette de commandes.
-- **Onboarding 1 — Connexion GitHub** : branché de bout en bout (device flow, polling, trousseau,
-  repli par jeton personnel, changement de compte).
+- **Onboarding 1 — Connexion GitHub** : branché de bout en bout (compte de la CLI GitHub, navigateur via Git Credential Manager ou OAuth App, code d'appairage, trousseau,
+  jeton personnel, changement de compte).
 - **Onboarding 2 — Agents de code** : détection de Claude Code et Codex CLI (réglage manuel, `PATH`,
   emplacements usuels), session de test headless de Claude Code, localisation manuelle du binaire,
   désactivation, affectation des rôles. Les préférences de la machine sont dans
   `<config de l'app>/settings.json`.
-- **Onboarding 3 — Projet et mapping** : liste des dépôts accessibles (une requête GraphQL, filtrée
-  localement), aperçu des milestones importés comme versions et du sprint en cours, ouverture du
-  projet. Le choix est mémorisé et le projet rouvert au lancement suivant. `versions_list` est branché.
-- **À venir** : les écrans de l'app (Sprint, Issues…), aujourd'hui des placeholders qui pointent
-  vers leur maquette, et le cache SQLite.
+- **Sélecteur de dépôt** (haut de la barre latérale, ou `Ctrl+K` → « Changer de dépôt ») : Cadence
+  fonctionne sur n'importe quel dépôt accessible au compte (une requête GraphQL, filtrée localement),
+  et permet d'en créer un (compte personnel ou organisation, privé ou public, README initial).
+  Ouvrir un dépôt importe ses milestones comme versions ; le choix est mémorisé et rouvert au
+  lancement suivant. Sans dépôt mémorisé, le sélecteur s'ouvre de lui-même. `versions_list` est branché.
+- **Issues** : toutes les issues du dépôt ouvert (pull requests exclues), groupées par version avec
+  leur avancement ; filtres texte / version / état / assigné, sélection multiple. Lecture GitHub
+  paginée avec ETag, cache mémoire rafraîchi au plus toutes les 60 s (un `304` ne consomme pas de
+  quota), servi hors ligne. Les actions groupées et l'agent CTO arrivent avec l'écriture (0.1.2+).
+- **À venir** : le cache SQLite (remplacera le cache mémoire), puis les autres écrans (Sprint,
+  détail d'issue…), aujourd'hui des placeholders qui pointent vers leur maquette.

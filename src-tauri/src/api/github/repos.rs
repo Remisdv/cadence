@@ -8,7 +8,7 @@ use serde_json::json;
 use super::{API_URL, API_VERSION};
 use crate::{
     domain::{
-        project::Repo,
+        project::{OwnerKind, Repo, RepoCreateInput, RepoOwner},
         version::{self, Version, VersionKind, VersionState},
     },
     error::{AppError, AppResult},
@@ -67,6 +67,103 @@ pub fn parse_viewer_repos(body: &serde_json::Value) -> Vec<Repo> {
             })
         })
         .collect()
+}
+
+/// Organisations de l'utilisateur (portée `read:org` ; vide sans elle).
+pub async fn user_orgs(http: &Client, token: &SecretString) -> AppResult<Vec<RepoOwner>> {
+    #[derive(Deserialize)]
+    struct Org {
+        login: String,
+        avatar_url: Option<String>,
+    }
+    let resp = http
+        .get(format!("{API_URL}/user/orgs?per_page=100"))
+        .bearer_auth(token.expose_secret())
+        .header(header::ACCEPT, "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", API_VERSION)
+        .send()
+        .await?;
+    // Sans `read:org`, GitHub répond 403 : on propose alors seulement le compte personnel.
+    if resp.status() == StatusCode::FORBIDDEN {
+        return Ok(vec![]);
+    }
+    check_status(resp.status())?;
+    let orgs: Vec<Org> = resp.json().await?;
+    Ok(orgs
+        .into_iter()
+        .map(|o| RepoOwner { login: o.login, kind: OwnerKind::Organization, avatar_url: o.avatar_url })
+        .collect())
+}
+
+/// `POST /user/repos` ou `POST /orgs/{org}/repos`.
+pub async fn create_repo(
+    http: &Client,
+    token: &SecretString,
+    input: &RepoCreateInput,
+    owner_kind: OwnerKind,
+) -> AppResult<Repo> {
+    let url = match owner_kind {
+        OwnerKind::User => format!("{API_URL}/user/repos"),
+        OwnerKind::Organization => format!("{API_URL}/orgs/{}/repos", input.owner),
+    };
+    let resp = http
+        .post(url)
+        .bearer_auth(token.expose_secret())
+        .header(header::ACCEPT, "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", API_VERSION)
+        .json(&json!({
+            "name": input.name.trim(),
+            "description": input.description.as_deref().map(str::trim).filter(|d| !d.is_empty()),
+            "private": input.private,
+            "auto_init": input.auto_init,
+        }))
+        .send()
+        .await?;
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    match status {
+        s if s.is_success() => {
+            parse_rest_repo(&body).ok_or_else(|| AppError::GitHub("réponse de création illisible".into()))
+        }
+        StatusCode::UNPROCESSABLE_ENTITY => Err(AppError::Validation(describe_create_error(&body))),
+        StatusCode::FORBIDDEN | StatusCode::NOT_FOUND => Err(AppError::Validation(format!(
+            "Création refusée sur {} : droits insuffisants pour ce compte.",
+            input.owner
+        ))),
+        other => {
+            check_status(other)?;
+            Err(AppError::GitHub(format!("GitHub a répondu {other}")))
+        }
+    }
+}
+
+/// Message lisible d'un 422 (« name already exists on this account »…).
+pub fn describe_create_error(body: &serde_json::Value) -> String {
+    let detail = body["errors"]
+        .as_array()
+        .and_then(|errs| errs.iter().find_map(|e| e["message"].as_str()))
+        .or_else(|| body["message"].as_str())
+        .unwrap_or("requête refusée");
+    if detail.contains("already exists") {
+        "Un dépôt porte déjà ce nom sur ce compte.".into()
+    } else {
+        format!("GitHub refuse la création : {detail}")
+    }
+}
+
+/// Dépôt au format REST → `Repo`.
+pub fn parse_rest_repo(v: &serde_json::Value) -> Option<Repo> {
+    Some(Repo {
+        full_name: v["full_name"].as_str()?.to_string(),
+        owner: v["owner"]["login"].as_str()?.to_string(),
+        name: v["name"].as_str()?.to_string(),
+        description: v["description"].as_str().map(str::to_string),
+        private: v["private"].as_bool().unwrap_or(false),
+        default_branch: v["default_branch"].as_str().unwrap_or("main").to_string(),
+        open_issues: v["open_issues_count"].as_u64().unwrap_or(0) as u32,
+        milestones: 0,
+        pushed_at: v["pushed_at"].as_str().map(str::to_string),
+    })
 }
 
 /// Filtre insensible à la casse sur `owner/name` et la description.
@@ -200,6 +297,18 @@ mod tests {
         assert_eq!(ignored, ["Backlog"]);
         assert_eq!(versions[3].kind, VersionKind::Palier);
         assert_eq!(current_version(&versions).as_deref(), Some("0.1.2"));
+    }
+
+    #[test]
+    fn reads_created_repositories_and_explains_conflicts() {
+        let body = json!({"full_name": "me/new", "name": "new", "owner": {"login": "me"},
+            "description": null, "private": true, "default_branch": "main", "open_issues_count": 0,
+            "pushed_at": "2026-10-15T10:00:00Z"});
+        let repo = parse_rest_repo(&body).unwrap();
+        assert_eq!((repo.full_name.as_str(), repo.private, repo.milestones), ("me/new", true, 0));
+        let conflict = json!({"message": "Repository creation failed.",
+            "errors": [{"message": "name already exists on this account"}]});
+        assert!(describe_create_error(&conflict).contains("déjà"));
     }
 
     #[test]

@@ -5,14 +5,19 @@
 
 pub mod cli;
 pub mod device_flow;
+pub mod external;
 pub mod token_store;
+pub mod web_flow;
 
 use secrecy::{ExposeSecret, SecretString};
 
+use tauri::{async_runtime::JoinHandle, AppHandle, Manager};
+
 use crate::{
     api::github,
-    domain::auth::{CliAgentInfo, GithubAuth, ProviderStatus},
+    domain::auth::{AuthFailure, CliAgentInfo, GithubAuth, GithubSources, ProviderStatus},
     error::{AppError, AppResult},
+    events::{self, AuthChanged},
     state::AppState,
 };
 use cli::CliTool;
@@ -23,6 +28,12 @@ pub const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token"
 /// Portées demandées. `read:user` est optionnelle (avatar, nom affiché).
 pub const REQUIRED_SCOPES: [&str; 3] = ["repo", "read:org", "workflow"];
 pub const OPTIONAL_SCOPES: [&str; 1] = ["read:user"];
+/// Seule portée bloquante : les jetons de gh ou de Git Credential Manager n'ont pas toujours
+/// `read:org` ; l'écran signale les portées manquantes sans refuser la connexion.
+pub const BLOCKING_SCOPES: [&str; 1] = ["repo"];
+
+/// Message d'un jeton refusé par GitHub (permet de distinguer ce cas d'un autre échec).
+pub const TOKEN_REFUSED: &str = "GitHub refuse ce jeton.";
 
 /// Service sous lequel le jeton est rangé dans le trousseau.
 pub const KEYRING_SERVICE: &str = "app.cadence.desktop";
@@ -54,10 +65,10 @@ pub fn scope_param() -> String {
 /// Valide un jeton auprès de GitHub, le range dans le trousseau et met le compte en cache.
 pub async fn complete_sign_in(state: &AppState, token: SecretString) -> AppResult<GithubAuth> {
     let user = github::fetch_user(&state.http, &token).await.map_err(|err| match err {
-        AppError::Unauthenticated(_) => AppError::Validation("GitHub refuse ce jeton.".into()),
+        AppError::Unauthenticated(_) => AppError::Validation(TOKEN_REFUSED.into()),
         other => other,
     })?;
-    let missing = github::missing_scopes(&user.scopes, &REQUIRED_SCOPES);
+    let missing = github::missing_scopes(&user.scopes, &BLOCKING_SCOPES);
     if !missing.is_empty() {
         return Err(AppError::Validation(format!(
             "Portées manquantes sur le jeton : {}.",
@@ -115,13 +126,70 @@ pub async fn github_status(state: &AppState) -> GithubAuth {
 }
 
 /// Oublie le jeton et le projet ouvert : l'autre compte n'a peut-être pas accès au même dépôt.
+/// Moyens de connexion disponibles (détectés une fois par session).
+pub async fn github_sources(state: &AppState) -> GithubSources {
+    if let Some(sources) = state.github_sources.read().await.clone() {
+        return sources;
+    }
+    let (gh_cli, credential_manager) =
+        tokio::join!(external::gh_active_login(), external::credential_manager_available());
+    let sources = GithubSources {
+        gh_cli,
+        credential_manager,
+        oauth_app: client_id().is_ok() && web_flow::client_secret().is_ok(),
+        device_flow: client_id().is_ok(),
+    };
+    *state.github_sources.write().await = Some(sources.clone());
+    sources
+}
+
+/// Connexion via Git Credential Manager, en tâche de fond. Une session GCM refusée par GitHub
+/// est oubliée puis redemandée une fois : GCM ouvre alors le navigateur.
+pub fn spawn_credential_manager(app: AppHandle) -> JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let result = async {
+            let credential = external::credential_manager_token().await?;
+            match complete_sign_in(&state, SecretString::from(credential.password.clone())).await {
+                Err(AppError::Validation(message)) if message == TOKEN_REFUSED => {
+                    external::credential_manager_reject(&credential).await?;
+                    let fresh = external::credential_manager_token().await?;
+                    complete_sign_in(&state, SecretString::from(fresh.password)).await
+                }
+                other => other,
+            }
+        }
+        .await;
+
+        match result {
+            Ok(_) => {
+                events::emit(&app, events::AUTH_CHANGED, AuthChanged::github(ProviderStatus::Connected));
+                focus_main_window(&app);
+            }
+            Err(err) => events::emit(
+                &app,
+                events::AUTH_CHANGED,
+                AuthChanged::github_failed(AuthFailure::Error, Some(err.to_string())),
+            ),
+        }
+    })
+}
+
+/// Ramène Cadence au premier plan après une connexion faite dans le navigateur.
+pub fn focus_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 pub async fn sign_out(state: &AppState) -> AppResult<()> {
-    state.abort_device_flow();
+    state.abort_sign_in();
     state.tokens.delete()?;
     *state.github.write().await = None;
     *state.repos.write().await = None;
     *state.project.write().await = None;
-    state.versions.write().await.clear();
+    state.clear_project_data().await;
     state.settings.update(|s| s.last_project = None)?;
     Ok(())
 }

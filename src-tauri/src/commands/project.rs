@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     api::github::repos,
-    domain::project::{ProjectPreview, ProjectState, Repo},
+    domain::project::{OwnerKind, ProjectPreview, ProjectState, Repo, RepoCreateInput, RepoOwner},
     error::AppResult,
     state::AppState,
 };
@@ -34,10 +34,33 @@ pub async fn project_list_repos(state: State<'_, AppState>, query: String) -> Ap
     Ok(repos::filter_repos(cached.as_deref().unwrap_or_default(), &query))
 }
 
-/// Ce que Cadence importera du dépôt : versions détectées, sprint en cours, config existante.
+/// Comptes sous lesquels créer un dépôt : l'utilisateur, puis ses organisations.
 #[tauri::command]
-pub async fn project_preview(state: State<'_, AppState>, repo: String) -> AppResult<ProjectPreview> {
-    load_preview(&state, &repo).await
+pub async fn project_owners(state: State<'_, AppState>) -> AppResult<Vec<RepoOwner>> {
+    let token = state.github_token()?;
+    let me = crate::api::github::fetch_user(&state.http, &token).await?;
+    let mut owners =
+        vec![RepoOwner { login: me.login, kind: OwnerKind::User, avatar_url: me.avatar_url }];
+    owners.extend(repos::user_orgs(&state.http, &token).await?);
+    Ok(owners)
+}
+
+/// Crée un dépôt sur GitHub, puis l'ouvre (et le mémorise) comme `project_open`.
+#[tauri::command]
+pub async fn project_create(
+    state: State<'_, AppState>,
+    input: RepoCreateInput,
+) -> AppResult<ProjectState> {
+    input.validate()?;
+    let token = state.github_token()?;
+    let me = crate::api::github::fetch_user(&state.http, &token).await?;
+    let kind = if input.owner == me.login { OwnerKind::User } else { OwnerKind::Organization };
+    let repo = repos::create_repo(&state.http, &token, &input, kind).await?;
+    // Le nouveau dépôt rejoint la liste en cache, en tête (le plus récent).
+    if let Some(list) = state.repos.write().await.as_mut() {
+        list.insert(0, repo.clone());
+    }
+    project_open(state, repo.full_name).await
 }
 
 /// Ouvre un dépôt : importe les milestones et mémorise le choix pour le prochain lancement.
@@ -49,6 +72,7 @@ pub async fn project_open(state: State<'_, AppState>, repo: String) -> AppResult
         current_version: preview.current_version,
         has_config: preview.has_config,
     };
+    state.clear_project_data().await;
     *state.versions.write().await = preview.versions;
     *state.project.write().await = Some(project.clone());
     state.settings.update(|s| s.last_project = Some(project.clone()))?;

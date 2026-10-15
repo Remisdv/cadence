@@ -18,9 +18,19 @@ interface PaletteCommand {
   shortcut?: string;
 }
 
-function buildCommands(openDialog: (d: Exclude<GlobalDialog, null>) => void): PaletteCommand[] {
+function buildCommands(
+  openDialog: (d: Exclude<GlobalDialog, null>) => void,
+  openPicker: () => void,
+): PaletteCommand[] {
   const go = (view: View) => () => navigate(view);
   const commands: PaletteCommand[] = [
+    {
+      id: "switch-repo",
+      group: "Actions",
+      label: "Changer de dépôt…",
+      icon: "folder",
+      run: openPicker,
+    },
     {
       id: "new-issue",
       group: "Actions",
@@ -137,7 +147,9 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setOpen]);
 
-  const commands = buildCommands(openDialog);
+  const setPickerOpen = useUiStore((s) => s.setProjectPickerOpen);
+  // Laisse la palette se fermer avant d'ouvrir le sélecteur (focus).
+  const commands = buildCommands(openDialog, () => setTimeout(() => setPickerOpen(true), 0));
   const groups = [...new Set(commands.map((c) => c.group))];
 
   const run = (command: PaletteCommand) => {

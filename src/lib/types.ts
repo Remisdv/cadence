@@ -16,14 +16,18 @@ export type { ProviderStatus } from "./bindings/ProviderStatus";
 export type { GithubAuth } from "./bindings/GithubAuth";
 export type { CliTest } from "./bindings/CliTest";
 export type { CliAgentInfo } from "./bindings/CliAgentInfo";
+export type { GithubSources } from "./bindings/GithubSources";
 export type { AuthStatus } from "./bindings/AuthStatus";
 export type { DeviceFlowStart } from "./bindings/DeviceFlowStart";
+export type { WebFlowStart } from "./bindings/WebFlowStart";
 export type { AuthFailure } from "./bindings/AuthFailure";
 
 // Projet
 export type { Repo } from "./bindings/Repo";
 export type { ProjectState } from "./bindings/ProjectState";
-export type { ProjectPreview } from "./bindings/ProjectPreview";
+export type { OwnerKind } from "./bindings/OwnerKind";
+export type { RepoOwner } from "./bindings/RepoOwner";
+export type { RepoCreateInput } from "./bindings/RepoCreateInput";
 
 // Versions
 export type { VersionKind } from "./bindings/VersionKind";

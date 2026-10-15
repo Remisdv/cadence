@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, Ref } from "react";
 import { Icon, type IconName } from "@/components/icons/Icon";
 import { cn } from "@/lib/cn";
 
@@ -20,27 +20,30 @@ export function FilterInput({ className, ...rest }: InputHTMLAttributes<HTMLInpu
   );
 }
 
-export interface FilterChipProps {
+export interface FilterChipProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "value"> {
   icon: IconName;
   label: ReactNode;
   /** Valeur active : la puce passe en clay. */
   value?: ReactNode;
-  onClick?: () => void;
+  ref?: Ref<HTMLButtonElement>;
 }
 
-/** « Version : 0.1.2 et 0.1.3 ⌄ » — neutre au repos, clay quand un filtre est posé. */
-export function FilterChip({ icon, label, value, onClick }: FilterChipProps) {
+/**
+ * « Version : 0.1.2 et 0.1.3 ⌄ » — neutre au repos, clay quand un filtre est posé.
+ * Les props restantes sont transmises au bouton : utilisable comme déclencheur de menu (Radix).
+ */
+export function FilterChip({ icon, label, value, className, ...rest }: FilterChipProps) {
   const active = value !== undefined && value !== null && value !== "";
   return (
     <button
       type="button"
-      onClick={onClick}
-      aria-pressed={active}
+      {...rest}
       className={cn(
-        "inline-flex h-[30px] items-center gap-1.5 rounded-control border px-2.5 text-body-sm",
+        "inline-flex h-[30px] items-center gap-1.5 rounded-control border px-2.5 text-body-sm data-[state=open]:border-line2",
         active
           ? "border-clay-line bg-clay-d text-clay"
           : "border-line bg-p2 text-tx2 hover:text-tx",
+        className,
       )}
     >
       <Icon name={icon} size={14} />

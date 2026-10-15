@@ -74,11 +74,27 @@ impl CliAgentInfo {
     }
 }
 
+/// Moyens de se connecter à GitHub disponibles sur cette machine.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GithubSources {
+    /// Compte actif de la CLI GitHub (`gh`), si elle est connectée.
+    pub gh_cli: Option<String>,
+    /// Git Credential Manager : connexion par navigateur sans OAuth App propre à Cadence.
+    pub credential_manager: bool,
+    /// OAuth App de Cadence configurée (client ID + secret) : flux web direct.
+    pub oauth_app: bool,
+    /// Client ID configuré : code d'appairage (device flow).
+    pub device_flow: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AuthStatus {
     pub github: GithubAuth,
+    pub github_sources: GithubSources,
     pub claude_code: CliAgentInfo,
     pub codex: CliAgentInfo,
 }
@@ -95,12 +111,22 @@ pub struct DeviceFlowStart {
     pub expires_in: u32,
 }
 
+/// Réponse de `auth_start_web_flow` : la page d'autorisation, déjà ouverte dans le navigateur.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WebFlowStart {
+    /// Pour rouvrir la page si l'onglet a été fermé (`None` : c'est Git Credential Manager
+    /// qui pilote le navigateur).
+    pub authorize_url: Option<String>,
+}
+
 /// Raison d'échec d'une connexion GitHub, portée par `auth://changed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
 pub enum AuthFailure {
-    /// Le code d'appairage a expiré avant autorisation.
+    /// Code d'appairage expiré, ou navigateur sans retour dans le délai.
     Expired,
     /// L'utilisateur a refusé l'autorisation sur github.com.
     Denied,

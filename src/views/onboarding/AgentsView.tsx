@@ -25,31 +25,56 @@ import {
   type CliProvider,
   useAgentEngines,
   useAuthStatus,
+  useCurrentProject,
   useSaveAgentEngines,
   useSetCliEnabled,
   useSetCliPath,
   useTestCliAgent,
 } from "@/lib/query/queries";
 import { useNavigation } from "@/stores/navigation";
+import { useUiStore } from "@/stores/ui";
 
 export default function AgentsView() {
   const auth = useAuthStatus().data;
   const navigate = useNavigation((s) => s.navigate);
+  const replace = useNavigation((s) => s.replace);
+  const openPicker = useUiStore((s) => s.setProjectPickerOpen);
+  const project = useCurrentProject().data;
+
+  // Fin de l'onboarding : l'app s'ouvre ; sans dépôt mémorisé, le sélecteur se déplie.
+  const finish = () => {
+    replace({ id: "sprint" });
+    if (!project) openPicker(true);
+  };
   // Affectable dès que le binaire est là et non écarté, même si le test échoue (login à refaire).
   const usable = (info?: CliAgentInfo) =>
     Boolean(info?.binaryPath) && info?.status !== "disconnected";
   const anyAgent = usable(auth?.claudeCode) || usable(auth?.codex);
-
-  // Précharge l'étape suivante.
-  useEffect(() => {
-    void import("./ProjectView");
-  }, []);
 
   return (
     <OnboardingLayout
       step={1}
       title="Brancher vos agents de code"
       intro="Les agents tournent en local, sur votre machine, via le binaire de votre assistant. Cadence orchestre : il prépare le contexte, lance la session en mode headless et lit le flux d'événements."
+      actions={
+        <>
+          <Button variant="primary" size="lg" iconRight="arrowRight" onClick={finish}>
+            Ouvrir Cadence
+          </Button>
+          <button
+            type="button"
+            className="text-body text-tx3 hover:text-tx"
+            onClick={() => navigate({ id: "onboarding-github" })}
+          >
+            Retour
+          </button>
+          {auth && !anyAgent && (
+            <span className="text-caption text-tx3">
+              Aucun agent n'est requis pour commencer : vous pourrez en brancher un plus tard.
+            </span>
+          )}
+        </>
+      }
     >
       <div className="max-w-[880px]">
         <div className="grid grid-cols-2 gap-4">
@@ -69,34 +94,11 @@ export default function AgentsView() {
           />
         </div>
 
-        <SectionLabel className="mt-[22px]">Affectation des rôles</SectionLabel>
+        <SectionLabel className="mt-[22px] short:mt-4">Affectation des rôles</SectionLabel>
         <RoleAssignment
           claudeAvailable={usable(auth?.claudeCode)}
           codexAvailable={usable(auth?.codex)}
         />
-
-        <div className="mt-[22px] flex items-center gap-3.5">
-          <Button
-            variant="primary"
-            size="lg"
-            iconRight="arrowRight"
-            onClick={() => navigate({ id: "onboarding-project" })}
-          >
-            Continuer
-          </Button>
-          <button
-            type="button"
-            className="text-body text-tx3 hover:text-tx"
-            onClick={() => navigate({ id: "onboarding-github" })}
-          >
-            Retour
-          </button>
-          {auth && !anyAgent && (
-            <span className="text-caption text-tx3">
-              Aucun agent n'est requis pour commencer : vous pourrez en brancher un plus tard.
-            </span>
-          )}
-        </div>
       </div>
     </OnboardingLayout>
   );
@@ -139,7 +141,7 @@ function CliAgentCard({ provider, name, role, binary, info }: CliAgentCardProps)
 
   return (
     <Card className="h-full">
-      <div className="flex h-full flex-col p-5">
+      <div className="flex h-full flex-col p-5 short:p-4">
         <div className="flex items-center gap-[11px]">
           <span
             className={cn(
@@ -156,7 +158,7 @@ function CliAgentCard({ provider, name, role, binary, info }: CliAgentCardProps)
           <CliStatusBadge info={info} testing={test.isPending} />
         </div>
 
-        <div className="mt-4 grow">
+        <div className="mt-4 grow short:mt-3">
           {!info ? (
             <div className="flex h-full items-center justify-center">
               <Spinner />
@@ -190,7 +192,7 @@ function CliAgentCard({ provider, name, role, binary, info }: CliAgentCardProps)
           {error && <p className="mt-3 text-caption text-red">{error.message}</p>}
         </div>
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex gap-2 short:mt-3">
           {status === "disconnected" ? (
             <Button
               icon="refresh"
@@ -330,7 +332,8 @@ function RoleAssignment({
   };
 
   return (
-    <Card className="mt-2 px-[18px] py-1">
+    // Écran bas : deux colonnes, pour que toute l'étape tienne sans défiler.
+    <Card className="mt-2 grid grid-cols-1 px-[18px] py-1 short:grid-cols-2 short:gap-x-6 short:py-2">
       {agentOrder.map((kind, i) => {
         const meta = agents[kind];
         const current = engines?.[kind];
@@ -338,17 +341,20 @@ function RoleAssignment({
           <div
             key={kind}
             className={cn(
-              "flex items-center gap-3 py-[13px]",
+              "flex items-center gap-3 py-[13px] short:border-b-0 short:py-1.5",
               i < agentOrder.length - 1 && "border-b border-line",
             )}
           >
             <AgentBadge agent={kind} size={28} />
             <div className="min-w-0 grow">
-              <div className="text-body font-medium">{meta.name}</div>
-              <div className="mt-px text-caption text-tx3">{meta.role}</div>
+              <div className="truncate text-body font-medium">{meta.name}</div>
+              <div className="mt-px truncate text-caption text-tx3" title={meta.role}>
+                {meta.role}
+              </div>
             </div>
             <Select
               size="sm"
+              className="shrink-0 short:w-[178px]"
               aria-label={`Moteur pour ${meta.name}`}
               disabled={!current}
               value={current ? valueOf(current) : ""}

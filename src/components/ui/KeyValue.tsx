@@ -14,7 +14,7 @@ export function KeyValue({ label, value, mono = true, last }: KeyValueProps) {
   return (
     <div
       className={cn(
-        "flex justify-between gap-3 py-[7px] text-body-sm",
+        "flex justify-between gap-3 py-[7px] text-body-sm short:py-[5px]",
         !last && "border-b border-line",
       )}
     >

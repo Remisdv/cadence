@@ -41,6 +41,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::auth::auth_start_device_flow,
+            commands::auth::auth_start_web_flow,
+            commands::auth::auth_use_gh_cli,
             commands::auth::auth_status,
             commands::auth::auth_set_token,
             commands::auth::auth_sign_out,
@@ -49,8 +51,9 @@ pub fn run() {
             commands::auth::cli_agent_set_enabled,
             commands::project::project_current,
             commands::project::project_list_repos,
-            commands::project::project_preview,
             commands::project::project_open,
+            commands::project::project_owners,
+            commands::project::project_create,
             commands::versions::versions_list,
             commands::versions::version_current,
             commands::versions::version_close,

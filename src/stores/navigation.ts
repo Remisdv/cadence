@@ -12,7 +12,6 @@ export type View =
   // 1 · Connexion et configuration
   | { id: "onboarding-github" }
   | { id: "onboarding-agents" }
-  | { id: "onboarding-project" }
   // 2 · Travail quotidien
   | { id: "sprint" }
   | { id: "issues" }

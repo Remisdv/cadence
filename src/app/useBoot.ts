@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useAuthStatus, useCurrentProject } from "@/lib/query/queries";
 import { useNavigation, type View } from "@/stores/navigation";
+import { useUiStore } from "@/stores/ui";
 import { isViewId } from "@/views/registry";
 
 /**
- * Choisit l'écran de départ : onboarding tant que GitHub n'est pas connecté ou qu'aucun
- * projet n'est ouvert, sinon le sprint en cours.
+ * Choisit l'écran de départ : onboarding tant que GitHub n'est pas connecté, sinon le sprint
+ * du dépôt mémorisé (ou le sélecteur de dépôt ouvert, s'il n'y en a pas encore).
  *
  * En dev, `?view=<id>&<param>=…` force un écran (ex. `?view=agent&kind=dev`, `?view=issue&number=156`).
  */
@@ -14,6 +15,7 @@ export function useBoot(): { ready: boolean; error: unknown } {
   const connected = auth.data?.github.status === "connected";
   const project = useCurrentProject(connected);
   const replace = useNavigation((s) => s.replace);
+  const openPicker = useUiStore((s) => s.setProjectPickerOpen);
   const [ready, setReady] = useState(false);
 
   const settled = auth.isSuccess && (!connected || project.isSuccess || project.isError);
@@ -23,10 +25,13 @@ export function useBoot(): { ready: boolean; error: unknown } {
     const forced = import.meta.env.DEV ? forcedView() : null;
     if (forced) replace(forced);
     else if (!connected) replace({ id: "onboarding-github" });
-    else if (!project.data) replace({ id: "onboarding-project" });
-    else replace({ id: "sprint" });
+    else {
+      replace({ id: "sprint" });
+      // Aucun dépôt mémorisé : le sélecteur de la barre latérale s'ouvre de lui-même.
+      if (!project.data) openPicker(true);
+    }
     setReady(true);
-  }, [ready, settled, connected, project.data, replace]);
+  }, [ready, settled, connected, project.data, replace, openPicker]);
 
   return { ready, error: auth.error };
 }

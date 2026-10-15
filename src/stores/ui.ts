@@ -9,6 +9,10 @@ interface UiState {
   openDialog: (dialog: Exclude<GlobalDialog, null>) => void;
   closeDialog: () => void;
 
+  /** Sélecteur de dépôt de la barre latérale. */
+  projectPickerOpen: boolean;
+  setProjectPickerOpen: (open: boolean) => void;
+
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
 
@@ -20,6 +24,9 @@ export const useUiStore = create<UiState>((set) => ({
   dialog: null,
   openDialog: (dialog) => set({ dialog, paletteOpen: false }),
   closeDialog: () => set({ dialog: null }),
+
+  projectPickerOpen: false,
+  setProjectPickerOpen: (projectPickerOpen) => set({ projectPickerOpen, paletteOpen: false }),
 
   paletteOpen: false,
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),

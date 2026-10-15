@@ -5,6 +5,7 @@
 //! Le jeton est lu dans le trousseau au moment de construire la requête et circule en
 //! `SecretString` — jamais exposé au webview.
 
+pub mod issues;
 pub mod rate_limit;
 pub mod repos;
 

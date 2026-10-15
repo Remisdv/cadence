@@ -15,6 +15,7 @@ import type {
   IssueCreateInput,
   IssueFilter,
   PrFilter,
+  RepoCreateInput,
   VersionCloseInput,
 } from "@/lib/types";
 import { keys } from "./keys";
@@ -27,6 +28,9 @@ export const useAuthStatus = () =>
 export const useStartDeviceFlow = () =>
   useMutation({ mutationFn: () => call("auth_start_device_flow") });
 
+/** Connexion par le navigateur : Rust ouvre la page d'autorisation et attend le retour. */
+export const useStartWebFlow = () => useMutation({ mutationFn: () => call("auth_start_web_flow") });
+
 /** Met à jour une partie de `auth_status` dans le cache, sans refaire la détection. */
 function usePatchAuth() {
   const qc = useQueryClient();
@@ -38,6 +42,15 @@ export function useSetGithubToken() {
   const patch = usePatchAuth();
   return useMutation({
     mutationFn: (token: string) => call("auth_set_token", { token }),
+    onSuccess: (github) => patch({ github }),
+  });
+}
+
+/** Reprend la session de la CLI GitHub (`gh`). */
+export function useSignInWithGhCli() {
+  const patch = usePatchAuth();
+  return useMutation({
+    mutationFn: () => call("auth_use_gh_cli"),
     onSuccess: (github) => patch({ github }),
   });
 }
@@ -103,17 +116,26 @@ export const useRepos = (query: string) =>
     placeholderData: (previous) => previous, // pas de clignotement pendant la frappe
   });
 
-export const useProjectPreview = (repo: string | null) =>
-  useQuery({
-    queryKey: keys.projectPreview(repo ?? ""),
-    queryFn: () => call("project_preview", { repo: repo! }),
-    enabled: repo !== null,
-  });
-
 export function useOpenProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (repo: string) => call("project_open", { repo }),
+    onSuccess: (project) => {
+      qc.setQueryData(keys.projectCurrent(), project);
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+/** Comptes sous lesquels créer un dépôt (chargés à l'ouverture du formulaire). */
+export const useRepoOwners = (enabled: boolean) =>
+  useQuery({ queryKey: keys.projectOwners(), queryFn: () => call("project_owners"), enabled });
+
+/** Crée un dépôt sur GitHub puis l'ouvre ; la liste des dépôts est rafraîchie. */
+export function useCreateRepo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RepoCreateInput) => call("project_create", { input }),
     onSuccess: (project) => {
       qc.setQueryData(keys.projectCurrent(), project);
       void qc.invalidateQueries();
@@ -139,8 +161,16 @@ export function useCloseVersion() {
 
 /* ---------- Issues ---------- */
 
-export const useIssues = (filter: IssueFilter = {}) =>
-  useQuery({ queryKey: keys.issueList(filter), queryFn: () => call("issues_list", { filter }) });
+/**
+ * Issues du dépôt ouvert. `live` : relit toutes les 60 s (côté Rust, une requête
+ * conditionnelle ETag : rien n'est relu ni décompté si rien n'a changé).
+ */
+export const useIssues = (filter: IssueFilter = {}, options: { live?: boolean } = {}) =>
+  useQuery({
+    queryKey: keys.issueList(filter),
+    queryFn: () => call("issues_list", { filter }),
+    refetchInterval: options.live ? 60_000 : false,
+  });
 
 export const useIssue = (number: number) =>
   useQuery({ queryKey: keys.issue(number), queryFn: () => call("issue_get", { number }) });

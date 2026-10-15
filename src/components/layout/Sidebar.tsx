@@ -8,12 +8,11 @@ import { StatusDot, type DotTone } from "@/components/ui/StatusDot";
 import { AgentBadge } from "@/components/domain/AgentBadge";
 import { cn } from "@/lib/cn";
 import { agentOrder, agents } from "@/lib/domain/agents";
-import { formatDaysLeft, formatDuration } from "@/lib/domain/format";
+import { formatDuration } from "@/lib/domain/format";
 import { useElapsedSeconds } from "@/lib/hooks/useElapsedSeconds";
 import {
   useAgentsOverview,
   useAuthStatus,
-  useCurrentProject,
   useCurrentVersion,
   useIssues,
   usePendingReviews,
@@ -21,6 +20,7 @@ import {
 } from "@/lib/query/queries";
 import { useNavigation, type View } from "@/stores/navigation";
 import { Logo } from "./Logo";
+import { RepoSwitcher } from "./RepoSwitcher";
 
 /** Entrée de navigation active pour une vue donnée. */
 function navKey(view: View): string {
@@ -39,7 +39,6 @@ export function Sidebar() {
   const navigate = useNavigation((s) => s.navigate);
   const active = navKey(view);
 
-  const project = useCurrentProject().data;
   const current = useCurrentVersion().data;
   const version = current?.version.title;
   const issues = useIssues(version ? { version } : {}).data;
@@ -69,15 +68,7 @@ export function Sidebar() {
     >
       <Logo className="px-1" />
 
-      <ProjectSwitcher
-        repo={project?.repo.fullName}
-        initials={project ? (project.repo.owner[0]! + project.repo.name[0]!).toUpperCase() : "—"}
-        subtitle={
-          current
-            ? `Sprint ${current.version.title} · ${formatDaysLeft(current.daysLeft)}`
-            : "Aucun sprint ouvert"
-        }
-      />
+      <RepoSwitcher />
 
       <div className="flex min-h-0 grow flex-col gap-[13px] overflow-y-auto">
         <NavGroup label="Pilotage">
@@ -203,32 +194,6 @@ function AgentNavItem({
       <AgentBadge agent={kind} size={17} />
       <span className="grow">{agents[kind].short}</span>
       <StatusDot tone={activityDot[agent?.activity ?? "idle"]} />
-    </button>
-  );
-}
-
-function ProjectSwitcher({
-  repo,
-  initials,
-  subtitle,
-}: {
-  repo?: string;
-  initials: string;
-  subtitle: string;
-}) {
-  return (
-    <button
-      type="button"
-      className="flex h-[42px] w-full items-center gap-[9px] rounded-field border border-line2 bg-p2 px-2.5 hover:bg-p3"
-    >
-      <Avatar size={24} tone="neutral" initials={initials} />
-      <span className="min-w-0 grow text-left">
-        <span className="block truncate text-body-sm font-medium">{repo ?? "Aucun projet"}</span>
-        <span className="block text-micro text-tx3">{subtitle}</span>
-      </span>
-      <span className="flex text-tx3">
-        <Icon name="chevronDown" size={14} />
-      </span>
     </button>
   );
 }

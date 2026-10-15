@@ -9,7 +9,7 @@ export const keys = {
   project: ["project"] as const,
   projectCurrent: () => ["project", "current"] as const,
   repos: (query: string) => ["project", "repos", query] as const,
-  projectPreview: (repo: string) => ["project", "preview", repo] as const,
+  projectOwners: () => ["project", "owners"] as const,
 
   versions: ["milestones"] as const,
   versionList: () => ["milestones", "list"] as const,
