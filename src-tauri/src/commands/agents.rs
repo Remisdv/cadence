@@ -54,7 +54,8 @@ pub async fn agents_overview(state: State<'_, AppState>) -> AppResult<Vec<AgentO
             Some(handle) => {
                 let d = handle.detail.read().await;
                 let pending = (d.items.iter().filter(|i| i.state.awaits_review()).count()
-                    + d.tasks.iter().filter(|t| t.state == DevTaskState::Review).count()) as u32;
+                    + d.tasks.iter().filter(|t| t.state == DevTaskState::Review).count()
+                    + crate::agents::deploy::proposed_actions(&d).len()) as u32;
                 let running = matches!(d.state, RunState::Prepare | RunState::Running)
                     || d.items.iter().any(|i| i.state == CtoItemState::Running)
                     || d.tasks.iter().any(|t| t.state == DevTaskState::Running);
@@ -73,8 +74,14 @@ pub async fn agents_overview(state: State<'_, AppState>) -> AppResult<Vec<AgentO
                     issue: dev_task
                         .map(|t| t.number)
                         .or_else(|| d.items.iter().find(|i| i.state == CtoItemState::Running).map(|i| i.number)),
-                    step: Some(dev_task.map(|t| t.step).unwrap_or(done.min(255) as u8)),
-                    steps: Some(if dev_task.is_some() { crate::agents::dev::STEPS } else { d.items.len().min(255) as u8 }),
+                    step: Some(dev_task.map(|t| t.step).or(d.deploy.as_ref().map(|p| p.step)).unwrap_or(done.min(255) as u8)),
+                    steps: Some(if dev_task.is_some() {
+                        crate::agents::dev::STEPS
+                    } else if d.deploy.is_some() {
+                        crate::agents::deploy::STEPS
+                    } else {
+                        d.items.len().min(255) as u8
+                    }),
                     started_at: dev_task.and_then(|t| t.started_at.clone()).unwrap_or_else(|| d.started_at.clone()),
                 });
                 (activity, pending, current, Some(d.ended_at.clone().unwrap_or_else(|| d.started_at.clone())))
@@ -102,7 +109,7 @@ pub async fn agent_start(
         },
         AgentKind::Dev => crate::agents::dev::start(&app, &state, input).await,
         AgentKind::Ceo => Err(AppError::NotImplemented("l'agent CEO (version 0.2.0)")),
-        AgentKind::Deploy => Err(AppError::NotImplemented("l'agent déploiement (version 0.2.1)")),
+        AgentKind::Deploy => crate::agents::deploy::start(&app, &state, input).await,
     }
 }
 
@@ -188,4 +195,10 @@ pub async fn agent_runs_list(state: State<'_, AppState>, limit: u32) -> AppResul
         }
     }
     Ok(out)
+}
+
+/// Agent déploiement : remplace les notes de version avant la publication.
+#[tauri::command]
+pub async fn agent_edit_notes(app: AppHandle, state: State<'_, AppState>, run: String, notes: String) -> AppResult<()> {
+    crate::agents::deploy::edit_notes(&app, &state, &run, notes).await
 }

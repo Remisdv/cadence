@@ -50,6 +50,25 @@ pub async fn ensure(base: &Path, repo: &str, branch: &str, token: &SecretString)
     Ok(dir)
 }
 
+/// Nom de tag sûr à passer à Git (pas d'option, pas de chemin) : `v0.1.2`, `release-1.0`.
+pub fn is_safe_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && !tag.starts_with(['-', '.'])
+        && !tag.contains("..")
+        && tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
+/// Récupère `tag` (superficiellement) dans la copie : `refs/tags/<tag>`.
+pub async fn fetch_tag(dir: &Path, tag: &str, token: &SecretString) -> AppResult<()> {
+    if !is_safe_tag(tag) {
+        return Err(AppError::Validation(format!("Nom de tag inattendu : {tag}")));
+    }
+    let refspec = format!("+refs/tags/{tag}:refs/tags/{tag}");
+    git(dir, Some(token), &["fetch", "--depth", "1", "origin", &refspec])
+        .await
+        .map_err(|e| AppError::Validation(format!("Tag {tag} introuvable sur GitHub ({e})")))
+}
+
 /// En-tête HTTP d'authentification GitHub pour Git (`x-access-token:<jeton>` en Basic).
 fn auth_header(token: &SecretString) -> String {
     let basic = STANDARD.encode(format!("x-access-token:{}", token.expose_secret()));
@@ -111,6 +130,12 @@ mod tests {
         let base = Path::new("repos");
         assert_eq!(checkout_dir(base, "Me/App").unwrap(), base.join("me").join("app"));
         assert!(checkout_dir(base, "../x").is_err());
+    }
+
+    #[test]
+    fn accepts_only_plain_tag_names() {
+        assert!(is_safe_tag("v0.1.2") && is_safe_tag("release_1-0"));
+        assert!(!is_safe_tag("--upload-pack=x") && !is_safe_tag("v1/../x") && !is_safe_tag("") && !is_safe_tag("a b"));
     }
 
     #[test]

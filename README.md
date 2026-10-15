@@ -242,4 +242,17 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   revues de plus d'un jour). Version : portée, progression par état, aperçu des notes de version
   (issues fermées par type), conditions de clôture, PR de la version ; clôture de la version en
   cours. Les PR comptées sont celles du cache (ouvertes et 30 dernières fusionnées ou fermées).
-- **À venir** : l'agent CEO et l'agent déploiement (0.2.x), le mode hors-ligne complet (1.0.0).
+- **Agent déploiement** (barre latérale › Déploiement, ou « Lancer l'agent déploiement » en fin de
+  clôture) : sur une version close (son tag `<préfixe><version>`), cinq étapes. (1) Pré-vol : tag et
+  brouillon de release présents, issues closes de la version (hors « non retenues ») et leurs
+  critères d'acceptation, lus dans le cache ; (2) Build : worktree détaché sur le tag
+  (`<worktree_root>/<owner>/<nom>/deploy-<tag>`), session Claude Code qui construit selon les
+  conventions du dépôt et liste ses artefacts ; (3) Tests de vérification : un test par issue,
+  dérivé des cases `- [ ]` de sa section « Critères d'acceptation » et rejoué dans la même session
+  (réussi, échec, non vérifiable + constat) ; (4) Documentation : notes de version par type
+  d'issue, sans les issues en échec ; (5) Tag et release : « Publier la release » met à jour le
+  brouillon avec les notes et le publie (ou crée la release), « Rouvrir sur <suivante> » rouvre
+  l'issue d'un test en échec sur le milestone suivant, « Ignorer » la garde dans les notes. Rien
+  n'est publié sans validation (même en `auto`), jamais en file hors-ligne ; aucun push. Notes
+  éditables avant publication (`agent_edit_notes`), « Rejouer les tests » relance sur le même tag.
+- **À venir** : l'agent CEO (0.2.0), le mode hors-ligne complet (1.0.0).

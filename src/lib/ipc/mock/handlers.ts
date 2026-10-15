@@ -19,6 +19,7 @@ import { ctoMock } from "./cto";
 import { devMock } from "./dev";
 import { agentsMock } from "./agents";
 import { versionReport } from "./versions";
+import { deployMock } from "./deploy";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -330,30 +331,55 @@ const handlers: Handlers = {
         fail("agent_start", (e as Error).message);
       }
     }
+    if (kind === "deploy") {
+      try {
+        return deployMock.start(input.version);
+      } catch (e) {
+        fail("agent_start", (e as Error).message);
+      }
+    }
     if (kind !== "cto") fail("agent_start", "Cet agent arrive plus tard.");
     return ctoMock.start(input.issues?.length ? input.issues : undefined);
   },
   agent_control: ({ run, cmd }) => {
     const dev = run.startsWith("dev-");
-    if (cmd.cmd === "stop") (dev ? devMock : ctoMock).stop();
-    else if (!dev && cmd.cmd !== "message") ctoMock.pause(cmd.cmd === "pause");
-    else if (!dev) fail("agent_control", "L'agent CTO ne prend pas d'intervention en cours de route.");
-    else if (cmd.cmd === "pause") devMock.pause(true);
-    else if (cmd.cmd === "resume") devMock.pause(false);
-    else devMock.message(cmd.text);
+    const steps = run.startsWith("deploy-") ? deployMock : dev ? devMock : null;
+    if (cmd.cmd === "stop") (steps ?? ctoMock).stop();
+    else if (!steps && cmd.cmd !== "message") ctoMock.pause(cmd.cmd === "pause");
+    else if (!steps) fail("agent_control", "L'agent CTO ne prend pas d'intervention en cours de route.");
+    else if (cmd.cmd === "pause") steps.pause(true);
+    else if (cmd.cmd === "resume") steps.pause(false);
+    else steps.message(cmd.text);
     return null;
   },
   agent_actions: () => [],
-  agent_apply: ({ run, ids }) => (run.startsWith("dev-") ? devMock.push(ids) : ctoMock.apply(ids)),
+  agent_apply: ({ run, ids }) =>
+    run.startsWith("deploy-")
+      ? deployMock.apply(ids)
+      : run.startsWith("dev-")
+        ? devMock.push(ids)
+        : ctoMock.apply(ids),
   agent_latest_run: ({ kind }) =>
-    structuredClone(kind === "cto" ? ctoMock.latest() : kind === "dev" ? devMock.latest() : null),
+    structuredClone(
+      kind === "cto"
+        ? ctoMock.latest()
+        : kind === "dev"
+          ? devMock.latest()
+          : kind === "deploy"
+            ? deployMock.latest()
+            : null,
+    ),
   agent_run_get: ({ run }) => {
-    const found = run.startsWith("dev-") ? devMock.latest() : ctoMock.latest();
+    const found = run.startsWith("deploy-")
+      ? deployMock.latest()
+      : run.startsWith("dev-")
+        ? devMock.latest()
+        : ctoMock.latest();
     if (!found) fail("agent_run_get", "Exécution introuvable.");
     return structuredClone(found);
   },
   agent_reject: ({ run, numbers }) => {
-    (run.startsWith("dev-") ? devMock.skip : ctoMock.reject)(numbers);
+    (run.startsWith("deploy-") ? deployMock.ignore : run.startsWith("dev-") ? devMock.skip : ctoMock.reject)(numbers);
     return null;
   },
   agent_edit_body: ({ number, body }) => {
@@ -361,6 +387,14 @@ const handlers: Handlers = {
     return null;
   },
   agent_runs_list: ({ limit }) => agentsMock.runs(limit),
+  agent_edit_notes: ({ notes }) => {
+    try {
+      deployMock.editNotes(notes);
+    } catch (e) {
+      fail("agent_edit_notes", (e as Error).message);
+    }
+    return null;
+  },
 
   settings_get: () => data.config,
   settings_set: ({ config }) => {

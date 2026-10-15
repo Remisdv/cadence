@@ -69,6 +69,13 @@ export type { CtoItemState } from "./bindings/CtoItemState";
 export type { DevTask } from "./bindings/DevTask";
 export type { DevTaskState } from "./bindings/DevTaskState";
 export type { DevFile } from "./bindings/DevFile";
+export type { DeployState } from "./bindings/DeployState";
+export type { DeployStage } from "./bindings/DeployStage";
+export type { DeployStageState } from "./bindings/DeployStageState";
+export type { DeployTest } from "./bindings/DeployTest";
+export type { DeployTestStatus } from "./bindings/DeployTestStatus";
+export type { DeployDecision } from "./bindings/DeployDecision";
+export type { DeployArtifact } from "./bindings/DeployArtifact";
 
 // Agents
 export type { AgentKind } from "./bindings/AgentKind";

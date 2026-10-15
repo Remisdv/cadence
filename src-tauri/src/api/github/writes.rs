@@ -245,6 +245,49 @@ pub async fn create_draft_release(
     Ok(body["html_url"].as_str().unwrap_or_default().to_string())
 }
 
+/// Release d'un tag, brouillon compris.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReleaseRef {
+    pub id: u64,
+    pub url: String,
+    pub draft: bool,
+}
+
+/// Release d'un tag parmi les 100 dernières (`GET /releases/tags/{tag}` ignore les brouillons).
+pub async fn find_release(http: &Client, token: &SecretString, repo: &str, tag: &str) -> AppResult<Option<ReleaseRef>> {
+    let url = format!("{API_URL}/repos/{repo}/releases?per_page=100");
+    let body = send(authed(http.get(url), token), "Lecture des releases").await?;
+    Ok(release_of(&body, tag))
+}
+
+/// Release de `tag` dans une liste renvoyée par GitHub.
+pub fn release_of(list: &Value, tag: &str) -> Option<ReleaseRef> {
+    list.as_array()?.iter().find(|r| r["tag_name"] == tag).and_then(|r| {
+        Some(ReleaseRef {
+            id: r["id"].as_u64()?,
+            url: r["html_url"].as_str().unwrap_or_default().to_string(),
+            draft: r["draft"].as_bool().unwrap_or(false),
+        })
+    })
+}
+
+/// Publie la release d'un tag existant avec `notes` : met à jour le brouillon (ou la release)
+/// existant, sinon en crée une. Jamais appelé sans votre validation. Renvoie son URL.
+pub async fn publish_release(http: &Client, token: &SecretString, repo: &str, tag: &str, notes: &str) -> AppResult<String> {
+    let payload = json!({ "tag_name": tag, "name": tag, "body": notes, "draft": false });
+    let body = match find_release(http, token, repo, tag).await? {
+        Some(release) => {
+            let url = format!("{API_URL}/repos/{repo}/releases/{}", release.id);
+            send(authed(http.patch(url), token).json(&payload), "Publication de la release").await?
+        }
+        None => {
+            send(authed(http.post(format!("{API_URL}/repos/{repo}/releases")), token).json(&payload), "Publication de la release")
+                .await?
+        }
+    };
+    Ok(body["html_url"].as_str().unwrap_or_default().to_string())
+}
+
 /* ---------- Fichiers du dépôt ---------- */
 
 /// Fichier texte du dépôt sur sa branche par défaut : (contenu, SHA du blob), `None` s'il
@@ -322,5 +365,16 @@ mod tests {
         let message = json!({"errors": [{"message": "Reference already exists"}]});
         assert_eq!(describe_422(&message), "Reference already exists");
         assert_eq!(describe_422(&json!({})), "requête invalide");
+    }
+
+    #[test]
+    fn finds_the_draft_release_of_a_tag() {
+        let list = json!([
+            {"id": 7, "tag_name": "v0.1.0", "html_url": "https://x/0", "draft": false},
+            {"id": 9, "tag_name": "v0.1.1", "html_url": "https://x/1", "draft": true}
+        ]);
+        assert_eq!(release_of(&list, "v0.1.1"), Some(ReleaseRef { id: 9, url: "https://x/1".into(), draft: true }));
+        assert_eq!(release_of(&list, "v0.2.0"), None);
+        assert_eq!(release_of(&json!({}), "v0.1.1"), None);
     }
 }

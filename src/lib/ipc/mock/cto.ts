@@ -149,6 +149,7 @@ export const ctoMock = {
       log: [],
       error: null,
       paused: false,
+      deploy: null,
     };
     history.push(run);
     log("system", `› copie de ${data.project.repo.fullName} (main)…`);

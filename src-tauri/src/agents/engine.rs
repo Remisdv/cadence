@@ -137,9 +137,13 @@ fn recovered(mut detail: AgentRunDetail) -> AgentRunDetail {
             task.error = Some("Session interrompue (Cadence a été fermé).".into());
         }
     }
+    if let Some(dp) = detail.deploy.as_mut().filter(|_| interrupted) {
+        crate::agents::deploy::fail_running(dp, "Session interrompue (Cadence a été fermé).", false);
+    }
     if interrupted {
         let waiting = detail.items.iter().any(|i| i.state.awaits_review())
-            || detail.tasks.iter().any(|t| t.state == DevTaskState::Review);
+            || detail.tasks.iter().any(|t| t.state == DevTaskState::Review)
+            || crate::agents::deploy::awaits_review(&detail);
         detail.state = if waiting { RunState::Review } else { RunState::Discarded };
         detail.ended_at.get_or_insert_with(version::now_iso);
     }
@@ -189,6 +193,7 @@ pub fn proposed_actions(detail: &AgentRunDetail) -> Vec<ProposedAction> {
             action: AgentAction::PushCommits { branch: task.branch.clone() },
         });
     }
+    out.extend(crate::agents::deploy::proposed_actions(detail));
     out
 }
 
@@ -263,6 +268,7 @@ pub async fn start_cto(app: &AppHandle, state: &AppState, input: AgentInput) -> 
         error: None,
         tasks: vec![],
         paused: false,
+        deploy: None,
     };
     let run = detail.run.clone();
     cache.save_run(&detail).await?;
@@ -591,6 +597,13 @@ pub async fn apply(app: &AppHandle, state: &AppState, run: &str, ids: Vec<String
     let handle = handle(state, run).await?;
     let mut report = ApplyReport { applied: vec![], failed: vec![] };
     for id in ids {
+        if let Some(result) = crate::agents::deploy::apply_id(app, state, &handle, &id).await {
+            match result {
+                Ok(()) => report.applied.push(id),
+                Err(err) => report.failed.push(ApplyFailure { id, message: err.to_string() }),
+            }
+            continue;
+        }
         if let Some(number) = id.strip_prefix("push-").and_then(|n| n.parse::<u32>().ok()) {
             match crate::agents::dev::push_task(app, state, &handle, number).await {
                 Ok(()) => report.applied.push(id),
@@ -626,6 +639,9 @@ pub async fn reject(app: &AppHandle, state: &AppState, run: &str, numbers: Vec<u
                 task.state = DevTaskState::Skipped;
             }
         }
+        if let Some(dp) = d.deploy.as_mut() {
+            crate::agents::deploy::ignore(dp, &numbers);
+        }
     }
     settle(app, state, &handle).await;
     Ok(())
@@ -658,7 +674,8 @@ pub async fn stop(app: &AppHandle, state: &AppState, run: &str) -> AppResult<()>
         let mut d = handle.detail.write().await;
         if !d.state.is_terminal() {
             let waiting = d.items.iter().any(|i| i.state.awaits_review())
-                || d.tasks.iter().any(|t| t.state == DevTaskState::Review);
+                || d.tasks.iter().any(|t| t.state == DevTaskState::Review)
+                || crate::agents::deploy::awaits_review(&d);
             d.state = if waiting { RunState::Review } else { RunState::Discarded };
             d.ended_at.get_or_insert_with(version::now_iso);
         }
@@ -789,7 +806,8 @@ async fn settle(app: &AppHandle, state: &AppState, handle: &Arc<RunHandle>) {
         let busy = d.items.iter().any(|i| matches!(i.state, CtoItemState::Queued | CtoItemState::Running))
             || d.tasks.iter().any(|t| matches!(t.state, DevTaskState::Queued | DevTaskState::Running));
         let waiting = d.items.iter().any(|i| i.state.awaits_review())
-            || d.tasks.iter().any(|t| t.state == DevTaskState::Review);
+            || d.tasks.iter().any(|t| t.state == DevTaskState::Review)
+            || crate::agents::deploy::awaits_review(&d);
         if d.state == RunState::Review && !busy && !waiting {
             d.state = RunState::Done;
             d.ended_at = Some(version::now_iso());
@@ -841,6 +859,7 @@ pub(crate) async fn emit_state(app: &AppHandle, handle: &Arc<RunHandle>) {
     let d = handle.detail.read().await;
     let (step, steps) = match d.tasks.iter().find(|t| t.state == DevTaskState::Running) {
         Some(task) => (task.step, crate::agents::dev::STEPS),
+        None if d.deploy.is_some() => (d.deploy.as_ref().map_or(0, |p| p.step), crate::agents::deploy::STEPS),
         None => {
             let done = d.items.iter().filter(|i| !matches!(i.state, CtoItemState::Queued | CtoItemState::Running)).count();
             (done.min(255) as u8, d.items.len().min(255) as u8)
@@ -898,6 +917,7 @@ mod tests {
             error: None,
             tasks: vec![],
             paused: false,
+            deploy: None,
         }
     }
 

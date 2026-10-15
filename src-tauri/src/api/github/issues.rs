@@ -40,6 +40,9 @@ pub struct RawIssue {
     pub number: u32,
     pub title: String,
     pub state: String,
+    /// `completed`, `not_planned`, `reopened` (absent des anciennes issues).
+    #[serde(default)]
+    pub state_reason: Option<String>,
     pub body: Option<String>,
     #[serde(default)]
     pub labels: Vec<RawLabel>,

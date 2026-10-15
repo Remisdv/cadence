@@ -480,6 +480,7 @@ mod tests {
             error: None,
             tasks: vec![],
             paused: false,
+            deploy: None,
         };
         cache.save_run(&run("cto-1", "2026-10-14T10:00:00Z", RunState::Done)).await.unwrap();
         cache.save_run(&run("cto-2", "2026-10-15T10:00:00Z", RunState::Running)).await.unwrap();
