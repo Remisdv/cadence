@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::issue::{CtoQuestion, IssueType};
+use crate::events::AgentEventKind;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
@@ -147,6 +150,93 @@ pub struct ProposedAction {
     pub id: String,
     pub preview: String,
     pub action: AgentAction,
+}
+
+/* ---------- Exécution de l'agent CTO ---------- */
+
+/// Où en est une issue dans la file de l'agent CTO.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum CtoItemState {
+    /// Pas encore traitée.
+    Queued,
+    /// Session Claude Code en cours sur cette issue.
+    Running,
+    /// Description proposée, prête à relire.
+    Ready,
+    /// L'agent attend vos réponses avant de conclure.
+    Questions,
+    /// Écrite sur GitHub.
+    Applied,
+    /// Passée sans rien écrire.
+    Skipped,
+    Failed,
+}
+
+impl CtoItemState {
+    /// Proposition à relire (prête, ou en attente de réponses).
+    pub fn awaits_review(self) -> bool {
+        matches!(self, CtoItemState::Ready | CtoItemState::Questions)
+    }
+}
+
+/// Une issue dans la file de l'agent CTO, avec ce qu'il propose.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CtoItem {
+    pub number: u32,
+    pub title: String,
+    pub version: Option<String>,
+    pub issue_type: Option<IssueType>,
+    pub state: CtoItemState,
+    /// Description actuelle sur GitHub.
+    pub before: String,
+    /// Description proposée.
+    pub after: Option<String>,
+    pub questions: Vec<CtoQuestion>,
+    /// Estimation : `S`, `M`, `L`, `XL`.
+    pub estimate: Option<String>,
+    pub estimate_hours: Option<u32>,
+    /// Labels proposés (hors conventions `type/`, `agent/`).
+    pub labels: Vec<String>,
+    /// `faible`, `moyen`, `élevé`.
+    pub risk: Option<String>,
+    pub related: Vec<u32>,
+    pub error: Option<String>,
+    /// Session Claude Code de l'issue, reprise pour intégrer vos réponses.
+    #[ts(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// Ligne du journal d'une exécution (la console de l'écran d'agent).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentLogLine {
+    pub kind: AgentEventKind,
+    pub text: String,
+}
+
+/// Exécution d'un agent : état, file d'issues, journal. Gardée dans `agent_runs`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentRunDetail {
+    pub run: String,
+    pub kind: AgentKind,
+    pub state: RunState,
+    pub autonomy: Autonomy,
+    pub version: Option<String>,
+    pub model: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub items: Vec<CtoItem>,
+    pub log: Vec<AgentLogLine>,
+    /// Pourquoi l'exécution a échoué, le cas échéant.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

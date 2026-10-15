@@ -214,6 +214,17 @@ pub fn add_days(date: &str, days: i64) -> Option<String> {
     Some(format!("{y:04}-{m:02}-{d:02}"))
 }
 
+/// Instant présent (UTC), `YYYY-MM-DDTHH:MM:SSZ`.
+pub fn now_iso() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let s = secs.rem_euclid(86_400);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", s / 3600, s % 3600 / 60, s % 60)
+}
+
 /// Date du jour (UTC), `YYYY-MM-DD`.
 pub fn today() -> String {
     let secs = std::time::SystemTime::now()
@@ -333,6 +344,7 @@ mod tests {
         assert_eq!(add_days("2026-12-25", 14).as_deref(), Some("2027-01-08"));
         assert_eq!(add_days("nope", 1), None);
         assert_eq!(today().len(), 10);
+        assert!(now_iso().starts_with(&today()) && now_iso().ends_with('Z'));
     }
 
     #[test]

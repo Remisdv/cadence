@@ -91,6 +91,14 @@ pub async fn update_issue(
     parse(body, "issue modifiée")
 }
 
+/// Commentaire sur une issue (trace signée d'un agent).
+pub async fn create_comment(http: &Client, token: &SecretString, repo: &str, number: u32, body: &str) -> AppResult<()> {
+    let url = format!("{API_URL}/repos/{repo}/issues/{number}/comments");
+    send(authed(http.post(url), token).json(&json!({ "body": body })), &format!("Commentaire sur #{number}"))
+        .await
+        .map(drop)
+}
+
 /* ---------- Milestones ---------- */
 
 pub async fn create_milestone(

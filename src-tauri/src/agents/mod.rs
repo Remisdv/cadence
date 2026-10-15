@@ -5,6 +5,9 @@
 //! et transforme les sorties en `AgentAction` proposées. Un agent se distingue par son prompt
 //! système, le contexte qu'il reçoit et les actions qu'il a le droit de produire.
 
+pub mod claude;
+pub mod cto;
+pub mod engine;
 pub mod runner;
 
 use crate::domain::agent::{AgentAction, AgentKind};

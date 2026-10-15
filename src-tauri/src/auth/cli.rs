@@ -115,7 +115,7 @@ pub fn parse_version(output: &str) -> Option<String> {
     })
 }
 
-fn command(path: &Path) -> Command {
+pub(crate) fn command(path: &Path) -> Command {
     let mut cmd = Command::new(path);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(windows)]

@@ -52,7 +52,7 @@ pub struct AgentEvent {
 }
 
 /// Nature d'une ligne de console — détermine sa couleur dans le terminal d'agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
 pub enum AgentEventKind {

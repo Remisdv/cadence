@@ -190,7 +190,10 @@ export function useAnswerCto(number: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (answers: CtoAnswer[]) => call("issue_answer_cto", { number, answers }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.issue(number) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.issue(number) });
+      void qc.invalidateQueries({ queryKey: keys.agents });
+    },
   });
 }
 
@@ -224,11 +227,45 @@ export const usePrDetail = (number: number | null) =>
 export const useAgentsOverview = () =>
   useQuery({ queryKey: keys.agentsOverview(), queryFn: () => call("agents_overview") });
 
-export const useStartAgent = () =>
-  useMutation({
+export function useStartAgent() {
+  const qc = useQueryClient();
+  return useMutation({
     mutationFn: ({ kind, input }: { kind: AgentKind; input: AgentInput }) =>
       call("agent_start", { kind, input }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
   });
+}
+
+/** Dernière exécution d'un agent (file, journal) ; rafraîchie à chaque `agent://state`. */
+export const useAgentLatestRun = (kind: AgentKind) =>
+  useQuery({ queryKey: keys.agentLatestRun(kind), queryFn: () => call("agent_latest_run", { kind }) });
+
+export function useStopAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (run: string) => call("agent_control", { run, cmd: { cmd: "stop" } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
+  });
+}
+
+/** Passe des issues de la file sans rien écrire. */
+export function useRejectItems(run: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (numbers: number[]) => call("agent_reject", { run, numbers }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
+  });
+}
+
+/** Remplace la description proposée (« Éditer avant d'appliquer »). */
+export function useEditProposal(run: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ number, body }: { number: number; body: string }) =>
+      call("agent_edit_body", { run, number, body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
+  });
+}
 
 export const useAgentActions = (run: string | null) =>
   useQuery({
@@ -241,7 +278,10 @@ export function useApplyActions(run: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (ids: string[]) => call("agent_apply", { run, ids }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agentActions(run) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.agents });
+      void qc.invalidateQueries({ queryKey: keys.issues });
+    },
   });
 }
 

@@ -182,5 +182,16 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   moteurs d'agents reprennent le choix de l'onboarding. La clôture de version en tire la durée de
   sprint, le préfixe de tag et la confirmation avant un palier. « Comptes et jetons » (compte,
   portées, déconnexion) et « Machine locale » (agents de code détectés) montrent l'état de la machine.
+- **Agent CTO** (barre latérale › CTO, ou « Agent CTO » dans Issues) : parcourt les issues ouvertes de
+  la version qui ne sont pas encore passées par lui. Une session Claude Code headless par issue
+  (`claude -p --output-format stream-json`, prompt sur l'entrée standard), outils restreints à
+  `Read,Grep,Glob` dans une copie superficielle du dépôt (`<données>/repos/<owner>/<nom>`, jeton
+  passé à Git par variables d'environnement), durée plafonnée par `max_session_minutes`. Il rend
+  une description (modèle du projet), une estimation, des labels, un risque, des issues liées, ou
+  des questions : vos réponses reprennent la même session (`--resume`). Diff avant/après, édition,
+  « Passer », « Appliquer » : seule l'application écrit sur GitHub (description, labels
+  `agent/cto` et `estimate/*`, commentaire signé). Autonomie lue dans `config.toml` (`propose`
+  bloque toute écriture, `auto` applique seul ce qui n'a pas de question). Journal et file gardés
+  dans `agent_runs` (reprise après redémarrage), console en direct par `agent://event`.
 - **À venir** : les autres écrans (Sprint, détail d'issue, détail de version…), aujourd'hui des
   placeholders qui pointent vers leur maquette.

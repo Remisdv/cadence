@@ -9,6 +9,7 @@ import type {
   AgentInput,
   AgentKind,
   AgentOverview,
+  AgentRunDetail,
   ApplyReport,
   AuthProvider,
   AuthStatus,
@@ -81,6 +82,10 @@ export interface Commands {
   agent_control: { args: { run: string; cmd: AgentControl }; result: null };
   agent_actions: { args: { run: string }; result: ProposedAction[] };
   agent_apply: { args: { run: string; ids: string[] }; result: ApplyReport };
+  agent_latest_run: { args: { kind: AgentKind }; result: AgentRunDetail | null };
+  agent_run_get: { args: { run: string }; result: AgentRunDetail };
+  agent_reject: { args: { run: string; numbers: number[] }; result: null };
+  agent_edit_body: { args: { run: string; number: number; body: string }; result: null };
   // Réglages
   settings_get: { args: NoArgs; result: Config };
   settings_set: { args: { config: Config }; result: Config };

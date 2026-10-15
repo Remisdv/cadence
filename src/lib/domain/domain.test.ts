@@ -66,3 +66,17 @@ describe("nextSprintRange", () => {
     });
   });
 });
+
+describe("lineDiff", () => {
+  it("garde les lignes communes et marque ajouts et suppressions", async () => {
+    const { lineDiff } = await import("./textDiff");
+    expect(lineDiff("a\nb\nc", "a\nB\nc\nd")).toEqual([
+      { type: "ctx", text: "a" },
+      { type: "del", text: "b" },
+      { type: "add", text: "B" },
+      { type: "ctx", text: "c" },
+      { type: "add", text: "d" },
+    ]);
+    expect(lineDiff("", "x")).toEqual([{ type: "add", text: "x" }]);
+  });
+});

@@ -73,6 +73,10 @@ pub fn run() {
             commands::agents::agent_control,
             commands::agents::agent_actions,
             commands::agents::agent_apply,
+            commands::agents::agent_latest_run,
+            commands::agents::agent_run_get,
+            commands::agents::agent_reject,
+            commands::agents::agent_edit_body,
             commands::settings::settings_get,
             commands::settings::settings_set,
         ])

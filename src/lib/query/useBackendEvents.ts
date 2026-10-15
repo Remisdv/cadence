@@ -20,8 +20,9 @@ export function useBackendEvents() {
         }
       }),
       subscribe("sync://rate-limit", setRateLimit),
+      // Toute requête d'agent (statuts, exécution, actions) suit l'état des exécutions.
       subscribe("agent://state", () => {
-        void queryClient.invalidateQueries({ queryKey: keys.agentsOverview() });
+        void queryClient.invalidateQueries({ queryKey: keys.agents });
       }),
       subscribe("auth://changed", () => {
         void queryClient.invalidateQueries({ queryKey: keys.auth });

@@ -30,6 +30,7 @@ export const keys = {
   agentsOverview: () => ["agents", "overview"] as const,
   agentEngines: () => ["agents", "engines"] as const,
   agentActions: (run: string) => ["agents", "actions", run] as const,
+  agentLatestRun: (kind: string) => ["agents", "run", kind] as const,
 
   settings: ["settings"] as const,
 };

@@ -28,6 +28,7 @@ import {
   type StateFilter,
 } from "@/lib/domain/issueGroups";
 import { useCurrentProject, useIssues, useVersions } from "@/lib/query/queries";
+import { useNavigation } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 import { IssueTable } from "./IssueTable";
 
@@ -44,6 +45,7 @@ export default function IssuesView() {
   const issues = useIssues({}, { live: true });
   const versions = useVersions().data ?? [];
   const openDialog = useUiStore((s) => s.openDialog);
+  const navigate = useNavigation((s) => s.navigate);
 
   const [filter, setFilter] = useState<IssueViewFilter>(defaultFilter);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -75,7 +77,7 @@ export default function IssuesView() {
       }
       actions={
         <>
-          <Button icon="bot" disabled title="Arrive avec l'agent CTO (version 0.1.3)">
+          <Button icon="bot" onClick={() => navigate({ id: "agent", kind: "cto" })}>
             Agent CTO
           </Button>
           <Button variant="primary" icon="plus" onClick={() => openDialog("issue-create")}>

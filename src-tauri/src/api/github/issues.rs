@@ -47,6 +47,12 @@ pub struct RawIssue {
     #[serde(default)]
     pub assignees: Vec<RawUser>,
     pub updated_at: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub html_url: Option<String>,
+    #[serde(default)]
+    pub user: Option<RawUser>,
     /// Présent quand l'élément est une pull request (l'API mélange les deux).
     pub pull_request: Option<serde_json::Value>,
 }

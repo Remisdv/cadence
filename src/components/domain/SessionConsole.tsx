@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { AgentEventKind } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
@@ -29,6 +29,14 @@ export interface SessionConsoleProps {
 
 /** Terminal de session Claude Code : fond console, mono 11px, une couleur par nature de ligne. */
 export function SessionConsole({ lines, header, footer, className }: SessionConsoleProps) {
+  const logRef = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  // Suit les nouvelles lignes, sauf si vous êtes remonté lire plus haut.
+  useEffect(() => {
+    const el = logRef.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [lines.length]);
+
   return (
     <div className={cn("flex min-h-0 flex-col overflow-hidden bg-console", className)}>
       {header && (
@@ -37,6 +45,11 @@ export function SessionConsole({ lines, header, footer, className }: SessionCons
         </div>
       )}
       <div
+        ref={logRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
         className="min-h-0 grow overflow-y-auto px-[13px] py-[11px] mono text-tiny leading-[1.85]"
         role="log"
         aria-live="polite"

@@ -3,6 +3,8 @@
 //! L'agent développeur travaille dans un worktree isolé par issue, sous
 //! `~/.cadence/wt/<num>` ; le dépôt principal de l'utilisateur n'est jamais modifié.
 
+pub mod checkout;
+
 use crate::domain::issue::IssueType;
 
 const MAX_SLUG_LEN: usize = 40;

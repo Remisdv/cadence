@@ -3,8 +3,10 @@ use tauri::State;
 use serde_json::json;
 
 use crate::{
+    agents::engine,
     api::github::{issues, repos, writes},
     domain::{
+        agent::{AgentKind, CtoItemState},
         issue::{CtoAnswer, IssueCreateInput, IssueDetail, IssueFilter, IssueRow},
         sync::SyncResource,
         version::{self, VersionState},
@@ -32,12 +34,43 @@ pub async fn issues_list(state: State<'_, AppState>, filter: IssueFilter) -> App
         .collect())
 }
 
-/// Détail avec l'état de l'agent CTO et ses questions.
+/// Détail d'une issue (cache), avec les questions de l'agent CTO en attente sur elle.
 #[tauri::command]
 pub async fn issue_get(state: State<'_, AppState>, number: u32) -> AppResult<IssueDetail> {
-    let _ = number;
-    state.require_project().await?;
-    Err(AppError::NotImplemented("issue_get"))
+    let cache = state.repo_cache().await?;
+    sync::refresh(&state, &cache, SyncResource::Issues).await?;
+    let raw = cache
+        .issues()
+        .await?
+        .into_iter()
+        .find(|i| i.number == number)
+        .ok_or_else(|| AppError::Validation(format!("Issue #{number} introuvable dans ce dépôt.")))?;
+    let me = state.github.read().await.as_ref().and_then(|g| g.login.clone());
+    let mut row = issues::to_row(&raw, me.as_deref());
+    let mut questions = vec![];
+    if let Some(handle) = engine::latest(&state, AgentKind::Cto).await? {
+        let d = handle.detail.read().await;
+        if let Some(item) = d.items.iter().find(|i| i.number == number) {
+            match item.state {
+                CtoItemState::Questions => questions = item.questions.clone(),
+                CtoItemState::Running => row.active_agent = Some(AgentKind::Cto),
+                _ => {}
+            }
+        }
+    }
+    Ok(IssueDetail {
+        body: raw.body.clone().unwrap_or_default(),
+        html_url: raw.html_url.clone().unwrap_or_else(|| format!("https://github.com/{}/issues/{number}", cache.repo)),
+        author: raw.user.as_ref().map(|u| crate::domain::UserRef {
+            login: u.login.clone(),
+            name: None,
+            avatar_url: u.avatar_url.clone(),
+            is_self: me.as_deref() == Some(u.login.as_str()),
+        }),
+        created_at: raw.created_at.clone().unwrap_or_else(|| raw.updated_at.clone()),
+        questions,
+        row,
+    })
 }
 
 /// Crée l'issue sur GitHub, rattachée au milestone de sa version, puis la range dans le
@@ -78,11 +111,10 @@ pub async fn issue_create(state: State<'_, AppState>, input: IssueCreateInput) -
 /// Renvoie les réponses dans la session CTO, qui reprend et complète la description.
 #[tauri::command]
 pub async fn issue_answer_cto(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     number: u32,
     answers: Vec<CtoAnswer>,
 ) -> AppResult<()> {
-    let _ = (number, answers);
-    state.require_project().await?;
-    Err(AppError::NotImplemented("issue_answer_cto"))
+    engine::answer(&app, &state, number, answers).await
 }

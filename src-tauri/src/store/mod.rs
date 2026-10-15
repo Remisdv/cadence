@@ -20,7 +20,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     api::github::{issues::RawIssue, pulls::RawPr, repos::Milestone},
-    domain::sync::SyncResource,
+    domain::{
+        agent::{AgentKind, AgentRunDetail},
+        sync::SyncResource,
+    },
     error::{AppError, AppResult},
 };
 
@@ -224,6 +227,42 @@ impl RepoCache {
         Ok(())
     }
 
+    /* ---------- Journal des agents ---------- */
+
+    /// Enregistre une exécution (état, file, journal) dans `agent_runs`.
+    pub async fn save_run(&self, run: &AgentRunDetail) -> AppResult<()> {
+        let detail = serde_json::to_string(run).map_err(|e| AppError::Internal(e.to_string()))?;
+        let input = serde_json::json!({ "version": run.version, "issues": run.items.iter().map(|i| i.number).collect::<Vec<_>>() });
+        sqlx::query(
+            "INSERT OR REPLACE INTO agent_runs (id, agent, state, input, started_at, ended_at, actions)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&run.run)
+        .bind(agent_key(run.kind))
+        .bind(serde_json::to_value(run.state).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default())
+        .bind(input.to_string())
+        .bind(&run.started_at)
+        .bind(&run.ended_at)
+        .bind(detail)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn load_run(&self, id: &str) -> AppResult<Option<AgentRunDetail>> {
+        let row = sqlx::query("SELECT actions FROM agent_runs WHERE id = ?").bind(id).fetch_optional(&self.pool).await?;
+        row.map(|r| parse_raw(r.get("actions"))).transpose()
+    }
+
+    /// Dernière exécution d'un agent.
+    pub async fn latest_run(&self, kind: AgentKind) -> AppResult<Option<AgentRunDetail>> {
+        let row = sqlx::query("SELECT actions FROM agent_runs WHERE agent = ? ORDER BY started_at DESC LIMIT 1")
+            .bind(agent_key(kind))
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(|r| parse_raw(r.get("actions"))).transpose()
+    }
+
     /* ---------- Milestones ---------- */
 
     pub async fn milestones(&self) -> AppResult<Vec<Milestone>> {
@@ -286,6 +325,15 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
         tracing::info!(migration = name, "cache local migré");
     }
     Ok(())
+}
+
+fn agent_key(kind: AgentKind) -> &'static str {
+    match kind {
+        AgentKind::Cto => "cto",
+        AgentKind::Ceo => "ceo",
+        AgentKind::Dev => "dev",
+        AgentKind::Deploy => "deploy",
+    }
 }
 
 fn resource_key(resource: SyncResource) -> &'static str {
@@ -403,6 +451,32 @@ mod tests {
         assert_eq!(numbers, [3, 2]);
         assert_eq!(cache.pull(2).await.unwrap().unwrap().state, "MERGED");
         assert!(cache.pull(1).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn keeps_the_latest_agent_run() {
+        use crate::domain::agent::{Autonomy, RunState};
+        let cache = RepoCache::in_memory("me/app").await.unwrap();
+        let run = |id: &str, started: &str, state: RunState| AgentRunDetail {
+            run: id.into(),
+            kind: AgentKind::Cto,
+            state,
+            autonomy: Autonomy::ApplyAfterReview,
+            version: Some("0.1.2".into()),
+            model: None,
+            started_at: started.into(),
+            ended_at: None,
+            items: vec![],
+            log: vec![],
+            error: None,
+        };
+        cache.save_run(&run("cto-1", "2026-10-14T10:00:00Z", RunState::Done)).await.unwrap();
+        cache.save_run(&run("cto-2", "2026-10-15T10:00:00Z", RunState::Running)).await.unwrap();
+        cache.save_run(&run("cto-2", "2026-10-15T10:00:00Z", RunState::Review)).await.unwrap();
+        let latest = cache.latest_run(AgentKind::Cto).await.unwrap().unwrap();
+        assert_eq!((latest.run.as_str(), latest.state), ("cto-2", RunState::Review));
+        assert!(cache.latest_run(AgentKind::Dev).await.unwrap().is_none());
+        assert_eq!(cache.load_run("cto-1").await.unwrap().unwrap().state, RunState::Done);
     }
 
     #[test]

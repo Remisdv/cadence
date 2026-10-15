@@ -134,7 +134,7 @@ export function FooterBar({ hint, children, height = 52, className }: FooterBarP
       )}
       style={{ height }}
     >
-      {hint && <span className="text-caption text-tx3">{hint}</span>}
+      {hint && <span className="min-w-0 truncate text-caption text-tx3">{hint}</span>}
       <div className="grow" />
       {children}
     </div>

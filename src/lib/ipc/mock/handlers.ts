@@ -15,6 +15,7 @@ import type { CommandArgs, CommandName, CommandResult } from "../commands";
 import { CommandError } from "../errors";
 import { mockBus } from "./bus";
 import * as data from "./fixtures";
+import { ctoMock } from "./cto";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -265,7 +266,14 @@ const handlers: Handlers = {
     data.issues.unshift(row);
     return row;
   },
-  issue_answer_cto: () => null,
+  issue_answer_cto: ({ number, answers }) => {
+    try {
+      ctoMock.answer(number, answers);
+    } catch (e) {
+      fail("issue_answer_cto", (e as Error).message);
+    }
+    return null;
+  },
 
   prs_list: ({ filter }) =>
     data.pullRequests.filter(
@@ -287,10 +295,31 @@ const handlers: Handlers = {
     return engines;
   },
   agents_overview: () => data.agentsOverview,
-  agent_start: ({ kind }) => `run-${kind}-${Date.now()}`,
-  agent_control: () => null,
+  agent_start: ({ kind }) => {
+    if (kind !== "cto") fail("agent_start", "Cet agent arrive en version 0.2.0.");
+    return ctoMock.start();
+  },
+  agent_control: ({ cmd }) => {
+    if (cmd.cmd !== "stop") fail("agent_control", "Pause et intervention arrivent en version 0.2.0.");
+    ctoMock.stop();
+    return null;
+  },
   agent_actions: () => [],
-  agent_apply: ({ ids }) => ({ applied: ids, failed: [] }),
+  agent_apply: ({ ids }) => ctoMock.apply(ids),
+  agent_latest_run: ({ kind }) => (kind === "cto" ? structuredClone(ctoMock.latest()) : null),
+  agent_run_get: () => {
+    const run = ctoMock.latest();
+    if (!run) fail("agent_run_get", "Exécution introuvable.");
+    return structuredClone(run);
+  },
+  agent_reject: ({ numbers }) => {
+    ctoMock.reject(numbers);
+    return null;
+  },
+  agent_edit_body: ({ number, body }) => {
+    ctoMock.edit(number, body);
+    return null;
+  },
 
   settings_get: () => data.config,
   settings_set: ({ config }) => {

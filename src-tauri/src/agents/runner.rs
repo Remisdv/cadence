@@ -23,7 +23,7 @@ impl RunState {
                 | (Review, Applying)
                 | (Review, Discarded)
                 | (Applying, Done)
-        ) || (next == Failed && !self.is_terminal())
+        ) || (matches!(next, Failed | Discarded) && !self.is_terminal())
     }
 
     pub fn is_terminal(self) -> bool {
