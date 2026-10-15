@@ -263,6 +263,15 @@ impl RepoCache {
         row.map(|r| parse_raw(r.get("actions"))).transpose()
     }
 
+    /// Exécutions récentes, tous agents confondus, de la plus récente à la plus ancienne.
+    pub async fn runs(&self, limit: u32) -> AppResult<Vec<AgentRunDetail>> {
+        let rows = sqlx::query("SELECT actions FROM agent_runs ORDER BY started_at DESC, id DESC LIMIT ?")
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(|r| parse_raw(r.get("actions"))).collect()
+    }
+
     /* ---------- Milestones ---------- */
 
     pub async fn milestones(&self) -> AppResult<Vec<Milestone>> {
@@ -479,6 +488,33 @@ mod tests {
         assert_eq!((latest.run.as_str(), latest.state), ("cto-2", RunState::Review));
         assert!(cache.latest_run(AgentKind::Dev).await.unwrap().is_none());
         assert_eq!(cache.load_run("cto-1").await.unwrap().unwrap().state, RunState::Done);
+    }
+
+    #[tokio::test]
+    async fn lists_recent_runs_of_every_agent() {
+        use crate::domain::agent::{Autonomy, RunState};
+        let cache = RepoCache::in_memory("me/app").await.unwrap();
+        let run = |id: &str, kind: AgentKind, started: &str| AgentRunDetail {
+            run: id.into(),
+            kind,
+            state: RunState::Done,
+            autonomy: Autonomy::ApplyAfterReview,
+            version: None,
+            model: None,
+            started_at: started.into(),
+            ended_at: None,
+            items: vec![],
+            log: vec![],
+            error: None,
+            tasks: vec![],
+            paused: false,
+        };
+        cache.save_run(&run("cto-1", AgentKind::Cto, "2026-10-13T10:00:00Z")).await.unwrap();
+        cache.save_run(&run("dev-1", AgentKind::Dev, "2026-10-15T09:00:00Z")).await.unwrap();
+        cache.save_run(&run("cto-2", AgentKind::Cto, "2026-10-14T10:00:00Z")).await.unwrap();
+        let ids = |runs: Vec<AgentRunDetail>| runs.into_iter().map(|r| r.run).collect::<Vec<_>>();
+        assert_eq!(ids(cache.runs(10).await.unwrap()), ["dev-1", "cto-2", "cto-1"]);
+        assert_eq!(ids(cache.runs(2).await.unwrap()), ["dev-1", "cto-2"]);
     }
 
     #[test]

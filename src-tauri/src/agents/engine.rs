@@ -386,6 +386,10 @@ async fn run_queue(
 
     let system = cto::system_prompt(template, has_code);
     loop {
+        // En pause (console des agents) : la file attend avant l'issue suivante.
+        while handle.detail.read().await.paused && !*handle.stop.borrow() {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
         if *handle.stop.borrow() {
             break;
         }

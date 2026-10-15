@@ -8,6 +8,8 @@ import { mockBus } from "./bus";
 import * as data from "./fixtures";
 
 let run: AgentRunDetail | null = null;
+/** Exécutions de la session, de la plus ancienne à la plus récente (journal de la console). */
+const history: AgentRunDetail[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
 let prSeq = 90;
 const STEP_MS = 700;
@@ -127,6 +129,7 @@ function settle() {
 
 export const devMock = {
   latest: () => run,
+  runs: () => history,
 
   start(issues: number[]): string {
     if (run && (run.state === "running" || run.state === "prepare"))
@@ -167,6 +170,7 @@ export const devMock = {
       error: null,
       paused: false,
     };
+    history.push(run);
     log("system", `› copie de ${data.project.repo.fullName} (main)…`);
     emitState();
     timer = setTimeout(next, STEP_MS);

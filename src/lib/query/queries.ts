@@ -277,6 +277,24 @@ export function useEditProposal(run: string) {
   });
 }
 
+/** Journal des exécutions récentes, tous agents confondus ; rafraîchi à chaque `agent://state`. */
+export const useAgentRuns = (limit: number) =>
+  useQuery({
+    queryKey: keys.agentRunsList(limit),
+    queryFn: () => call("agent_runs_list", { limit }),
+    placeholderData: (previous) => previous,
+  });
+
+/** Même commande pour plusieurs exécutions (« Tout suspendre » de la console). */
+export function useControlAgents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runs, cmd }: { runs: string[]; cmd: AgentControl }) =>
+      Promise.all(runs.map((run) => call("agent_control", { run, cmd }))),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.agents }),
+  });
+}
+
 export const useAgentActions = (run: string | null) =>
   useQuery({
     queryKey: keys.agentActions(run ?? ""),
@@ -308,6 +326,8 @@ export function useSaveSettings() {
       qc.setQueryData(keys.settings, config);
       // `hasConfig` du projet passe à vrai au premier enregistrement.
       void qc.invalidateQueries({ queryKey: keys.project });
+      // L'autonomie des agents (rail, console) vient du fichier.
+      void qc.invalidateQueries({ queryKey: keys.agents });
     },
   });
 }

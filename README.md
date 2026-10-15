@@ -209,5 +209,16 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   `curl` interdits à l'agent, aucun assistant d'identifiants dans son environnement, `pushurl`
   invalide sur la copie, et Cadence refuse de pousser sur la branche par défaut. Pause (après
   l'étape en cours), arrêt, et intervention depuis le terminal (reprise à l'étape suivante).
-- **À venir** : l'agent CEO, puis les autres écrans (Sprint, détail de version, console des
-  agents…), aujourd'hui des placeholders qui pointent vers leur maquette.
+- **Console des agents** (barre latérale › Console agents) : une carte par agent (statut, autonomie,
+  actions en attente, exécution en cours avec issue, étape et minuteur, dernier passage) et
+  « Ouvrir » vers son écran ; journal des exécutions tous agents confondus (`agent_runs_list`,
+  table `agent_runs` du cache, exécutions ouvertes lues en mémoire), « Journal complet » ;
+  consommation sur 7 jours (part du temps d'exécution par agent) ; « Tout suspendre » / « Tout
+  reprendre » (pause après l'étape ou l'issue en cours, agents CTO et développeur). Garde-fous :
+  « Validation avant écriture GitHub » réécrit l'autonomie dans `.cadence/config.toml` (même
+  chemin que Réglages › Agents ; l'agent CEO reste en « propose seulement ») ; push sur la branche
+  par défaut et accès aux autres dépôts restent interdits, fusion automatique pas encore
+  disponible. La barre latérale suit `agents_overview` (rafraîchi par `agent://state`) : pastille
+  repos / attente / en cours par agent, carte « Agent … en cours » pour chaque exécution active.
+- **À venir** : l'agent CEO, puis les autres écrans (Sprint, détail de version…), aujourd'hui des
+  placeholders qui pointent vers leur maquette.
