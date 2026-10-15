@@ -209,5 +209,18 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   `curl` interdits à l'agent, aucun assistant d'identifiants dans son environnement, `pushurl`
   invalide sur la copie, et Cadence refuse de pousser sur la branche par défaut. Pause (après
   l'étape en cours), arrêt, et intervention depuis le terminal (reprise à l'étape suivante).
+- **Agent déploiement** (barre latérale › Déploiement, ou « Lancer l'agent déploiement » en fin de
+  clôture) : sur une version close (son tag `<préfixe><version>`), cinq étapes. (1) Pré-vol : tag et
+  brouillon de release présents, issues closes de la version (hors « non retenues ») et leurs
+  critères d'acceptation, lus dans le cache ; (2) Build : worktree détaché sur le tag
+  (`<worktree_root>/<owner>/<nom>/deploy-<tag>`), session Claude Code qui construit selon les
+  conventions du dépôt et liste ses artefacts ; (3) Tests de vérification : un test par issue,
+  dérivé des cases `- [ ]` de sa section « Critères d'acceptation » et rejoué dans la même session
+  (réussi, échec, non vérifiable + constat) ; (4) Documentation : notes de version par type
+  d'issue, sans les issues en échec ; (5) Tag et release : « Publier la release » met à jour le
+  brouillon avec les notes et le publie (ou crée la release), « Rouvrir sur <suivante> » rouvre
+  l'issue d'un test en échec sur le milestone suivant, « Ignorer » la garde dans les notes. Rien
+  n'est publié sans validation (même en `auto`), jamais en file hors-ligne ; aucun push. Notes
+  éditables avant publication (`agent_edit_notes`), « Rejouer les tests » relance sur le même tag.
 - **À venir** : l'agent CEO, puis les autres écrans (Sprint, détail de version, console des
   agents…), aujourd'hui des placeholders qui pointent vers leur maquette.

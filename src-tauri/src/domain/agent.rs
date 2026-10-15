@@ -245,6 +245,9 @@ pub struct AgentRunDetail {
     /// En pause : la file s'arrête après l'étape en cours.
     #[serde(default)]
     pub paused: bool,
+    /// Pipeline de l'agent déploiement.
+    #[serde(default)]
+    pub deploy: Option<DeployState>,
 }
 
 /* ---------- Exécution de l'agent développeur ---------- */
@@ -306,6 +309,109 @@ pub struct DevTask {
     #[ts(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_node_id: Option<String>,
+}
+
+/* ---------- Exécution de l'agent déploiement ---------- */
+
+/// État d'une étape du pipeline de déploiement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum DeployStageState {
+    Pending,
+    Running,
+    Success,
+    Failure,
+}
+
+/// Une des cinq étapes : pré-vol, build, tests de vérification, documentation, tag et release.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DeployStage {
+    pub state: DeployStageState,
+    /// Résumé d'une ligne (« 14 issues fermées · tag v0.1.1 »).
+    pub detail: Option<String>,
+}
+
+/// Verdict d'un test d'acceptation rejoué sur le binaire construit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum DeployTestStatus {
+    Queued,
+    Running,
+    Passed,
+    Failed,
+    /// Pas de critère d'acceptation, ou vérification impossible sur le binaire.
+    Unverifiable,
+}
+
+/// Ce que vous avez tranché pour un test en échec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum DeployDecision {
+    /// Issue rouverte sur la version suivante, retirée des notes.
+    Reopened,
+    /// Échec ignoré : l'issue reste close et figure dans les notes.
+    Ignored,
+}
+
+/// Un test par issue close de la version, dérivé de ses critères d'acceptation.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DeployTest {
+    pub number: u32,
+    pub title: String,
+    pub issue_type: Option<IssueType>,
+    /// Cases `- [ ]` de la section « Critères d'acceptation ».
+    pub criteria: Vec<String>,
+    pub status: DeployTestStatus,
+    /// Ce que l'agent a constaté (cause d'un échec, ce qui a été vérifié).
+    pub detail: Option<String>,
+    pub duration_ms: Option<u32>,
+    pub decision: Option<DeployDecision>,
+}
+
+/// Fichier produit par le build (installeur, binaire, archive).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DeployArtifact {
+    /// Chemin relatif au worktree.
+    pub path: String,
+    pub size_kb: Option<u32>,
+}
+
+/// Pipeline de l'agent déploiement sur une version close (son tag).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DeployState {
+    pub tag: String,
+    /// Libellé du sprint (« Lecture du projet »).
+    pub name: Option<String>,
+    /// Version où rouvrir une issue dont le test échoue.
+    pub next_version: Option<String>,
+    /// Les cinq étapes, dans l'ordre.
+    pub stages: Vec<DeployStage>,
+    /// Étape courante (1 à 5) ; 0 avant le pré-vol.
+    pub step: u8,
+    pub tests: Vec<DeployTest>,
+    pub artifacts: Vec<DeployArtifact>,
+    /// Notes de version (markdown), sans les issues en échec.
+    pub notes: Option<String>,
+    /// Notes réécrites à la main : plus régénérées après vos décisions.
+    pub notes_edited: bool,
+    /// Release existante (brouillon créé à la clôture) ou publiée.
+    pub release_url: Option<String>,
+    pub published: bool,
+    pub worktree: Option<String>,
+    #[ts(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

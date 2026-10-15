@@ -86,6 +86,7 @@ export interface Commands {
   agent_run_get: { args: { run: string }; result: AgentRunDetail };
   agent_reject: { args: { run: string; numbers: number[] }; result: null };
   agent_edit_body: { args: { run: string; number: number; body: string }; result: null };
+  agent_edit_notes: { args: { run: string; notes: string }; result: null };
   // Réglages
   settings_get: { args: NoArgs; result: Config };
   settings_set: { args: { config: Config }; result: Config };

@@ -82,6 +82,23 @@ pub async fn create(checkout: &Path, wt: &Path, branch: &str) -> AppResult<Strin
     Ok(base)
 }
 
+/// Crée (ou recrée) un worktree détaché sur `rev` (agent déploiement : le tag d'une version).
+pub async fn create_detached(checkout: &Path, wt: &Path, rev: &str) -> AppResult<()> {
+    if wt.exists() {
+        let path = wt.to_string_lossy().to_string();
+        let _ = git(checkout, None, &["worktree", "remove", "--force", &path]).await;
+        if wt.exists() {
+            std::fs::remove_dir_all(wt)?;
+        }
+    }
+    let _ = git(checkout, None, &["worktree", "prune"]).await;
+    if let Some(parent) = wt.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let path = wt.to_string_lossy().to_string();
+    git(checkout, None, &["worktree", "add", "--detach", &path, rev]).await
+}
+
 /// Commit d'ouverture (vide) : il permet d'ouvrir la PR en brouillon dès l'étape 2.
 pub async fn commit_empty(wt: &Path, author: &Author, message: &str) -> AppResult<()> {
     commit(wt, author, &["commit", "--allow-empty", "-m", message]).await

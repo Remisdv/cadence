@@ -1,7 +1,7 @@
 /**
  * Clôturer la version (maquette Version-Bump.dc.html) : choix de la version suivante, sort
  * des issues encore ouvertes, aperçu exact de ce qui sera écrit sur GitHub. Non réversible.
- * L'agent déploiement (déclenché après la clôture) arrive en 0.2.1.
+ * L'écran de fin propose de lancer l'agent déploiement sur la version close.
  */
 import { useState, type ReactNode } from "react";
 import type { CarryOver, CloseReport } from "@/lib/types";
@@ -26,8 +26,10 @@ import {
   useIssues,
   usePullRequests,
   useSettings,
+  useStartAgent,
   useVersions,
 } from "@/lib/query/queries";
+import { useNavigation } from "@/stores/navigation";
 
 const choices = [
   { title: "Sprint suivant", description: "Incrémente le dernier segment. Le choix par défaut.", tone: "clay" },
@@ -260,6 +262,18 @@ function WriteLine({ icon, tone, children }: { icon: IconName; tone: string; chi
 }
 
 function CloseDone({ report, onDone }: { report: CloseReport; onDone: () => void }) {
+  const start = useStartAgent();
+  const navigate = useNavigation((s) => s.navigate);
+  const deploy = () =>
+    start.mutate(
+      { kind: "deploy", input: { version: report.closed } },
+      {
+        onSuccess: () => {
+          onDone();
+          navigate({ id: "agent", kind: "deploy" });
+        },
+      },
+    );
   return (
     <>
       <DialogHeader title={`Version ${report.closed} clôturée`} icon="tag" />
@@ -273,10 +287,18 @@ function CloseDone({ report, onDone }: { report: CloseReport; onDone: () => void
         </Callout>
         {report.releaseUrl ? (
           <p className="text-body-sm text-tx2">
-            Les notes de version attendent dans un brouillon de release : relisez-les puis publiez-les
-            depuis GitHub.
+            Les notes de version attendent dans un brouillon de release. L'agent déploiement peut
+            construire <span className="mono">{report.tag}</span>, rejouer un test d'acceptation par
+            issue, rédiger les notes et publier la release après votre validation.
           </p>
-        ) : null}
+        ) : (
+          <p className="text-body-sm text-tx2">
+            L'agent déploiement peut construire <span className="mono">{report.tag}</span>, rejouer un
+            test d'acceptation par issue et préparer la release, publiée seulement après votre
+            validation.
+          </p>
+        )}
+        {start.isError && <Callout tone="danger">{start.error.message}</Callout>}
       </DialogBody>
       <DialogFooter>
         <div className="grow" />
@@ -285,6 +307,10 @@ function CloseDone({ report, onDone }: { report: CloseReport; onDone: () => void
             Ouvrir le brouillon
           </Button>
         )}
+        <Button icon={start.isPending ? undefined : "rocket"} disabled={start.isPending} onClick={deploy}>
+          {start.isPending && <Spinner />}
+          Lancer l'agent déploiement
+        </Button>
         <Button variant="primary" onClick={onDone}>
           Terminer
         </Button>

@@ -277,6 +277,15 @@ export function useEditProposal(run: string) {
   });
 }
 
+/** Agent déploiement : remplace les notes de version avant la publication. */
+export function useEditReleaseNotes(run: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notes: string) => call("agent_edit_notes", { run, notes }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
+  });
+}
+
 export const useAgentActions = (run: string | null) =>
   useQuery({
     queryKey: keys.agentActions(run ?? ""),

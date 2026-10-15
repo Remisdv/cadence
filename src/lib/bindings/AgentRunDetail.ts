@@ -3,6 +3,7 @@ import type { AgentKind } from "./AgentKind";
 import type { AgentLogLine } from "./AgentLogLine";
 import type { Autonomy } from "./Autonomy";
 import type { CtoItem } from "./CtoItem";
+import type { DeployState } from "./DeployState";
 import type { DevTask } from "./DevTask";
 import type { RunState } from "./RunState";
 
@@ -21,4 +22,8 @@ error: string | null,
 /**
  * En pause : la file s'arrête après l'étape en cours.
  */
-paused: boolean, };
+paused: boolean, 
+/**
+ * Pipeline de l'agent déploiement.
+ */
+deploy: DeployState | null, };

@@ -135,6 +135,7 @@ export const ctoMock = {
       log: [],
       error: null,
       paused: false,
+      deploy: null,
     };
     log("system", `› copie de ${data.project.repo.fullName} (main)…`);
     log("system", `› ${items.length} issue${items.length > 1 ? "s" : ""} à traiter`);
