@@ -3,13 +3,22 @@ import type { AgentKind } from "./AgentKind";
 import type { AgentLogLine } from "./AgentLogLine";
 import type { Autonomy } from "./Autonomy";
 import type { CtoItem } from "./CtoItem";
+import type { DevTask } from "./DevTask";
 import type { RunState } from "./RunState";
 
 /**
  * Exécution d'un agent : état, file d'issues, journal. Gardée dans `agent_runs`.
  */
-export type AgentRunDetail = { run: string, kind: AgentKind, state: RunState, autonomy: Autonomy, version: string | null, model: string | null, startedAt: string, endedAt: string | null, items: Array<CtoItem>, log: Array<AgentLogLine>, 
+export type AgentRunDetail = { run: string, kind: AgentKind, state: RunState, autonomy: Autonomy, version: string | null, model: string | null, startedAt: string, endedAt: string | null, items: Array<CtoItem>, 
+/**
+ * Tâches de l'agent développeur.
+ */
+tasks: Array<DevTask>, log: Array<AgentLogLine>, 
 /**
  * Pourquoi l'exécution a échoué, le cas échéant.
  */
-error: string | null, };
+error: string | null, 
+/**
+ * En pause : la file s'arrête après l'étape en cours.
+ */
+paused: boolean, };

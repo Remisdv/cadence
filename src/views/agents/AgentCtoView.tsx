@@ -5,8 +5,8 @@
  * L'agent lit le titre, la description et le code du dépôt (copie en lecture seule) ; il
  * n'écrit sur GitHub qu'après « Appliquer » (ou seul en autonomie `auto`).
  */
-import { useEffect, useMemo, useState } from "react";
-import type { AgentLogLine, AgentRunDetail, CtoItem, CtoItemState } from "@/lib/types";
+import { useMemo, useState } from "react";
+import type { AgentRunDetail, CtoItem, CtoItemState } from "@/lib/types";
 import { Page } from "@/components/layout/Page";
 import { EmptyState, ErrorState, LoadingState } from "@/components/layout/EmptyState";
 import { Icon, type IconName } from "@/components/icons/Icon";
@@ -29,7 +29,6 @@ import { autonomyLabels } from "@/lib/domain/agents";
 import { formatAgo, formatDuration } from "@/lib/domain/format";
 import { lineDiff } from "@/lib/domain/textDiff";
 import { useElapsedSeconds } from "@/lib/hooks/useElapsedSeconds";
-import { subscribe } from "@/lib/ipc/events";
 import {
   useAgentLatestRun,
   useAnswerCto,
@@ -41,6 +40,7 @@ import {
   useStopAgent,
 } from "@/lib/query/queries";
 import { openExternal } from "@/lib/platform";
+import { useRunLog } from "./RunConsole";
 
 const itemIcon: Record<CtoItemState, { icon: IconName; cls: string; label: string }> = {
   queued: { icon: "clock", cls: "text-tx3", label: "en file" },
@@ -405,21 +405,6 @@ function Proposed({ label, children }: { label: string; children: string }) {
 }
 
 /* ---------- Console ---------- */
-
-/** Journal de l'exécution, complété en direct par `agent://event`. */
-function useRunLog(run: AgentRunDetail): AgentLogLine[] {
-  const [live, setLive] = useState<AgentLogLine[]>([]);
-  // Un nouveau journal relu efface les lignes reçues entre-temps (elles y sont).
-  useEffect(() => setLive([]), [run.log.length]);
-  useEffect(
-    () =>
-      subscribe("agent://event", (e) => {
-        if (e.run === run.run) setLive((l) => [...l, { kind: e.kind, text: e.text }]);
-      }),
-    [run.run],
-  );
-  return [...run.log, ...live];
-}
 
 function RunConsole({ run }: { run: AgentRunDetail }) {
   const lines = useRunLog(run);

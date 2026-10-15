@@ -4,6 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call } from "@/lib/ipc/transport";
 import type {
+  AgentControl,
   AgentEngines,
   AgentInput,
   AgentKind,
@@ -239,6 +240,15 @@ export function useStartAgent() {
 /** Dernière exécution d'un agent (file, journal) ; rafraîchie à chaque `agent://state`. */
 export const useAgentLatestRun = (kind: AgentKind) =>
   useQuery({ queryKey: keys.agentLatestRun(kind), queryFn: () => call("agent_latest_run", { kind }) });
+
+/** Pause (après l'étape en cours), reprise, ou intervention dans le terminal de l'agent. */
+export function useControlAgent(run: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cmd: AgentControl) => call("agent_control", { run, cmd }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
+  });
+}
 
 export function useStopAgent() {
   const qc = useQueryClient();

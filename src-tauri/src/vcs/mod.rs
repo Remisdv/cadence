@@ -4,6 +4,7 @@
 //! `~/.cadence/wt/<num>` ; le dépôt principal de l'utilisateur n'est jamais modifié.
 
 pub mod checkout;
+pub mod worktree;
 
 use crate::domain::issue::IssueType;
 

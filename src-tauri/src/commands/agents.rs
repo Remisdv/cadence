@@ -5,7 +5,7 @@ use crate::{
     domain::{
         agent::{
             AgentActivity, AgentControl, AgentInput, AgentKind, AgentOverview, AgentRunDetail, ApplyReport,
-            CtoItemState, ProposedAction, RunState, RunSummary,
+            CtoItemState, DevTaskState, ProposedAction, RunState, RunSummary,
         },
         settings::AgentEngines,
     },
@@ -52,9 +52,11 @@ pub async fn agents_overview(state: State<'_, AppState>) -> AppResult<Vec<AgentO
         let (activity, pending, current, last) = match run {
             Some(handle) => {
                 let d = handle.detail.read().await;
-                let pending = d.items.iter().filter(|i| i.state.awaits_review()).count() as u32;
+                let pending = (d.items.iter().filter(|i| i.state.awaits_review()).count()
+                    + d.tasks.iter().filter(|t| t.state == DevTaskState::Review).count()) as u32;
                 let running = matches!(d.state, RunState::Prepare | RunState::Running)
-                    || d.items.iter().any(|i| i.state == CtoItemState::Running);
+                    || d.items.iter().any(|i| i.state == CtoItemState::Running)
+                    || d.tasks.iter().any(|t| t.state == DevTaskState::Running);
                 let activity = if running {
                     AgentActivity::Running
                 } else if pending > 0 {
@@ -63,13 +65,16 @@ pub async fn agents_overview(state: State<'_, AppState>) -> AppResult<Vec<AgentO
                     AgentActivity::Idle
                 };
                 let done = d.items.iter().filter(|i| !matches!(i.state, CtoItemState::Queued | CtoItemState::Running)).count();
+                let dev_task = d.tasks.iter().find(|t| t.state == DevTaskState::Running);
                 let current = (!d.state.is_terminal()).then(|| RunSummary {
                     run: d.run.clone(),
                     state: d.state,
-                    issue: d.items.iter().find(|i| i.state == CtoItemState::Running).map(|i| i.number),
-                    step: Some(done.min(255) as u8),
-                    steps: Some(d.items.len().min(255) as u8),
-                    started_at: d.started_at.clone(),
+                    issue: dev_task
+                        .map(|t| t.number)
+                        .or_else(|| d.items.iter().find(|i| i.state == CtoItemState::Running).map(|i| i.number)),
+                    step: Some(dev_task.map(|t| t.step).unwrap_or(done.min(255) as u8)),
+                    steps: Some(if dev_task.is_some() { crate::agents::dev::STEPS } else { d.items.len().min(255) as u8 }),
+                    started_at: dev_task.and_then(|t| t.started_at.clone()).unwrap_or_else(|| d.started_at.clone()),
                 });
                 (activity, pending, current, Some(d.ended_at.clone().unwrap_or_else(|| d.started_at.clone())))
             }
@@ -94,7 +99,8 @@ pub async fn agent_start(
             Some(numbers) => engine::send_issues(&app, &state, numbers).await,
             None => engine::start_cto(&app, &state, input).await,
         },
-        AgentKind::Ceo | AgentKind::Dev => Err(AppError::NotImplemented("cet agent (version 0.2.0)")),
+        AgentKind::Dev => crate::agents::dev::start(&app, &state, input).await,
+        AgentKind::Ceo => Err(AppError::NotImplemented("l'agent CEO (version 0.2.0)")),
         AgentKind::Deploy => Err(AppError::NotImplemented("l'agent déploiement (version 0.2.1)")),
     }
 }
@@ -113,7 +119,7 @@ pub async fn agent_run_get(state: State<'_, AppState>, run: String) -> AppResult
     Ok(engine::handle(&state, &run).await?.detail.read().await.clone())
 }
 
-/// Arrêt d'une exécution. Pause, reprise et intervention arrivent avec l'agent développeur.
+/// Arrêt, pause (après l'étape en cours), reprise, intervention dans le terminal.
 #[tauri::command]
 pub async fn agent_control(
     app: AppHandle,
@@ -123,7 +129,9 @@ pub async fn agent_control(
 ) -> AppResult<()> {
     match cmd {
         AgentControl::Stop => engine::stop(&app, &state, &run).await,
-        _ => Err(AppError::NotImplemented("pause et intervention (version 0.2.0)")),
+        AgentControl::Pause => engine::set_paused(&app, &state, &run, true).await,
+        AgentControl::Resume => engine::set_paused(&app, &state, &run, false).await,
+        AgentControl::Message { text } => engine::intervene(&app, &state, &run, text).await,
     }
 }
 

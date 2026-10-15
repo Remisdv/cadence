@@ -21,7 +21,19 @@ use crate::{
 /// Outils autorisés : lire, chercher, lister. Rien qui écrive ni n'exécute.
 pub const READ_ONLY_TOOLS: &str = "Read,Grep,Glob";
 /// Interdits explicitement, en plus de l'absence d'autorisation.
-const DENIED_TOOLS: &str = "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task";
+const DENIED_READ_ONLY: &str = "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task";
+
+/// Agent développeur : écrire dans le worktree, construire et tester. Jamais de push, de
+/// remote, de config Git ni d'accès réseau : seul Cadence pousse, après garde-fous.
+pub const WRITE_TOOLS: &str = "Read,Grep,Glob,Edit,Write,MultiEdit,Bash(cargo:*),Bash(pnpm:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(node:*),Bash(bun:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(go:*),Bash(make:*),Bash(dotnet:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(ls:*)";
+const DENIED_WRITE: &str = "Bash(git push:*),Bash(git remote:*),Bash(git config:*),Bash(git commit:*),Bash(gh:*),Bash(curl:*),Bash(wget:*),WebFetch,WebSearch,Task";
+
+/// Jeu d'outils d'une session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tools {
+    ReadOnly,
+    Write,
+}
 
 pub struct SessionOptions<'a> {
     pub cli: &'a Path,
@@ -35,6 +47,7 @@ pub struct SessionOptions<'a> {
     pub resume: Option<&'a str>,
     pub max_turns: u32,
     pub timeout: Duration,
+    pub tools: Tools,
 }
 
 #[derive(Debug, Default)]
@@ -54,9 +67,19 @@ pub async fn run(
     let mut cmd = crate::auth::cli::command(opts.cli);
     cmd.args(["-p", "--output-format", "stream-json", "--verbose"])
         .args(["--max-turns", &opts.max_turns.to_string()])
-        .args(["--allowedTools", READ_ONLY_TOOLS, "--disallowedTools", DENIED_TOOLS])
         .current_dir(opts.cwd)
+        // Aucun identifiant Git à portée de l'agent : même un push qui passerait le filtre
+        // d'outils échouerait.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "credential.helper")
+        .env("GIT_CONFIG_VALUE_0", "")
         .stdin(Stdio::piped());
+    match opts.tools {
+        Tools::ReadOnly => cmd.args(["--allowedTools", READ_ONLY_TOOLS, "--disallowedTools", DENIED_READ_ONLY]),
+        Tools::Write => cmd.args(["--allowedTools", WRITE_TOOLS, "--disallowedTools", DENIED_WRITE]),
+    };
     if let Some(model) = opts.model {
         cmd.args(["--model", model]);
     }
@@ -204,19 +227,25 @@ pub fn console_lines(event: &Value) -> Vec<(AgentEventKind, String)> {
 
 fn tool_line(block: &Value) -> (AgentEventKind, String) {
     let input = &block["input"];
-    let text = match block["name"].as_str().unwrap_or_default() {
-        "Read" => format!("read  {}", short_path(input["file_path"].as_str().unwrap_or("?"))),
-        "Grep" => format!("grep  \"{}\"", input["pattern"].as_str().unwrap_or("?")),
-        "Glob" => format!("glob  {}", input["pattern"].as_str().unwrap_or("?")),
-        other => format!("outil {other}"),
-    };
-    (AgentEventKind::Read, text)
+    let path = || short_path(input["file_path"].as_str().unwrap_or("?"));
+    match block["name"].as_str().unwrap_or_default() {
+        "Read" => (AgentEventKind::Read, format!("read  {}", path())),
+        "Grep" => (AgentEventKind::Read, format!("grep  \"{}\"", input["pattern"].as_str().unwrap_or("?"))),
+        "Glob" => (AgentEventKind::Read, format!("glob  {}", input["pattern"].as_str().unwrap_or("?"))),
+        "Write" => (AgentEventKind::Write, format!("write {}", path())),
+        "Edit" | "MultiEdit" => (AgentEventKind::Write, format!("edit  {}", path())),
+        "Bash" => {
+            let command = input["command"].as_str().unwrap_or("?").lines().next().unwrap_or("?");
+            (AgentEventKind::Read, format!("bash  {command}"))
+        }
+        other => (AgentEventKind::System, format!("outil {other}")),
+    }
 }
 
 /// Chemin relatif au dépôt quand c'est possible (le clone vit dans un dossier de l'app).
 fn short_path(path: &str) -> String {
     let normalized = path.replace('\\', "/");
-    for marker in ["/repos/"] {
+    for marker in ["/repos/", "/wt/"] {
         if let Some((_, rest)) = normalized.split_once(marker) {
             // repos/<owner>/<name>/<chemin>
             if let Some(rel) = rest.splitn(3, '/').nth(2) {

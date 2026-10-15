@@ -33,3 +33,13 @@ export async function pickFile(title: string): Promise<string | null> {
   const selected = await open({ title, multiple: false, directory: false });
   return typeof selected === "string" ? selected : null;
 }
+
+/** Montre un dossier dans l'explorateur de fichiers (worktree d'un agent). */
+export async function revealPath(path: string): Promise<void> {
+  if (isTauri) {
+    const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+    await revealItemInDir(path);
+  } else {
+    await copyText(path);
+  }
+}

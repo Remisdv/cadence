@@ -113,6 +113,8 @@ pub struct AgentInput {
     pub version: Option<String>,
     /// Issues ciblées (CTO sur une issue, tâches de l'agent dev).
     pub issues: Option<Vec<u32>>,
+    /// Agent développeur : faire lancer les tests par l'agent (étape 4). Vrai par défaut.
+    pub run_tests: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -234,9 +236,76 @@ pub struct AgentRunDetail {
     pub started_at: String,
     pub ended_at: Option<String>,
     pub items: Vec<CtoItem>,
+    /// Tâches de l'agent développeur.
+    #[serde(default)]
+    pub tasks: Vec<DevTask>,
     pub log: Vec<AgentLogLine>,
     /// Pourquoi l'exécution a échoué, le cas échéant.
     pub error: Option<String>,
+    /// En pause : la file s'arrête après l'étape en cours.
+    #[serde(default)]
+    pub paused: bool,
+}
+
+/* ---------- Exécution de l'agent développeur ---------- */
+
+/// Où en est une tâche de l'agent développeur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum DevTaskState {
+    Queued,
+    Running,
+    /// Code commité dans le worktree : le push attend votre validation.
+    Review,
+    Done,
+    Skipped,
+    Failed,
+}
+
+/// Fichier touché par une tâche (diffstat du worktree).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DevFile {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+    /// Fichier créé par la tâche.
+    pub added: bool,
+}
+
+/// Une issue confiée à l'agent développeur : six étapes, de l'analyse à la demande de revue.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DevTask {
+    pub number: u32,
+    pub title: String,
+    pub issue_type: Option<IssueType>,
+    pub estimate: Option<String>,
+    pub state: DevTaskState,
+    /// Étape courante (1 à 6) ; 0 tant que la tâche est en file.
+    pub step: u8,
+    /// Résumé de l'étape terminée, par étape (index 0 = étape 1).
+    pub step_notes: Vec<String>,
+    pub branch: String,
+    pub worktree: Option<String>,
+    pub pr: Option<u32>,
+    pub pr_url: Option<String>,
+    pub files: Vec<DevFile>,
+    pub additions: u32,
+    pub deletions: u32,
+    /// Ce que l'agent dit avoir fait (corps du commentaire sur la PR).
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub started_at: Option<String>,
+    #[ts(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[ts(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

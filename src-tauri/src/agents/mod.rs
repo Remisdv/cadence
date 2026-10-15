@@ -7,6 +7,7 @@
 
 pub mod claude;
 pub mod cto;
+pub mod dev;
 pub mod engine;
 pub mod runner;
 

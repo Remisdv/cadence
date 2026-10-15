@@ -8,4 +8,8 @@ version?: string,
 /**
  * Issues ciblées (CTO sur une issue, tâches de l'agent dev).
  */
-issues?: Array<number>, };
+issues?: Array<number>, 
+/**
+ * Agent développeur : faire lancer les tests par l'agent (étape 4). Vrai par défaut.
+ */
+runTests?: boolean, };

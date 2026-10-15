@@ -198,5 +198,16 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   avec « Envoyer à l'agent CTO », questions avec réponse renvoyée dans sa session, propriétés
   (version, labels, assigné, branche et PR liée, estimation). Une issue créée avec « Envoyer à
   l'agent CTO » rejoint la file en cours, ou en lance une.
-- **À venir** : les autres écrans (Sprint, détail de version, console des agents…), aujourd'hui
-  des placeholders qui pointent vers leur maquette.
+- **Agent développeur** (barre latérale › Développeur) : on coche les issues de la version, elles
+  passent l'une après l'autre en six étapes. (1) Analyse dans un worktree isolé
+  (`<worktree_root>/<owner>/<nom>/<issue>`, branche `<type>/<num>-<slug>`) ; (2) commit d'ouverture
+  vide poussé par Cadence et PR en brouillon (label `agent/dev`) ; (3) implémentation et (4) tests
+  dans la même session Claude Code, avec outils d'écriture et commandes de build/test seulement ;
+  puis commit par Cadence (identité GitHub noreply de l'utilisateur). (5) Le push attend votre
+  validation (sauf autonomie `auto`) ; (6) la PR sort du brouillon avec un commentaire signé. En
+  `propose`, rien ne quitte la machine. Garde-fous : `git push`, `git remote`, `git config`, `gh`,
+  `curl` interdits à l'agent, aucun assistant d'identifiants dans son environnement, `pushurl`
+  invalide sur la copie, et Cadence refuse de pousser sur la branche par défaut. Pause (après
+  l'étape en cours), arrêt, et intervention depuis le terminal (reprise à l'étape suivante).
+- **À venir** : l'agent CEO, puis les autres écrans (Sprint, détail de version, console des
+  agents…), aujourd'hui des placeholders qui pointent vers leur maquette.

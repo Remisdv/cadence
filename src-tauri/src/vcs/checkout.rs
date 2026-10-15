@@ -26,24 +26,27 @@ pub fn checkout_dir(base: &Path, repo: &str) -> AppResult<PathBuf> {
 
 /// Clone ou remet à jour la copie sur la dernière version de `branch`. Renvoie son dossier.
 pub async fn ensure(base: &Path, repo: &str, branch: &str, token: &SecretString) -> AppResult<PathBuf> {
-    let git = which::which("git").map_err(|_| AppError::Config("Git est introuvable sur cette machine.".into()))?;
     let dir = checkout_dir(base, repo)?;
+    let fail = |e: AppError| AppError::Validation(format!("Copie du dépôt impossible ({e})"));
     if dir.join(".git").exists() {
-        run(&git, token, Some(&dir), &["fetch", "--depth", "1", "origin", branch]).await?;
-        run(&git, token, Some(&dir), &["reset", "--hard", "FETCH_HEAD"]).await?;
-        run(&git, token, Some(&dir), &["clean", "-fdq"]).await?;
+        git(&dir, Some(token), &["fetch", "--depth", "1", "origin", branch]).await.map_err(fail)?;
+        git(&dir, None, &["reset", "--hard", "FETCH_HEAD"]).await.map_err(fail)?;
+        git(&dir, None, &["clean", "-fdq"]).await.map_err(fail)?;
     } else {
-        if let Some(parent) = dir.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        let parent = dir.parent().ok_or_else(|| AppError::Internal("dossier de copie invalide".into()))?;
+        std::fs::create_dir_all(parent)?;
         if dir.exists() {
             // Reste d'un clone interrompu.
             std::fs::remove_dir_all(&dir)?;
         }
         let url = format!("https://github.com/{repo}.git");
         let target = dir.to_string_lossy().to_string();
-        run(&git, token, None, &["clone", "--depth", "1", "--single-branch", "--branch", branch, &url, &target]).await?;
+        git(parent, Some(token), &["clone", "--depth", "1", "--single-branch", "--branch", branch, &url, &target])
+            .await
+            .map_err(fail)?;
     }
+    // Garde-fou : un `git push` lancé depuis la copie ou un worktree n'aboutit nulle part.
+    git(&dir, None, &["config", "remote.origin.pushurl", "https://invalid.invalid/cadence-no-push"]).await?;
     Ok(dir)
 }
 
@@ -53,22 +56,35 @@ fn auth_header(token: &SecretString) -> String {
     format!("AUTHORIZATION: basic {basic}")
 }
 
-async fn run(git: &Path, token: &SecretString, cwd: Option<&Path>, args: &[&str]) -> AppResult<()> {
-    let mut cmd = Command::new(git);
+/// Lance Git dans `cwd`. Avec `token`, l'authentification GitHub passe par la config en
+/// variables d'environnement ; sans, aucun assistant d'identifiants n'est sollicité.
+pub async fn git(cwd: &Path, token: Option<&SecretString>, args: &[&str]) -> AppResult<()> {
+    git_out(cwd, token, args).await.map(drop)
+}
+
+/// Comme `git`, en renvoyant la sortie standard.
+pub async fn git_out(cwd: &Path, token: Option<&SecretString>, args: &[&str]) -> AppResult<String> {
+    let bin = which::which("git").map_err(|_| AppError::Config("Git est introuvable sur cette machine.".into()))?;
+    let mut cmd = Command::new(bin);
     cmd.args(args)
+        .current_dir(cwd)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "never")
-        .env("GIT_CONFIG_COUNT", "2")
         .env("GIT_CONFIG_KEY_0", "credential.helper")
         .env("GIT_CONFIG_VALUE_0", "")
-        .env("GIT_CONFIG_KEY_1", "http.https://github.com/.extraheader")
-        .env("GIT_CONFIG_VALUE_1", auth_header(token))
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
+    match token {
+        Some(token) => {
+            cmd.env("GIT_CONFIG_COUNT", "2")
+                .env("GIT_CONFIG_KEY_1", "http.https://github.com/.extraheader")
+                .env("GIT_CONFIG_VALUE_1", auth_header(token));
+        }
+        None => {
+            cmd.env("GIT_CONFIG_COUNT", "1");
+        }
     }
     #[cfg(windows)]
     {
@@ -79,11 +95,11 @@ async fn run(git: &Path, token: &SecretString, cwd: Option<&Path>, args: &[&str]
         .await
         .map_err(|_| AppError::Network(format!("git {} ne répond pas", args[0])))??;
     if output.status.success() {
-        return Ok(());
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     let first = stderr.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("échec");
-    Err(AppError::Validation(format!("Copie du dépôt impossible (git {}) : {first}", args[0])))
+    Err(AppError::Validation(format!("git {} : {first}", args[0])))
 }
 
 #[cfg(test)]

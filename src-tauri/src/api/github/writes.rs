@@ -99,6 +99,72 @@ pub async fn create_comment(http: &Client, token: &SecretString, repo: &str, num
         .map(drop)
 }
 
+/* ---------- Pull requests ---------- */
+
+/// PR ouverte : numéro, URL, identifiant GraphQL (pour la sortir du brouillon).
+#[derive(Debug, Clone)]
+pub struct OpenedPull {
+    pub number: u32,
+    pub url: String,
+    pub node_id: String,
+}
+
+fn opened(body: &Value) -> AppResult<OpenedPull> {
+    Ok(OpenedPull {
+        number: body["number"].as_u64().ok_or_else(|| AppError::GitHub("PR illisible".into()))? as u32,
+        url: body["html_url"].as_str().unwrap_or_default().to_string(),
+        node_id: body["node_id"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
+/// Ouvre une PR (en brouillon si `draft`). Si une PR existe déjà pour la branche, la renvoie.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_pull(
+    http: &Client,
+    token: &SecretString,
+    repo: &str,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &str,
+    draft: bool,
+) -> AppResult<OpenedPull> {
+    let payload = json!({ "title": title, "head": head, "base": base, "body": body, "draft": draft });
+    match send(authed(http.post(format!("{API_URL}/repos/{repo}/pulls")), token).json(&payload), "Ouverture de la PR").await {
+        Ok(body) => opened(&body),
+        Err(AppError::Validation(message)) if message.contains("already exists") => {
+            let owner = repo.split('/').next().unwrap_or_default();
+            let url = format!("{API_URL}/repos/{repo}/pulls?state=open&head={owner}:{head}");
+            let list = send(authed(http.get(url), token), "Lecture de la PR existante").await?;
+            list.as_array()
+                .and_then(|l| l.first())
+                .map(opened)
+                .unwrap_or_else(|| Err(AppError::Validation(message)))
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Sort une PR du brouillon (mutation GraphQL `markPullRequestReadyForReview`).
+pub async fn mark_ready(http: &Client, token: &SecretString, node_id: &str) -> AppResult<()> {
+    let query = "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }";
+    let body = send(
+        authed(http.post(format!("{API_URL}/graphql")), token).json(&json!({ "query": query, "variables": { "id": node_id } })),
+        "Sortie du brouillon",
+    )
+    .await?;
+    if let Some(errors) = body.get("errors") {
+        return Err(AppError::GitHub(format!("sortie du brouillon : {errors}")));
+    }
+    Ok(())
+}
+
+/// Ajoute des labels à une issue ou une PR (sans retirer les autres).
+pub async fn add_labels(http: &Client, token: &SecretString, repo: &str, number: u32, labels: &[&str]) -> AppResult<()> {
+    let url = format!("{API_URL}/repos/{repo}/issues/{number}/labels");
+    send(authed(http.post(url), token).json(&json!({ "labels": labels })), "Ajout des labels").await.map(drop)
+}
+
 /* ---------- Milestones ---------- */
 
 pub async fn create_milestone(

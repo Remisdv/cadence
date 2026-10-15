@@ -16,6 +16,7 @@ import { CommandError } from "../errors";
 import { mockBus } from "./bus";
 import * as data from "./fixtures";
 import { ctoMock } from "./cto";
+import { devMock } from "./dev";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -314,24 +315,37 @@ const handlers: Handlers = {
   },
   agents_overview: () => data.agentsOverview,
   agent_start: ({ kind, input }) => {
-    if (kind !== "cto") fail("agent_start", "Cet agent arrive en version 0.2.0.");
+    if (kind === "dev") {
+      if (!input.issues?.length) fail("agent_start", "Choisissez au moins une tâche.");
+      try {
+        return devMock.start(input.issues);
+      } catch (e) {
+        fail("agent_start", (e as Error).message);
+      }
+    }
+    if (kind !== "cto") fail("agent_start", "Cet agent arrive plus tard.");
     return ctoMock.start(input.issues?.length ? input.issues : undefined);
   },
-  agent_control: ({ cmd }) => {
-    if (cmd.cmd !== "stop") fail("agent_control", "Pause et intervention arrivent en version 0.2.0.");
-    ctoMock.stop();
+  agent_control: ({ run, cmd }) => {
+    const dev = run.startsWith("dev-");
+    if (cmd.cmd === "stop") (dev ? devMock : ctoMock).stop();
+    else if (!dev) fail("agent_control", "L'agent CTO se met seulement en arrêt.");
+    else if (cmd.cmd === "pause") devMock.pause(true);
+    else if (cmd.cmd === "resume") devMock.pause(false);
+    else devMock.message(cmd.text);
     return null;
   },
   agent_actions: () => [],
-  agent_apply: ({ ids }) => ctoMock.apply(ids),
-  agent_latest_run: ({ kind }) => (kind === "cto" ? structuredClone(ctoMock.latest()) : null),
-  agent_run_get: () => {
-    const run = ctoMock.latest();
-    if (!run) fail("agent_run_get", "Exécution introuvable.");
-    return structuredClone(run);
+  agent_apply: ({ run, ids }) => (run.startsWith("dev-") ? devMock.push(ids) : ctoMock.apply(ids)),
+  agent_latest_run: ({ kind }) =>
+    structuredClone(kind === "cto" ? ctoMock.latest() : kind === "dev" ? devMock.latest() : null),
+  agent_run_get: ({ run }) => {
+    const found = run.startsWith("dev-") ? devMock.latest() : ctoMock.latest();
+    if (!found) fail("agent_run_get", "Exécution introuvable.");
+    return structuredClone(found);
   },
-  agent_reject: ({ numbers }) => {
-    ctoMock.reject(numbers);
+  agent_reject: ({ run, numbers }) => {
+    (run.startsWith("dev-") ? devMock.skip : ctoMock.reject)(numbers);
     return null;
   },
   agent_edit_body: ({ number, body }) => {

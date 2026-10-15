@@ -64,6 +64,9 @@ export type { AgentRunDetail } from "./bindings/AgentRunDetail";
 export type { AgentLogLine } from "./bindings/AgentLogLine";
 export type { CtoItem } from "./bindings/CtoItem";
 export type { CtoItemState } from "./bindings/CtoItemState";
+export type { DevTask } from "./bindings/DevTask";
+export type { DevTaskState } from "./bindings/DevTaskState";
+export type { DevFile } from "./bindings/DevFile";
 
 // Agents
 export type { AgentKind } from "./bindings/AgentKind";

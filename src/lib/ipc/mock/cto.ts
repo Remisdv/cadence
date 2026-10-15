@@ -131,8 +131,10 @@ export const ctoMock = {
       startedAt: new Date().toISOString(),
       endedAt: null,
       items,
+      tasks: [],
       log: [],
       error: null,
+      paused: false,
     };
     log("system", `› copie de ${data.project.repo.fullName} (main)…`);
     log("system", `› ${items.length} issue${items.length > 1 ? "s" : ""} à traiter`);

@@ -23,7 +23,7 @@ use crate::{
     domain::{
         agent::{
             AgentAction, AgentInput, AgentKind, AgentLogLine, AgentRunDetail, ApplyFailure, ApplyReport,
-            Autonomy, CtoItem, CtoItemState, ProposedAction, RunState,
+            Autonomy, CtoItem, CtoItemState, DevTaskState, ProposedAction, RunState,
         },
         issue::CtoAnswer,
         settings::AgentEngine as Engine,
@@ -41,9 +41,17 @@ const MAX_TURNS: u32 = 40;
 
 pub struct RunHandle {
     pub detail: RwLock<AgentRunDetail>,
-    stop: watch::Sender<bool>,
+    pub(crate) stop: watch::Sender<bool>,
     /// Une session Claude Code à la fois par exécution.
-    session_lock: tokio::sync::Mutex<()>,
+    pub(crate) session_lock: tokio::sync::Mutex<()>,
+    /// Interventions tapées dans le terminal, reprises dans la prochaine requête de l'agent.
+    notes: Mutex<Vec<String>>,
+}
+
+impl RunHandle {
+    pub fn take_notes(&self) -> Vec<String> {
+        std::mem::take(&mut *self.notes.lock().unwrap())
+    }
 }
 
 #[derive(Default)]
@@ -56,9 +64,14 @@ impl AgentEngine {
         self.runs.lock().unwrap().get(run).cloned()
     }
 
-    fn insert(&self, detail: AgentRunDetail) -> Arc<RunHandle> {
+    pub(crate) fn insert(&self, detail: AgentRunDetail) -> Arc<RunHandle> {
         let (stop, _) = watch::channel(false);
-        let handle = Arc::new(RunHandle { detail: RwLock::new(detail), stop, session_lock: Default::default() });
+        let handle = Arc::new(RunHandle {
+            detail: RwLock::new(detail),
+            stop,
+            session_lock: Default::default(),
+            notes: Mutex::default(),
+        });
         let run = handle.detail.try_read().map(|d| d.run.clone()).unwrap_or_default();
         self.runs.lock().unwrap().insert(run, handle.clone());
         handle
@@ -118,8 +131,15 @@ fn recovered(mut detail: AgentRunDetail) -> AgentRunDetail {
             item.error = Some("Session interrompue (Cadence a été fermé).".into());
         }
     }
+    for task in &mut detail.tasks {
+        if task.state == DevTaskState::Running {
+            task.state = DevTaskState::Failed;
+            task.error = Some("Session interrompue (Cadence a été fermé).".into());
+        }
+    }
     if interrupted {
-        let waiting = detail.items.iter().any(|i| i.state.awaits_review());
+        let waiting = detail.items.iter().any(|i| i.state.awaits_review())
+            || detail.tasks.iter().any(|t| t.state == DevTaskState::Review);
         detail.state = if waiting { RunState::Review } else { RunState::Discarded };
         detail.ended_at.get_or_insert_with(version::now_iso);
     }
@@ -155,6 +175,19 @@ pub fn proposed_actions(detail: &AgentRunDetail) -> Vec<ProposedAction> {
             }
             _ => {}
         }
+    }
+    for task in detail.tasks.iter().filter(|t| t.state == DevTaskState::Review) {
+        out.push(ProposedAction {
+            id: format!("push-{}", task.number),
+            preview: format!(
+                "Pousser {} ({} fichier(s), +{} −{}) et sortir la PR du brouillon",
+                task.branch,
+                task.files.len(),
+                task.additions,
+                task.deletions
+            ),
+            action: AgentAction::PushCommits { branch: task.branch.clone() },
+        });
     }
     out
 }
@@ -228,6 +261,8 @@ pub async fn start_cto(app: &AppHandle, state: &AppState, input: AgentInput) -> 
         items,
         log: vec![],
         error: None,
+        tasks: vec![],
+        paused: false,
     };
     let run = detail.run.clone();
     cache.save_run(&detail).await?;
@@ -278,7 +313,7 @@ pub async fn send_issues(app: &AppHandle, state: &AppState, numbers: Vec<u32>) -
             return Ok(run);
         }
     }
-    start_cto(app, state, AgentInput { version: None, issues: Some(numbers) }).await
+    start_cto(app, state, AgentInput { version: None, issues: Some(numbers), run_tests: None }).await
 }
 
 /// Issues à traiter : ouvertes, de la version (ou listées), pas encore passées par le CTO
@@ -370,7 +405,8 @@ async fn run_queue(
         log(app, handle, AgentEventKind::System, format!("› #{} {}", item.number, item.title)).await;
 
         let prompt = cto::issue_prompt(&repo, &item);
-        let outcome = session(app, handle, &cli, &cwd, model.as_deref(), Some(&system), &prompt, None, max).await;
+        let outcome =
+            session(app, handle, &cli, &cwd, model.as_deref(), Some(&system), &prompt, None, max, claude::Tools::ReadOnly).await;
         let auto = finish_item(app, state, handle, index, outcome).await?;
         if auto && let Err(err) = apply_item(app, state, handle, item.number).await {
             log(app, handle, AgentEventKind::Error, format!("✕ #{} non appliquée : {err}", item.number)).await;
@@ -445,7 +481,7 @@ async fn finish_item(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn session(
+pub(crate) async fn session(
     app: &AppHandle,
     handle: &Arc<RunHandle>,
     cli: &std::path::Path,
@@ -455,9 +491,20 @@ async fn session(
     prompt: &str,
     resume: Option<&str>,
     max: Duration,
+    tools: claude::Tools,
 ) -> AppResult<claude::SessionOutcome> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let opts = claude::SessionOptions { cli, cwd, model, system, prompt, resume, max_turns: MAX_TURNS, timeout: max };
+    let opts = claude::SessionOptions {
+        cli,
+        cwd,
+        model,
+        system,
+        prompt,
+        resume,
+        max_turns: MAX_TURNS,
+        timeout: max,
+        tools,
+    };
     let run = claude::run(opts, handle.stop.subscribe(), move |kind, text| {
         let _ = tx.send((kind, text));
     });
@@ -524,7 +571,8 @@ pub async fn answer(app: &AppHandle, state: &AppState, number: u32, answers: Vec
         let outcome = match cli {
             Some(cli) => {
                 let prompt = cto::answers_prompt(&item.questions);
-                session(&app, &handle, &cli, &cwd, model.as_deref(), None, &prompt, item.session_id.as_deref(), max).await
+                session(&app, &handle, &cli, &cwd, model.as_deref(), None, &prompt, item.session_id.as_deref(), max, claude::Tools::ReadOnly)
+                    .await
             }
             None => Err(AppError::Validation("Claude Code est introuvable.".into())),
         };
@@ -539,6 +587,13 @@ pub async fn apply(app: &AppHandle, state: &AppState, run: &str, ids: Vec<String
     let handle = handle(state, run).await?;
     let mut report = ApplyReport { applied: vec![], failed: vec![] };
     for id in ids {
+        if let Some(number) = id.strip_prefix("push-").and_then(|n| n.parse::<u32>().ok()) {
+            match crate::agents::dev::push_task(app, state, &handle, number).await {
+                Ok(()) => report.applied.push(id),
+                Err(err) => report.failed.push(ApplyFailure { id, message: err.to_string() }),
+            }
+            continue;
+        }
         let Some(number) = id.strip_prefix("update-").and_then(|n| n.parse::<u32>().ok()) else {
             report.failed.push(ApplyFailure { id, message: "Action inconnue.".into() });
             continue;
@@ -560,6 +615,11 @@ pub async fn reject(app: &AppHandle, state: &AppState, run: &str, numbers: Vec<u
         for item in d.items.iter_mut().filter(|i| numbers.contains(&i.number)) {
             if matches!(item.state, CtoItemState::Queued | CtoItemState::Ready | CtoItemState::Questions | CtoItemState::Failed) {
                 item.state = CtoItemState::Skipped;
+            }
+        }
+        for task in d.tasks.iter_mut().filter(|t| numbers.contains(&t.number)) {
+            if matches!(task.state, DevTaskState::Queued | DevTaskState::Review | DevTaskState::Failed) {
+                task.state = DevTaskState::Skipped;
             }
         }
     }
@@ -593,7 +653,8 @@ pub async fn stop(app: &AppHandle, state: &AppState, run: &str) -> AppResult<()>
     {
         let mut d = handle.detail.write().await;
         if !d.state.is_terminal() {
-            let waiting = d.items.iter().any(|i| i.state.awaits_review());
+            let waiting = d.items.iter().any(|i| i.state.awaits_review())
+                || d.tasks.iter().any(|t| t.state == DevTaskState::Review);
             d.state = if waiting { RunState::Review } else { RunState::Discarded };
             d.ended_at.get_or_insert_with(version::now_iso);
         }
@@ -601,6 +662,28 @@ pub async fn stop(app: &AppHandle, state: &AppState, run: &str) -> AppResult<()>
     log(app, &handle, AgentEventKind::System, "› arrêtée à votre demande".into()).await;
     persist(state, &handle).await;
     emit_state(app, &handle).await;
+    Ok(())
+}
+
+/// Pause (après l'étape en cours) ou reprise.
+pub async fn set_paused(app: &AppHandle, state: &AppState, run: &str, paused: bool) -> AppResult<()> {
+    let handle = handle(state, run).await?;
+    handle.detail.write().await.paused = paused;
+    log(app, &handle, AgentEventKind::System, if paused { "› pause demandée (après l'étape en cours)".into() } else { "› reprise".into() }).await;
+    persist(state, &handle).await;
+    emit_state(app, &handle).await;
+    Ok(())
+}
+
+/// Intervention tapée dans le terminal : reprise dans la prochaine requête de l'agent.
+pub async fn intervene(app: &AppHandle, state: &AppState, run: &str, text: String) -> AppResult<()> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err(AppError::Validation("Message vide.".into()));
+    }
+    let handle = handle(state, run).await?;
+    handle.notes.lock().unwrap().push(text.clone());
+    log(app, &handle, AgentEventKind::Message, format!("vous › {text}")).await;
     Ok(())
 }
 
@@ -699,8 +782,10 @@ fn signed_comment(item: &CtoItem) -> String {
 async fn settle(app: &AppHandle, state: &AppState, handle: &Arc<RunHandle>) {
     {
         let mut d = handle.detail.write().await;
-        let busy = d.items.iter().any(|i| matches!(i.state, CtoItemState::Queued | CtoItemState::Running));
-        let waiting = d.items.iter().any(|i| i.state.awaits_review());
+        let busy = d.items.iter().any(|i| matches!(i.state, CtoItemState::Queued | CtoItemState::Running))
+            || d.tasks.iter().any(|t| matches!(t.state, DevTaskState::Queued | DevTaskState::Running));
+        let waiting = d.items.iter().any(|i| i.state.awaits_review())
+            || d.tasks.iter().any(|t| t.state == DevTaskState::Review);
         if d.state == RunState::Review && !busy && !waiting {
             d.state = RunState::Done;
             d.ended_at = Some(version::now_iso());
@@ -712,7 +797,7 @@ async fn settle(app: &AppHandle, state: &AppState, handle: &Arc<RunHandle>) {
 
 /* ---------- Journal, persistance, événements ---------- */
 
-async fn log(app: &AppHandle, handle: &Arc<RunHandle>, kind: AgentEventKind, text: String) {
+pub(crate) async fn log(app: &AppHandle, handle: &Arc<RunHandle>, kind: AgentEventKind, text: String) {
     let run = {
         let mut d = handle.detail.write().await;
         d.log.push(AgentLogLine { kind, text: text.clone() });
@@ -723,7 +808,7 @@ async fn log(app: &AppHandle, handle: &Arc<RunHandle>, kind: AgentEventKind, tex
     events::emit(app, events::AGENT_EVENT, AgentEvent { run, kind, text, payload: serde_json::Value::Null });
 }
 
-async fn set_state(app: &AppHandle, state: &AppState, handle: &Arc<RunHandle>, next: RunState) {
+pub(crate) async fn set_state(app: &AppHandle, state: &AppState, handle: &Arc<RunHandle>, next: RunState) {
     {
         let mut d = handle.detail.write().await;
         if d.state.can_transition_to(next) {
@@ -736,7 +821,7 @@ async fn set_state(app: &AppHandle, state: &AppState, handle: &Arc<RunHandle>, n
     emit_state(app, handle).await;
 }
 
-async fn persist(state: &AppState, handle: &Arc<RunHandle>) {
+pub(crate) async fn persist(state: &AppState, handle: &Arc<RunHandle>) {
     let detail = handle.detail.read().await.clone();
     match state.repo_cache().await {
         Ok(cache) => {
@@ -748,15 +833,16 @@ async fn persist(state: &AppState, handle: &Arc<RunHandle>) {
     }
 }
 
-async fn emit_state(app: &AppHandle, handle: &Arc<RunHandle>) {
+pub(crate) async fn emit_state(app: &AppHandle, handle: &Arc<RunHandle>) {
     let d = handle.detail.read().await;
-    let done = d.items.iter().filter(|i| !matches!(i.state, CtoItemState::Queued | CtoItemState::Running)).count();
-    let event = AgentStateEvent {
-        run: d.run.clone(),
-        state: d.state,
-        step: Some(done.min(255) as u8),
-        steps: Some(d.items.len().min(255) as u8),
+    let (step, steps) = match d.tasks.iter().find(|t| t.state == DevTaskState::Running) {
+        Some(task) => (task.step, crate::agents::dev::STEPS),
+        None => {
+            let done = d.items.iter().filter(|i| !matches!(i.state, CtoItemState::Queued | CtoItemState::Running)).count();
+            (done.min(255) as u8, d.items.len().min(255) as u8)
+        }
     };
+    let event = AgentStateEvent { run: d.run.clone(), state: d.state, step: Some(step), steps: Some(steps) };
     drop(d);
     events::emit(app, events::AGENT_STATE, event);
 }
@@ -806,6 +892,8 @@ mod tests {
             items,
             log: vec![],
             error: None,
+            tasks: vec![],
+            paused: false,
         }
     }
 
