@@ -1,0 +1,216 @@
+# Release : déclenchée par un tag `v*` (ex. `v1.0.0`). Construit macOS (universel), Windows et
+# Linux, signe et notarise quand les secrets sont présents, signe les paquets de mise à jour
+# et publie une release GitHub EN BROUILLON avec `latest.json` pour l'updater.
+#
+# Rien n'est publié automatiquement : la release ne devient visible (et l'updater ne la voit)
+# qu'une fois publiée à la main. Secrets et procédure : docs/release.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  verifier:
+    name: Vérifications avant build
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag, versions et clés
+        id: version
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          conf=$(jq -r .version src-tauri/tauri.conf.json)
+          pkg=$(jq -r .version package.json)
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)
+          echo "tag=$tag tauri.conf.json=$conf package.json=$pkg Cargo.toml=$crate"
+          if [ "$tag" != "$conf" ] || [ "$tag" != "$pkg" ] || [ "$tag" != "$crate" ]; then
+            echo "::error::Le tag $GITHUB_REF_NAME ne correspond pas aux versions des fichiers (tauri.conf.json, package.json, Cargo.toml)."
+            exit 1
+          fi
+          pubkey=$(jq -r .plugins.updater.pubkey src-tauri/tauri.conf.json)
+          case "$pubkey" in
+            REMPLACER*|"")
+              echo "::error::plugins.updater.pubkey de tauri.conf.json est encore le placeholder : y coller la clé publique (docs/release.md)."
+              exit 1 ;;
+          esac
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Secret TAURI_SIGNING_PRIVATE_KEY absent : les paquets de mise à jour ne peuvent pas être signés."
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  brouillon:
+    name: Brouillon de release
+    needs: verifier
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      # Un seul job crée le brouillon ; les builds y déposent leurs fichiers (pas de doublon).
+      - name: Créer ou reprendre le brouillon
+        id: release
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verifier.outputs.version }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const tag = process.env.TAG;
+            const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo, per_page: 100 });
+            const existing = releases.find((r) => r.tag_name === tag);
+            if (existing) {
+              if (!existing.draft) core.setFailed(`La release ${tag} est déjà publiée : créer un nouveau tag.`);
+              core.setOutput("id", existing.id);
+              return;
+            }
+            const { data } = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              name: `Cadence ${process.env.VERSION}`,
+              draft: true,
+              prerelease: process.env.VERSION.includes("-"),
+              generate_release_notes: true,
+            });
+            core.setOutput("id", data.id);
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: [verifier, brouillon]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS universel
+            platform: macos-latest
+            args: --target universal-apple-darwin
+          - name: Windows x64
+            platform: windows-latest
+            args: ""
+          - name: Linux x64
+            platform: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Dépendances front
+        run: pnpm install --frozen-lockfile
+
+      # Les variables vides feraient échouer la signature : on n'exporte que celles qui existent.
+      # Sans certificat, l'app est construite sans signature (Gatekeeper la bloquera).
+      - name: Signature et notarisation (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              { echo "$name<<__CADENCE_EOF__"; echo "$value"; echo "__CADENCE_EOF__"; } >> "$GITHUB_ENV"
+            fi
+          done
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::Aucun certificat Developer ID : l'app macOS ne sera ni signée ni notarisée."
+          elif [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::warning::APPLE_ID, APPLE_PASSWORD ou APPLE_TEAM_ID manquant : l'app sera signée mais pas notarisée."
+          fi
+
+      # Deux voies : Azure Trusted Signing (prioritaire) ou certificat .pfx classique.
+      - name: Signature (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+        run: |
+          $conf = "src-tauri/tauri.windows-signing.conf.json"
+          if ($env:AZURE_CLIENT_ID -and $env:AZURE_TRUSTED_SIGNING_ACCOUNT) {
+            cargo install trusted-signing-cli --locked
+            $cmd = "trusted-signing-cli -e $env:AZURE_TRUSTED_SIGNING_ENDPOINT -a $env:AZURE_TRUSTED_SIGNING_ACCOUNT -c $env:AZURE_TRUSTED_SIGNING_PROFILE -d Cadence %1"
+            $windows = @{ signCommand = $cmd }
+          } elseif ($env:WINDOWS_CERTIFICATE) {
+            $pfx = Join-Path $env:RUNNER_TEMP "cadence.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            Remove-Item $pfx
+            $windows = @{
+              certificateThumbprint = $cert.Thumbprint
+              digestAlgorithm = "sha256"
+              timestampUrl = "http://timestamp.digicert.com"
+            }
+          } else {
+            Write-Output "::warning::Aucun secret de signature Windows : l'installeur ne sera pas signé (SmartScreen avertira)."
+            exit 0
+          }
+          @{ bundle = @{ windows = $windows } } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 $conf
+          "TAURI_EXTRA_ARGS=--config $conf" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build, signature et dépôt dans le brouillon
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signature des paquets de mise à jour (minisign) : obligatoire, voir docs/release.md.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Azure Trusted Signing (lus par trusted-signing-cli, sans effet ailleurs).
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          # OAuth App de Cadence (facultatif), figée dans le binaire.
+          CADENCE_GITHUB_CLIENT_ID: ${{ vars.CADENCE_GITHUB_CLIENT_ID }}
+          CADENCE_GITHUB_CLIENT_SECRET: ${{ secrets.CADENCE_GITHUB_CLIENT_SECRET }}
+        with:
+          releaseId: ${{ needs.brouillon.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }} ${{ env.TAURI_EXTRA_ARGS }}

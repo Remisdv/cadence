@@ -3,6 +3,7 @@ import { CommandPalette } from "@/components/layout/CommandPalette";
 import { ErrorState, LoadingState } from "@/components/layout/EmptyState";
 import { queryClient } from "@/lib/query/client";
 import { useBackendEvents } from "@/lib/query/useBackendEvents";
+import { useUpdateCheckOnLaunch } from "@/lib/query/queries";
 import { DialogHost } from "./DialogHost";
 import { ViewOutlet } from "./ViewOutlet";
 import { useBoot } from "./useBoot";
@@ -17,6 +18,7 @@ export function App() {
 
 function Root() {
   useBackendEvents();
+  useUpdateCheckOnLaunch();
   const { ready, error } = useBoot();
 
   if (error) return <ErrorState error={error} />;

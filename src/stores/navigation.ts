@@ -6,7 +6,7 @@ import { create } from "zustand";
 import type { AgentKind } from "@/lib/types";
 
 export type SettingsSection =
-  "accounts" | "project" | "agents" | "machine" | "appearance" | "shortcuts";
+  "accounts" | "project" | "agents" | "machine" | "appearance" | "shortcuts" | "about";
 
 export type View =
   // 1 · Connexion et configuration

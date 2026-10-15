@@ -311,3 +311,13 @@ export function useSaveSettings() {
     },
   });
 }
+
+/* ---------- Version de l'app et mise à jour automatique ---------- */
+
+export {
+  useAppUpdate,
+  useAppVersion,
+  useInstallUpdate,
+  useRestartApp,
+  useUpdateCheckOnLaunch,
+} from "./updates";

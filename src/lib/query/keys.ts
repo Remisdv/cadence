@@ -33,6 +33,10 @@ export const keys = {
   agentLatestRun: (kind: string) => ["agents", "run", kind] as const,
 
   settings: ["settings"] as const,
+
+  // Hors GitHub : version de l'app et mise à jour automatique.
+  appVersion: () => ["app", "version"] as const,
+  appUpdate: () => ["app", "update"] as const,
 };
 
 /** Groupe de requêtes à invalider quand une ressource GitHub change. */

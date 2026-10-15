@@ -37,6 +37,7 @@ import {
   useSignOut,
 } from "@/lib/query/queries";
 import { useNavigation } from "@/stores/navigation";
+import { AboutSection, AppVersionLine } from "./AboutSection";
 
 const sections: { id: SettingsSection; label: string; icon: IconName }[] = [
   { id: "accounts", label: "Comptes et jetons", icon: "key" },
@@ -45,6 +46,7 @@ const sections: { id: SettingsSection; label: string; icon: IconName }[] = [
   { id: "machine", label: "Machine locale", icon: "layers" },
   { id: "appearance", label: "Apparence", icon: "eye" },
   { id: "shortcuts", label: "Raccourcis", icon: "sparkle" },
+  { id: "about", label: "À propos", icon: "rocket" },
 ];
 
 export default function SettingsView({ view }: ViewProps<"settings">) {
@@ -82,7 +84,7 @@ export default function SettingsView({ view }: ViewProps<"settings">) {
           </button>
         ))}
         <div className="mt-auto border-t border-line px-2.5 pt-[11px] text-tiny leading-[1.6] text-tx3">
-          Cadence
+          <AppVersionLine onOpen={() => navigate({ id: "settings", section: "about" })} />
           <br />
           Tauri 2 · React 19
         </div>
@@ -95,6 +97,7 @@ export default function SettingsView({ view }: ViewProps<"settings">) {
           {section === "machine" && <MachineSection />}
           {section === "appearance" && <AppearanceSection />}
           {section === "shortcuts" && <ShortcutsSection />}
+          {section === "about" && <AboutSection />}
         </div>
       </div>
     </Page>

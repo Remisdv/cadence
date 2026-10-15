@@ -1,0 +1,86 @@
+# Intégration continue : front (types, tests, build) et cœur Rust (clippy, tests) sur chaque
+# push vers main et chaque pull request. Aucun secret n'est utilisé ici.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  front:
+    name: Front (typecheck, tests, build)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Dépendances
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript strict
+        run: pnpm typecheck
+
+      - name: Tests (Vitest)
+        run: pnpm test
+
+      - name: Build de prod
+        run: pnpm build
+
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # `tauri::generate_context!` embarque `frontendDist` : le dossier doit exister.
+      - name: Dossier du front
+        shell: bash
+        run: mkdir -p dist
+
+      - name: Clippy (zéro avertissement)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      # Les tests régénèrent `src/lib/bindings` (ts-rs) : un écart veut dire `pnpm bindings` oublié.
+      - name: Types TS générés à jour
+        if: runner.os == 'Linux'
+        shell: bash
+        run: git diff --exit-code -- src/lib/bindings

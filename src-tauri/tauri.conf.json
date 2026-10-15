@@ -29,6 +29,22 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
+    "publisher": "Rémi Lhuillier",
+    "homepage": "https://github.com/cadence-app/desktop",
+    "copyright": "© 2026 Rémi Lhuillier",
+    "category": "DeveloperTool",
+    "shortDescription": "Cockpit de projet logiciel adossé à GitHub",
+    "longDescription": "Cadence pilote un projet GitHub version par version (milestones, issues, pull requests, roadmap) avec des agents Claude Code qui proposent pendant que vous disposez.",
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "hardenedRuntime": true
+    },
+    "windows": {
+      "nsis": {
+        "languages": ["French", "English"]
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,5 +52,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REMPLACER-PAR-LA-CLE-PUBLIQUE-DES-MISES-A-JOUR (voir docs/release.md)",
+      "endpoints": ["https://github.com/cadence-app/desktop/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

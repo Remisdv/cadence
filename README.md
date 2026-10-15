@@ -5,6 +5,8 @@ et les agents proposent pendant que vous disposez. Application de bureau Tauri 2
 
 - Maquettes : canvas « Cadence — Écrans de l'app » (19 écrans)
 - Plan technique : doc « Cadence — Plan technique d'implémentation »
+- **Documentation utilisateur et mainteneur : [`docs/`](docs/README.md)** (installation, premiers
+  pas, agents, référence de `.cadence/config.toml`, dépannage, processus de release)
 
 ## Démarrer
 
@@ -71,6 +73,7 @@ En mode navigateur, l'URL pilote le scénario mocké :
 - `?scenario=onboarding` : compte GitHub non connecté ; `?scenario=no-project` : aucun dépôt choisi (sélecteur ouvert) ;
 - `&flow=denied|expired|config` : issue du device flow simulé (par défaut, autorisé après 6 s) ;
 - `&cli=fail` : session de test de Claude Code en échec ;
+- `&update=available|fail` : mise à jour de l'app simulée (Réglages › À propos) ;
 - `?view=<id>` force un écran (`?view=design-system`, `?view=issue&number=156`, `?view=agent&kind=dev`).
 
 La **galerie de composants** (`?view=design-system`, ou `Ctrl+K` → « Galerie de composants ») montre
@@ -209,5 +212,13 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   `curl` interdits à l'agent, aucun assistant d'identifiants dans son environnement, `pushurl`
   invalide sur la copie, et Cadence refuse de pousser sur la branche par défaut. Pause (après
   l'étape en cours), arrêt, et intervention depuis le terminal (reprise à l'étape suivante).
+- **Distribution (1.0.0)** : mise à jour automatique (`tauri-plugin-updater`, manifeste
+  `latest.json` des releases GitHub, paquets signés minisign) avec vérification silencieuse au
+  lancement et Réglages › **À propos** (version, recherche, téléchargement avec progression,
+  redémarrage). Workflows `.github/workflows/ci.yml` (typecheck, tests, build, clippy et tests
+  Rust sur les trois OS) et `release.yml` (tag `v*` → brouillon de release, macOS universel signé
+  et notarisé, Windows signé par Azure Trusted Signing ou certificat, Linux). Avant la première
+  release : clé publique de l'updater à coller dans `tauri.conf.json` et secrets, voir
+  [docs/release.md](docs/release.md). Build local sans clé : `pnpm tauri:build:unsigned`.
 - **À venir** : l'agent CEO, puis les autres écrans (Sprint, détail de version, console des
   agents…), aujourd'hui des placeholders qui pointent vers leur maquette.
