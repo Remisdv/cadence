@@ -8,7 +8,7 @@ import { StatusDot, type DotTone } from "@/components/ui/StatusDot";
 import { AgentBadge } from "@/components/domain/AgentBadge";
 import { cn } from "@/lib/cn";
 import { agentOrder, agents } from "@/lib/domain/agents";
-import { formatDuration } from "@/lib/domain/format";
+import { runLine, runProgress, runningAgents } from "@/lib/domain/agentConsole";
 import { useElapsedSeconds } from "@/lib/hooks/useElapsedSeconds";
 import {
   useAgentsOverview,
@@ -49,7 +49,7 @@ export function Sidebar() {
 
   const openIssues = issues?.filter((i) => i.status !== "done").length;
   const reviewsForYou = reviews?.filter((r) => r.audience === "you").length;
-  const running = overview.find((a) => a.activity === "running" && a.currentRun);
+  const running = runningAgents(overview);
 
   const item = (key: string, target: View, icon: IconName, label: string, count?: number) => (
     <NavItem
@@ -106,7 +106,9 @@ export function Sidebar() {
       </div>
 
       <div className="flex flex-col gap-2">
-        {running?.currentRun && <RunningAgentCard agent={running} />}
+        {running.map((agent) => (
+          <RunningAgentCard key={agent.kind} agent={agent} />
+        ))}
         <NavItem
           icon="settings"
           label="Réglages"
@@ -201,7 +203,7 @@ function AgentNavItem({
 function RunningAgentCard({ agent }: { agent: AgentOverview }) {
   const run = agent.currentRun!;
   const elapsed = useElapsedSeconds(run.startedAt);
-  const progress = run.step && run.steps ? ((run.step - 0.5) / run.steps) * 100 : 0;
+  const progress = runProgress(agent.kind, run)?.percent ?? 0;
   const navigate = useNavigation((s) => s.navigate);
 
   return (
@@ -212,13 +214,9 @@ function RunningAgentCard({ agent }: { agent: AgentOverview }) {
     >
       <div className="flex items-center gap-[7px] text-caption font-medium text-green">
         <StatusDot tone="green" pulse />
-        Agent {agents[agent.kind].short.toLowerCase()} en cours
+        {agents[agent.kind].name} en cours
       </div>
-      <div className="mt-1 mono text-micro text-tx2">
-        {run.issue && `#${run.issue} · `}
-        {run.step && run.steps && `étape ${run.step}/${run.steps} · `}
-        {formatDuration(elapsed)}
-      </div>
+      <div className="mt-1 mono text-micro text-tx2">{runLine(agent.kind, run, elapsed)}</div>
       <ProgressBar className="mt-[7px]" value={progress} tone="green" track="green" height={3} />
     </button>
   );

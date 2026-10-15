@@ -61,6 +61,7 @@ export type { PrFilter } from "./bindings/PrFilter";
 export type { ReviewAudience } from "./bindings/ReviewAudience";
 export type { ReviewRow } from "./bindings/ReviewRow";
 export type { AgentRunDetail } from "./bindings/AgentRunDetail";
+export type { AgentRunEntry } from "./bindings/AgentRunEntry";
 export type { AgentLogLine } from "./bindings/AgentLogLine";
 export type { CtoItem } from "./bindings/CtoItem";
 export type { CtoItemState } from "./bindings/CtoItemState";

@@ -80,7 +80,12 @@ export const registry: Registry = {
 
   // 4 · Versions et pilotage des agents
   version: app("Détail d'une version", "Version-Detail.dc.html"),
-  agents: app("Console des agents", "Agents-Hub.dc.html"),
+  agents: {
+    title: "Console des agents",
+    mockup: "Agents-Hub.dc.html",
+    layout: "app",
+    component: lazy(() => import("./agents/AgentsConsoleView")),
+  },
   agent: {
     title: "Agent",
     mockup: "Agent-CTO.dc.html · Agent-CEO · Agent-Dev · Agent-Deploy",

@@ -8,6 +8,7 @@
 //! - les structures d'entrée acceptent des champs absents (`#[serde(default)]` + `optional_fields`).
 
 pub mod agent;
+pub mod agent_history;
 pub mod auth;
 pub mod issue;
 pub mod pr;

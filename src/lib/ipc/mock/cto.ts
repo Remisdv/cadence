@@ -7,6 +7,8 @@ import { mockBus } from "./bus";
 import * as data from "./fixtures";
 
 let run: AgentRunDetail | null = null;
+/** Exécutions de la session, de la plus ancienne à la plus récente (journal de la console). */
+const history: AgentRunDetail[] = [];
 /** Descriptions écrites par « Appliquer », pour le détail d'issue. */
 const appliedBodies = new Map<number, string>();
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -51,6 +53,11 @@ const script: [AgentEventKind, string][] = [
 /** Traite la prochaine issue en file, puis enchaîne. */
 function next() {
   if (!run || run.state !== "running") return;
+  // En pause (console des agents) : la file attend avant l'issue suivante.
+  if (run.paused) {
+    timer = setTimeout(next, STEP_MS);
+    return;
+  }
   const item = run.items.find((i) => i.state === "queued");
   if (!item) {
     run.state = run.items.some((i) => i.state === "ready" || i.state === "questions") ? "review" : "done";
@@ -98,6 +105,7 @@ function finish(item: CtoItem, ask: boolean) {
 
 export const ctoMock = {
   latest: () => run,
+  runs: () => history,
   appliedBody: (number: number) => appliedBodies.get(number),
   item: (number: number) => run?.items.find((i) => i.number === number),
 
@@ -121,6 +129,12 @@ export const ctoMock = {
           .map((i) => i.number),
     ).filter((i) => !pending.some((p) => p.number === i.number));
     const items: CtoItem[] = [...pending, ...fresh];
+    // Comme Rust : les propositions reportées quittent l'exécution précédente, qui se clôt.
+    if (run && pending.length > 0) {
+      for (const item of pending) run.items.splice(run.items.indexOf(item), 1, { ...item, state: "skipped", error: "Reportée dans l'exécution suivante." });
+      run.state = "done";
+      run.endedAt ??= new Date().toISOString();
+    }
     run = {
       run: `cto-${Date.now()}`,
       kind: "cto",
@@ -136,6 +150,7 @@ export const ctoMock = {
       error: null,
       paused: false,
     };
+    history.push(run);
     log("system", `› copie de ${data.project.repo.fullName} (main)…`);
     log("system", `› ${items.length} issue${items.length > 1 ? "s" : ""} à traiter`);
     emitState();
@@ -143,6 +158,12 @@ export const ctoMock = {
     return run.run;
   },
 
+  pause(paused: boolean) {
+    if (!run) return;
+    run.paused = paused;
+    log("system", paused ? "› pause demandée (après l'issue en cours)" : "› reprise");
+    emitState();
+  },
 
   stop() {
     if (!run) return;

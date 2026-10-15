@@ -31,6 +31,7 @@ export const keys = {
   agentEngines: () => ["agents", "engines"] as const,
   agentActions: (run: string) => ["agents", "actions", run] as const,
   agentLatestRun: (kind: string) => ["agents", "run", kind] as const,
+  agentRunsList: (limit: number) => ["agents", "runs", limit] as const,
 
   settings: ["settings"] as const,
 

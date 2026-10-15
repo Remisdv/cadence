@@ -23,6 +23,7 @@ import { StatusDot } from "@/components/ui/StatusDot";
 import { Switch, SwitchField } from "@/components/ui/Switch";
 import { ActivityItem, Em } from "@/components/domain/ActivityItem";
 import { AgentBadge } from "@/components/domain/AgentBadge";
+import { AgentStatusCard, RunLogRow } from "@/components/domain/AgentConsole";
 import { AgentQuestion } from "@/components/domain/AgentQuestion";
 import { TypeBadge, VersionBadge } from "@/components/domain/Badges";
 import { Burndown } from "@/components/domain/Burndown";
@@ -561,6 +562,50 @@ export default function DesignSystemView() {
               },
             ]}
           />
+        </Section>
+
+        <Section title="Console des agents">
+          <div className="flex gap-3">
+            <AgentStatusCard
+              agent="ceo"
+              autonomy="Propose seulement"
+              status={{ label: "5 à valider", tone: "amber", dot: true }}
+              description="Lit la roadmap et les versions livrées, puis dérive les issues probables des paliers à venir."
+              note="5 issues proposées pour 0.2.0"
+              footer="Dernier passage : il y a 1 h · cible 0.2.0"
+              highlight="amber"
+              onOpen={() => {}}
+            />
+            <AgentStatusCard
+              agent="dev"
+              autonomy="Applique après validation"
+              status={{ label: "#142 · 04:12", tone: "green", dot: true }}
+              description="Crée la branche et la PR en brouillon, puis implémente dans un worktree isolé."
+              note="PR #88 ouverte en brouillon"
+              footer="Étape 3/6 : implémentation"
+              highlight="green"
+              onOpen={() => {}}
+            />
+            <AgentStatusCard
+              agent="deploy"
+              autonomy="Applique après validation"
+              status={{ label: "inactif", tone: "neutral" }}
+              description="Publie la version, rédige la documentation et rejoue les tests d'acceptation."
+              footer="Dernier passage : hier · v0.1.1"
+              onOpen={() => {}}
+            />
+          </div>
+          <Card className="overflow-hidden">
+            <RunLogRow agent="dev" time="11:24" status={{ label: "en cours", tone: "blue" }} onClick={() => {}}>
+              Tâche #142 · étape 3/6 · PR #88
+            </RunLogRow>
+            <RunLogRow agent="ceo" time="10:31" status={{ label: "à valider", tone: "amber" }}>
+              Passage sur la version 0.2.0 · 5 à valider
+            </RunLogRow>
+            <RunLogRow agent="cto" time="hier" status={{ label: "appliqué", tone: "green" }}>
+              Passage sur la version 0.1.2 · 18/18 traitées · 12 appliquées
+            </RunLogRow>
+          </Card>
         </Section>
 
         <Section title="Panneaux">

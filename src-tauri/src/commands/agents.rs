@@ -3,6 +3,7 @@ use tauri::{AppHandle, State};
 use crate::{
     agents::engine,
     domain::{
+        agent_history::AgentRunEntry,
         agent::{
             AgentActivity, AgentControl, AgentInput, AgentKind, AgentOverview, AgentRunDetail, ApplyReport,
             CtoItemState, DevTaskState, ProposedAction, RunState, RunSummary,
@@ -170,4 +171,21 @@ pub async fn agent_edit_body(
     body: String,
 ) -> AppResult<()> {
     engine::edit(&app, &state, &run, number, body).await
+}
+
+/// Journal des exécutions récentes, tous agents confondus (console des agents).
+/// Une exécution encore ouverte est lue en mémoire, plus fraîche que le cache.
+#[tauri::command]
+pub async fn agent_runs_list(state: State<'_, AppState>, limit: u32) -> AppResult<Vec<AgentRunEntry>> {
+    let cache = state.repo_cache().await?;
+    let mut out = Vec::new();
+    for detail in cache.runs(limit.clamp(1, 500)).await? {
+        if detail.state.is_terminal() {
+            out.push(AgentRunEntry::of(&detail));
+        } else {
+            let handle = engine::handle(&state, &detail.run).await?;
+            out.push(AgentRunEntry::of(&*handle.detail.read().await));
+        }
+    }
+    Ok(out)
 }

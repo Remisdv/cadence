@@ -17,6 +17,7 @@ import { mockBus } from "./bus";
 import * as data from "./fixtures";
 import { ctoMock } from "./cto";
 import { devMock } from "./dev";
+import { agentsMock } from "./agents";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -313,7 +314,7 @@ const handlers: Handlers = {
     state.engines = engines;
     return engines;
   },
-  agents_overview: () => data.agentsOverview,
+  agents_overview: () => agentsMock.overview(),
   agent_start: ({ kind, input }) => {
     if (kind === "dev") {
       if (!input.issues?.length) fail("agent_start", "Choisissez au moins une tâche.");
@@ -329,7 +330,8 @@ const handlers: Handlers = {
   agent_control: ({ run, cmd }) => {
     const dev = run.startsWith("dev-");
     if (cmd.cmd === "stop") (dev ? devMock : ctoMock).stop();
-    else if (!dev) fail("agent_control", "L'agent CTO se met seulement en arrêt.");
+    else if (!dev && cmd.cmd !== "message") ctoMock.pause(cmd.cmd === "pause");
+    else if (!dev) fail("agent_control", "L'agent CTO ne prend pas d'intervention en cours de route.");
     else if (cmd.cmd === "pause") devMock.pause(true);
     else if (cmd.cmd === "resume") devMock.pause(false);
     else devMock.message(cmd.text);
@@ -352,6 +354,7 @@ const handlers: Handlers = {
     ctoMock.edit(number, body);
     return null;
   },
+  agent_runs_list: ({ limit }) => agentsMock.runs(limit),
 
   settings_get: () => data.config,
   settings_set: ({ config }) => {
