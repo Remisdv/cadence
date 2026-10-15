@@ -162,5 +162,9 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
 - **Revues à faire** : PR dont vous êtes relecteur, et vos PR qui attendent une revue ; pour la PR
   choisie, diff fichier par fichier (patchs lus en REST), description, impact sur la version. Les
   boutons de revue arrivent avec l'écriture (0.1.2), le résumé de l'agent CTO en 0.1.3.
-- **À venir** : les autres écrans (Sprint, roadmap, détail d'issue…), aujourd'hui des placeholders
-  qui pointent vers leur maquette.
+- **Roadmap** : une carte par version, livrées et en cours en haut, sprints planifiés et paliers en
+  bas, avec avancement et trois issues (ouvertes d'abord). Convention : la première ligne de la
+  description du milestone nomme la version (`# Cockpit Tauri`), ses éléments de liste sont les
+  thèmes d'un palier ; un sprint commence à l'échéance du précédent.
+- **À venir** : les autres écrans (Sprint, détail d'issue, détail de version…), aujourd'hui des
+  placeholders qui pointent vers leur maquette.

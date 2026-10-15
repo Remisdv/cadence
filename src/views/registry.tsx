@@ -66,7 +66,12 @@ export const registry: Registry = {
     layout: "app",
     component: lazy(() => import("./pulls/ReviewsView")),
   },
-  roadmap: app("Roadmap", "Roadmap.dc.html"),
+  roadmap: {
+    title: "Roadmap",
+    mockup: "Roadmap.dc.html",
+    layout: "app",
+    component: lazy(() => import("./roadmap/RoadmapView")),
+  },
 
   // 4 · Versions et pilotage des agents
   version: app("Détail d'une version", "Version-Detail.dc.html"),

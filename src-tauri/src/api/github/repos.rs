@@ -253,7 +253,8 @@ pub(super) fn check_status(status: StatusCode) -> AppResult<()> {
 }
 
 /// Milestones → versions : seuls les titres semver comptent, les autres sont signalés.
-/// Retourne (versions triées, titres ignorés).
+/// Retourne (versions triées, titres ignorés). Un sprint commence à l'échéance du sprint
+/// précédent (GitHub ne connaît que l'échéance d'un milestone).
 pub fn to_versions(milestones: &[Milestone]) -> (Vec<Version>, Vec<String>) {
     let mut ignored = Vec::new();
     let mut versions: Vec<Version> = milestones
@@ -268,7 +269,7 @@ pub fn to_versions(milestones: &[Milestone]) -> (Vec<Version>, Vec<String>) {
                 kind: if m.due_on.is_some() { VersionKind::Sprint } else { VersionKind::Palier },
                 state: if m.state == "closed" { VersionState::Closed } else { VersionState::Open },
                 milestone_number: m.number,
-                name: None,
+                name: m.description.as_deref().and_then(milestone_name),
                 start_on: None,
                 due_on: m.due_on.clone(),
                 open_issues: m.open_issues,
@@ -278,7 +279,23 @@ pub fn to_versions(milestones: &[Milestone]) -> (Vec<Version>, Vec<String>) {
         })
         .collect();
     versions.sort_by(|a, b| version::compare(&a.title, &b.title));
+    let mut previous_due: Option<String> = None;
+    for v in versions.iter_mut().filter(|v| v.kind == VersionKind::Sprint) {
+        v.start_on = previous_due.clone();
+        previous_due = v.due_on.clone();
+    }
     (versions, ignored)
+}
+
+/// Libellé d'une version : première ligne de la description du milestone, si c'est un
+/// titre (`# Cockpit Tauri`) ou une ligne courte qui n'est pas un élément de liste.
+pub fn milestone_name(description: &str) -> Option<String> {
+    let first = description.lines().map(str::trim).find(|l| !l.is_empty())?;
+    if let Some(title) = first.strip_prefix('#') {
+        return Some(title.trim_start_matches('#').trim().to_string()).filter(|t| !t.is_empty());
+    }
+    let is_item = first.starts_with(['-', '*', '+']) || first.chars().next().is_some_and(|c| c.is_ascii_digit());
+    (!is_item && first.chars().count() <= 60).then(|| first.to_string())
 }
 
 /// Sprint en cours : le plus petit sprint (daté) encore ouvert ; à défaut, la plus petite
@@ -335,6 +352,25 @@ mod tests {
         let conflict = json!({"message": "Repository creation failed.",
             "errors": [{"message": "name already exists on this account"}]});
         assert!(describe_create_error(&conflict).contains("déjà"));
+    }
+
+    #[test]
+    fn names_versions_and_chains_sprint_dates() {
+        let mut first = milestone(1, "0.1.0", "closed", Some("2026-08-26T07:00:00Z"));
+        first.description = Some("# Première fenêtre\n\n- Squelette".into());
+        let mut palier = milestone(6, "0.2.0", "open", None);
+        palier.description = Some("- Rôles\n- Multi-dépôts".into());
+        let (versions, _) =
+            to_versions(&[palier, milestone(2, "0.1.1", "open", Some("2026-09-09T07:00:00Z")), first]);
+        assert_eq!(versions[0].name.as_deref(), Some("Première fenêtre"));
+        assert_eq!(versions[0].start_on, None);
+        assert_eq!(versions[1].start_on.as_deref(), Some("2026-08-26T07:00:00Z"));
+        assert_eq!((versions[2].name.as_deref(), versions[2].start_on.as_deref()), (None, None));
+
+        assert_eq!(milestone_name("Lecture du projet\n- PR").as_deref(), Some("Lecture du projet"));
+        assert_eq!(milestone_name("1. Étape"), None);
+        assert_eq!(milestone_name("   \n"), None);
+        assert_eq!(milestone_name(&"x".repeat(80)), None);
     }
 
     #[test]
