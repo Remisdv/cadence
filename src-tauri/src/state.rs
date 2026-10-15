@@ -1,21 +1,24 @@
 //! État partagé, injecté dans les commandes par `tauri::State<AppState>`.
 
-use std::{path::Path, sync::Arc, sync::Mutex};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use secrecy::SecretString;
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::RwLock;
 
 use crate::{
-    api::github::{self, issues::IssueCache},
+    api::github,
     auth::{cli::CliTool, token_store::TokenStore},
     domain::{
         auth::{CliAgentInfo, GithubAuth, GithubSources},
         project::{ProjectState, Repo},
-        version::Version,
     },
     error::{AppError, AppResult},
     local_settings::SettingsStore,
+    store::RepoCache,
 };
 
 pub struct AppState {
@@ -32,16 +35,16 @@ pub struct AppState {
     pub settings: SettingsStore,
     /// Dépôts accessibles au jeton, lus une fois puis filtrés localement.
     pub repos: RwLock<Option<Vec<Repo>>>,
-    /// Versions du projet ouvert (en attendant le cache SQLite).
-    pub versions: RwLock<Vec<Version>>,
-    /// Issues du dépôt ouvert (lecture GitHub avec ETag, rafraîchie au plus toutes les 60 s).
-    pub issues: RwLock<Option<IssueCache>>,
+    /// Dossier des bases SQLite, une par dépôt.
+    pub cache_dir: PathBuf,
+    /// Cache SQLite du dépôt ouvert, ouvert à la première lecture.
+    pub cache: RwLock<Option<Arc<RepoCache>>>,
     /// Moyens de connexion GitHub détectés (gh, GCM), gardés pour la session.
     pub github_sources: RwLock<Option<GithubSources>>,
 }
 
 impl AppState {
-    pub fn new(config_dir: &Path, tokens: Arc<dyn TokenStore>) -> Self {
+    pub fn new(config_dir: &Path, cache_dir: PathBuf, tokens: Arc<dyn TokenStore>) -> Self {
         Self {
             project: RwLock::default(),
             http: github::http_client(),
@@ -51,9 +54,9 @@ impl AppState {
             cli: RwLock::default(),
             settings: SettingsStore::load(config_dir),
             repos: RwLock::default(),
-            versions: RwLock::default(),
+            cache_dir,
+            cache: RwLock::default(),
             github_sources: RwLock::default(),
-            issues: RwLock::default(),
         }
     }
 
@@ -61,10 +64,46 @@ impl AppState {
         self.project.read().await.clone().ok_or(AppError::NoProject)
     }
 
-    /// Oublie tout ce qui appartient au dépôt ouvert (changement de dépôt ou de compte).
+    /// Cache du dépôt ouvert, ouvert (et migré) au premier appel.
+    pub async fn repo_cache(&self) -> AppResult<Arc<RepoCache>> {
+        let repo = self.require_project().await?.repo.full_name;
+        if let Some(cache) = self.cache.read().await.as_ref().filter(|c| c.repo == repo) {
+            return Ok(cache.clone());
+        }
+        let mut slot = self.cache.write().await;
+        if let Some(cache) = slot.as_ref().filter(|c| c.repo == repo) {
+            return Ok(cache.clone());
+        }
+        let cache = Arc::new(RepoCache::open(&self.cache_dir, &repo).await?);
+        *slot = Some(cache.clone());
+        Ok(cache)
+    }
+
+    /// Ouvre le cache d'un dépôt sans l'installer (`project_open` le remplit d'abord).
+    pub async fn open_cache(&self, repo: &str) -> AppResult<Arc<RepoCache>> {
+        Ok(Arc::new(RepoCache::open(&self.cache_dir, repo).await?))
+    }
+
+    /// Le dépôt ouvert change : son cache remplace le précédent.
+    pub async fn install_cache(&self, cache: Arc<RepoCache>) {
+        *self.cache.write().await = Some(cache);
+    }
+
+    /// Oublie le dépôt ouvert ; les bases restent sur le disque pour le prochain lancement.
     pub async fn clear_project_data(&self) {
-        self.versions.write().await.clear();
-        *self.issues.write().await = None;
+        *self.cache.write().await = None;
+    }
+
+    /// Déconnexion : supprime les bases de tous les dépôts (issues privées comprises).
+    pub async fn delete_caches(&self) {
+        if let Some(cache) = self.cache.write().await.take() {
+            cache.close().await;
+        }
+        if self.cache_dir.exists()
+            && let Err(err) = std::fs::remove_dir_all(&self.cache_dir)
+        {
+            tracing::warn!(%err, "suppression du cache local incomplète");
+        }
     }
 
     /// Jeton GitHub du trousseau, lu au moment de la requête.

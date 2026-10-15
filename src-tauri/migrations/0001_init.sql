@@ -1,6 +1,8 @@
 -- Cache local de Cadence. Une base par dépôt.
 -- Chaque table GitHub garde la charge JSON brute : les vues lisent des colonnes
 -- dénormalisées, la charge sert à reconstruire une colonne sans refaire d'appel.
+-- Pas de clé étrangère entre ressources : chacune se synchronise à son rythme
+-- (une issue peut arriver avant son milestone).
 
 CREATE TABLE milestones (
     number      INTEGER PRIMARY KEY,
@@ -16,7 +18,7 @@ CREATE TABLE issues (
     number           INTEGER PRIMARY KEY,
     title            TEXT    NOT NULL,
     state            TEXT    NOT NULL,
-    milestone_number INTEGER REFERENCES milestones (number),
+    milestone_number INTEGER,
     labels           TEXT    NOT NULL DEFAULT '[]',  -- JSON
     assignee         TEXT,
     etag             TEXT,
@@ -39,7 +41,7 @@ CREATE TABLE pull_requests (
 
 CREATE TABLE reviews (
     id          INTEGER PRIMARY KEY,
-    pr_number   INTEGER NOT NULL REFERENCES pull_requests (number),
+    pr_number   INTEGER NOT NULL,
     reviewer    TEXT    NOT NULL,
     state       TEXT    NOT NULL,
     updated_at  TEXT    NOT NULL,

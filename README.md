@@ -148,8 +148,12 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   Ouvrir un dépôt importe ses milestones comme versions ; le choix est mémorisé et rouvert au
   lancement suivant. Sans dépôt mémorisé, le sélecteur s'ouvre de lui-même. `versions_list` est branché.
 - **Issues** : toutes les issues du dépôt ouvert (pull requests exclues), groupées par version avec
-  leur avancement ; filtres texte / version / état / assigné, sélection multiple. Lecture GitHub
-  paginée avec ETag, cache mémoire rafraîchi au plus toutes les 60 s (un `304` ne consomme pas de
-  quota), servi hors ligne. Les actions groupées et l'agent CTO arrivent avec l'écriture (0.1.2+).
-- **À venir** : le cache SQLite (remplacera le cache mémoire), puis les autres écrans (Sprint,
-  détail d'issue…), aujourd'hui des placeholders qui pointent vers leur maquette.
+  leur avancement ; filtres texte / version / état / assigné, sélection multiple. Les actions
+  groupées et l'agent CTO arrivent avec l'écriture (0.1.2+).
+- **Cache SQLite** (`sqlx`) : une base par dépôt, `<données locales de l'app>/cache/<owner>/<nom>.sqlite3`,
+  migrée à l'ouverture (`PRAGMA user_version`). Issues et milestones y sont rangés avec leur JSON
+  brut ; une passe au plus par minute, incrémentale (`since` = dernier `updated_at` vu) et
+  conditionnelle (ETag : un dépôt calme répond `304` sans consommer de quota). L'app sert le cache
+  hors ligne et au lancement. La déconnexion supprime toutes les bases.
+- **À venir** : les autres écrans (Sprint, détail d'issue…), aujourd'hui des placeholders qui
+  pointent vers leur maquette.

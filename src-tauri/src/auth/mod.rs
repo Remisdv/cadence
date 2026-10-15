@@ -189,7 +189,7 @@ pub async fn sign_out(state: &AppState) -> AppResult<()> {
     *state.github.write().await = None;
     *state.repos.write().await = None;
     *state.project.write().await = None;
-    state.clear_project_data().await;
+    state.delete_caches().await;
     state.settings.update(|s| s.last_project = None)?;
     Ok(())
 }
@@ -198,10 +198,10 @@ pub async fn sign_out(state: &AppState) -> AppResult<()> {
 
 /// État d'un agent de code, détecté au premier appel puis gardé en cache pour la session.
 pub async fn cli_status(state: &AppState, tool: CliTool, refresh: bool) -> CliAgentInfo {
-    if !refresh {
-        if let Some(info) = state.cli.read().await.get(tool) {
-            return info;
-        }
+    if !refresh
+        && let Some(info) = state.cli.read().await.get(tool)
+    {
+        return info;
     }
     let settings = state.settings.get();
     let info = cli::detect(tool, settings.cli_path(tool), settings.is_enabled(tool)).await;

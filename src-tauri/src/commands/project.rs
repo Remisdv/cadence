@@ -2,9 +2,13 @@ use tauri::State;
 
 use crate::{
     api::github::repos,
-    domain::project::{OwnerKind, ProjectPreview, ProjectState, Repo, RepoCreateInput, RepoOwner},
-    error::AppResult,
+    domain::{
+        project::{OwnerKind, ProjectState, Repo, RepoCreateInput, RepoOwner},
+        sync::SyncResource,
+    },
+    error::{AppError, AppResult},
     state::AppState,
+    sync,
 };
 
 /// Projet ouvert, s'il y en a un : décide au lancement entre l'app et l'onboarding.
@@ -63,46 +67,40 @@ pub async fn project_create(
     project_open(state, repo.full_name).await
 }
 
-/// Ouvre un dépôt : importe les milestones et mémorise le choix pour le prochain lancement.
+/// Ouvre un dépôt : synchronise ses milestones dans son cache et mémorise le choix pour le
+/// prochain lancement. Le projet courant ne change qu'une fois tout chargé.
 #[tauri::command]
 pub async fn project_open(state: State<'_, AppState>, repo: String) -> AppResult<ProjectState> {
-    let preview = load_preview(&state, &repo).await?;
-    let project = ProjectState {
-        repo: preview.repo,
-        current_version: preview.current_version,
-        has_config: preview.has_config,
-    };
-    state.clear_project_data().await;
-    *state.versions.write().await = preview.versions;
+    let repo = resolve_repo(&state, &repo).await?;
+    let token = state.github_token()?;
+    let cache = state.open_cache(&repo.full_name).await?;
+    let (has_config, ()) = tokio::try_join!(
+        repos::has_cadence_config(&state.http, &token, &repo.full_name),
+        sync::refresh(&state, &cache, SyncResource::Milestones),
+    )?;
+    let (versions, ignored) = repos::to_versions(&cache.milestones().await?);
+    if !ignored.is_empty() {
+        tracing::info!(?ignored, "milestones sans numéro semver ignorés");
+    }
+    let project =
+        ProjectState { repo, current_version: repos::current_version(&versions), has_config };
+    state.install_cache(cache).await;
     *state.project.write().await = Some(project.clone());
     state.settings.update(|s| s.last_project = Some(project.clone()))?;
     Ok(project)
 }
 
-async fn load_preview(state: &AppState, full_name: &str) -> AppResult<ProjectPreview> {
+/// Dépôt `full_name` parmi ceux accessibles au jeton.
+async fn resolve_repo(state: &AppState, full_name: &str) -> AppResult<Repo> {
+    if let Some(repo) = find_repo(state, full_name).await {
+        return Ok(repo);
+    }
+    // Dépôt absent du cache (saisi à la main, ou liste périmée) : on relit la liste.
     let token = state.github_token()?;
-    let repo = match find_repo(state, full_name).await {
-        Some(repo) => repo,
-        None => {
-            // Dépôt absent du cache (saisi à la main, ou liste périmée) : on relit la liste.
-            *state.repos.write().await = Some(repos::viewer_repos(&state.http, &token).await?);
-            find_repo(state, full_name).await.ok_or_else(|| {
-                crate::error::AppError::Validation(format!("Dépôt {full_name} inaccessible avec ce compte."))
-            })?
-        }
-    };
-    let (milestones, has_config) = tokio::try_join!(
-        repos::milestones(&state.http, &token, full_name),
-        repos::has_cadence_config(&state.http, &token, full_name),
-    )?;
-    let (versions, ignored_milestones) = repos::to_versions(&milestones);
-    Ok(ProjectPreview {
-        current_version: repos::current_version(&versions),
-        repo,
-        versions,
-        ignored_milestones,
-        has_config,
-    })
+    *state.repos.write().await = Some(repos::viewer_repos(&state.http, &token).await?);
+    find_repo(state, full_name)
+        .await
+        .ok_or_else(|| AppError::Validation(format!("Dépôt {full_name} inaccessible avec ce compte.")))
 }
 
 async fn find_repo(state: &AppState, full_name: &str) -> Option<Repo> {

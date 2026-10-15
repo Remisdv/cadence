@@ -1,4 +1,4 @@
-//! Issues d'un dépôt : lecture paginée, ETag, conversion en lignes Cadence.
+//! Issues d'un dépôt : lecture incrémentale paginée, ETag, conversion en lignes Cadence.
 
 use reqwest::{header, Client, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
@@ -13,7 +13,8 @@ use crate::{
     error::{AppError, AppResult},
 };
 
-/// Garde-fou de quota : au-delà, on ne lit pas plus loin (10 pages de 100).
+/// Garde-fou de quota par passe (10 pages de 100). Les issues arrivant de la plus
+/// ancienne modification à la plus récente, la passe suivante reprend où celle-ci s'arrête.
 const MAX_PAGES: usize = 10;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -23,6 +24,7 @@ pub struct RawLabel {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RawMilestone {
+    pub number: u32,
     pub title: String,
 }
 
@@ -49,35 +51,38 @@ pub struct RawIssue {
     pub pull_request: Option<serde_json::Value>,
 }
 
-/// Issues du dépôt ouvert, gardées en mémoire en attendant le cache SQLite.
-pub struct IssueCache {
-    pub repo: String,
-    pub etag: Option<String>,
-    /// Dernière vérification auprès de GitHub (304 compris).
-    pub checked_at: std::time::Instant,
-    pub items: Vec<RawIssue>,
-}
-
-/// Délai entre deux vérifications (le plan : sync incrémentale toutes les 60 s).
+/// Délai minimal entre deux passes de synchronisation (le plan : toutes les 60 s).
 pub const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub enum IssuesFetch {
-    /// `304 Not Modified` : le cache est à jour, aucun quota consommé.
+    /// `304 Not Modified` : rien n'a changé depuis `since`, aucun quota consommé.
     NotModified,
-    Fresh { etag: Option<String>, issues: Vec<RawIssue> },
+    Fresh {
+        etag: Option<String>,
+        /// Issues modifiées depuis `since` (PR exclues), avec leur charge brute.
+        issues: Vec<(RawIssue, serde_json::Value)>,
+        /// Vrai si la limite de pages a coupé la lecture : il en reste à lire.
+        truncated: bool,
+    },
 }
 
-/// Lit toutes les issues (ouvertes et fermées), pages comprises. Avec `etag`, la première
-/// requête est conditionnelle : rien n'est relu si rien n'a changé.
+/// Lit les issues (ouvertes et fermées) modifiées depuis `since` (toutes si `None`),
+/// de la plus ancienne modification à la plus récente. Avec `etag`, la première requête
+/// est conditionnelle : rien n'est relu si rien n'a changé.
 pub async fn fetch_issues(
     http: &Client,
     token: &SecretString,
     repo: &str,
+    since: Option<&str>,
     etag: Option<&str>,
 ) -> AppResult<IssuesFetch> {
-    let mut url = Some(format!(
-        "{API_URL}/repos/{repo}/issues?state=all&per_page=100&sort=updated&direction=desc"
-    ));
+    let mut first =
+        format!("{API_URL}/repos/{repo}/issues?state=all&per_page=100&sort=updated&direction=asc");
+    if let Some(since) = since {
+        first.push_str("&since=");
+        first.push_str(since);
+    }
+    let mut url = Some(first);
     let mut first_etag = None;
     let mut issues = Vec::new();
 
@@ -88,10 +93,10 @@ pub async fn fetch_issues(
             .bearer_auth(token.expose_secret())
             .header(header::ACCEPT, "application/vnd.github+json")
             .header("X-GitHub-Api-Version", API_VERSION);
-        if page == 0 {
-            if let Some(etag) = etag {
-                req = req.header(header::IF_NONE_MATCH, etag);
-            }
+        if page == 0
+            && let Some(etag) = etag
+        {
+            req = req.header(header::IF_NONE_MATCH, etag);
         }
         let resp = req.send().await?;
         match resp.status() {
@@ -112,10 +117,25 @@ pub async fn fetch_issues(
             .get(header::LINK)
             .and_then(|v| v.to_str().ok())
             .and_then(next_page);
-        let batch: Vec<RawIssue> = resp.json().await?;
-        issues.extend(batch.into_iter().filter(|i| i.pull_request.is_none()));
+        let batch: Vec<serde_json::Value> = resp.json().await?;
+        issues.extend(parse_page(batch));
     }
-    Ok(IssuesFetch::Fresh { etag: first_etag, issues })
+    Ok(IssuesFetch::Fresh { etag: first_etag, issues, truncated: url.is_some() })
+}
+
+/// Page brute → issues, sans les pull requests (l'API mélange les deux).
+pub fn parse_page(batch: Vec<serde_json::Value>) -> Vec<(RawIssue, serde_json::Value)> {
+    batch
+        .into_iter()
+        .filter_map(|raw| match RawIssue::deserialize(&raw) {
+            Ok(issue) if issue.pull_request.is_none() => Some((issue, raw)),
+            Ok(_) => None,
+            Err(err) => {
+                tracing::warn!(%err, "issue GitHub illisible, ignorée");
+                None
+            }
+        })
+        .collect()
 }
 
 /// URL `rel="next"` d'un en-tête `Link` de pagination GitHub.
@@ -185,6 +205,21 @@ mod tests {
     }
 
     #[test]
+    fn skips_pull_requests_and_keeps_the_raw_payload() {
+        let page = vec![
+            serde_json::json!({"number": 1, "title": "Issue", "state": "open", "body": null,
+                "updated_at": "2026-10-01T10:00:00Z", "html_url": "https://github.com/me/app/issues/1"}),
+            serde_json::json!({"number": 2, "title": "PR", "state": "open", "body": null,
+                "updated_at": "2026-10-01T10:00:00Z", "pull_request": {"url": "x"}}),
+            serde_json::json!({"number": "pas un nombre"}),
+        ];
+        let issues = parse_page(page);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0.number, 1);
+        assert!(issues[0].1.get("html_url").is_some());
+    }
+
+    #[test]
     fn follows_the_next_page_link() {
         let link = r#"<https://api.github.com/repositories/1/issues?page=2>; rel="next", <https://api.github.com/repositories/1/issues?page=5>; rel="last""#;
         assert_eq!(next_page(link).as_deref(), Some("https://api.github.com/repositories/1/issues?page=2"));
@@ -196,7 +231,7 @@ mod tests {
         let issue = raw(serde_json::json!({
             "number": 156, "title": "Quota API", "state": "open", "body": "",
             "labels": [{"name": "type/fix"}, {"name": "status/doing"}, {"name": "area/api"}, {"name": "estimate/M"}],
-            "milestone": {"title": "v0.1.2"},
+            "milestone": {"number": 4, "title": "v0.1.2"},
             "assignees": [{"login": "remisdv", "avatar_url": null}],
             "updated_at": "2026-10-15T10:00:00Z"
         }));

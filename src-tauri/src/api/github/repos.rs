@@ -189,18 +189,43 @@ pub struct Milestone {
     pub due_on: Option<String>,
     pub open_issues: u32,
     pub closed_issues: u32,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
-pub async fn milestones(http: &Client, token: &SecretString, repo: &str) -> AppResult<Vec<Milestone>> {
-    let resp = http
+pub enum MilestonesFetch {
+    /// `304 Not Modified` : aucun quota consommé.
+    NotModified,
+    Fresh { etag: Option<String>, milestones: Vec<(Milestone, serde_json::Value)> },
+}
+
+/// Milestones ouverts et fermés (100 au plus), requête conditionnelle avec `etag`.
+pub async fn fetch_milestones(
+    http: &Client,
+    token: &SecretString,
+    repo: &str,
+    etag: Option<&str>,
+) -> AppResult<MilestonesFetch> {
+    let mut req = http
         .get(format!("{API_URL}/repos/{repo}/milestones?state=all&per_page=100"))
         .bearer_auth(token.expose_secret())
         .header(header::ACCEPT, "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", API_VERSION)
-        .send()
-        .await?;
+        .header("X-GitHub-Api-Version", API_VERSION);
+    if let Some(etag) = etag {
+        req = req.header(header::IF_NONE_MATCH, etag);
+    }
+    let resp = req.send().await?;
+    if resp.status() == StatusCode::NOT_MODIFIED {
+        return Ok(MilestonesFetch::NotModified);
+    }
     check_status(resp.status())?;
-    Ok(resp.json().await?)
+    let etag = resp.headers().get(header::ETAG).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let page: Vec<serde_json::Value> = resp.json().await?;
+    let milestones = page
+        .into_iter()
+        .filter_map(|raw| Milestone::deserialize(&raw).ok().map(|m| (m, raw)))
+        .collect();
+    Ok(MilestonesFetch::Fresh { etag, milestones })
 }
 
 /// Vrai si le dépôt contient déjà `.cadence/config.toml`.
@@ -279,6 +304,7 @@ mod tests {
             due_on: due.map(str::to_string),
             open_issues: 0,
             closed_issues: 0,
+            updated_at: None,
         }
     }
 

@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::version::Version;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -29,19 +27,6 @@ pub struct ProjectState {
     /// Titre semver du milestone en cours, ex. `0.1.2`.
     pub current_version: Option<String>,
     /// Vrai si `.cadence/config.toml` existe déjà dans le dépôt.
-    pub has_config: bool,
-}
-
-/// Ce que Cadence trouve dans un dépôt en l'ouvrant (usage interne à `project_open`).
-#[derive(Debug, Clone)]
-pub struct ProjectPreview {
-    pub repo: Repo,
-    /// Milestones semver importés comme versions, triés.
-    pub versions: Vec<Version>,
-    /// Version qui deviendra le sprint en cours.
-    pub current_version: Option<String>,
-    /// Titres de milestones ignorés (pas un numéro semver).
-    pub ignored_milestones: Vec<String>,
     pub has_config: bool,
 }
 

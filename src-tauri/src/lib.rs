@@ -35,8 +35,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
+            let cache_dir = app.path().app_local_data_dir()?.join("cache");
             let tokens = Arc::new(auth::token_store::KeyringStore::github());
-            app.manage(state::AppState::new(&config_dir, tokens));
+            app.manage(state::AppState::new(&config_dir, cache_dir, tokens));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
