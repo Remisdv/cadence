@@ -12,6 +12,7 @@ pub mod domain;
 pub mod error;
 pub mod events;
 pub mod local_settings;
+pub mod project_config;
 pub mod state;
 pub mod store;
 pub mod sync;

@@ -254,6 +254,10 @@ export function useSaveSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (config: Config) => call("settings_set", { config }),
-    onSuccess: (config) => qc.setQueryData(keys.settings, config),
+    onSuccess: (config) => {
+      qc.setQueryData(keys.settings, config);
+      // `hasConfig` du projet passe à vrai au premier enregistrement.
+      void qc.invalidateQueries({ queryKey: keys.project });
+    },
   });
 }

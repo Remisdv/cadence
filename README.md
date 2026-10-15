@@ -176,5 +176,11 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   milestone fermé, tag léger posé sur la branche par défaut, brouillon de release avec notes
   générées (jamais publié automatiquement). Si une étape échoue, l'erreur dit ce qui a déjà été
   écrit.
+- **Réglages** : « Projet et mapping » et « Agents » éditent `.cadence/config.toml`, lu et écrit
+  via l'API GitHub (un commit sur la branche par défaut, refusé si le fichier a changé entre-temps).
+  Fichier en `snake_case`, complété par les valeurs par défaut s'il est partiel ; sans fichier, les
+  moteurs d'agents reprennent le choix de l'onboarding. La clôture de version en tire la durée de
+  sprint, le préfixe de tag et la confirmation avant un palier. « Comptes et jetons » (compte,
+  portées, déconnexion) et « Machine locale » (agents de code détectés) montrent l'état de la machine.
 - **À venir** : les autres écrans (Sprint, détail d'issue, détail de version…), aujourd'hui des
   placeholders qui pointent vers leur maquette.

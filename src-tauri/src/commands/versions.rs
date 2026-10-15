@@ -6,7 +6,7 @@ use crate::{
     api::github::{repos, writes},
     domain::{
         sync::SyncResource,
-        version::{self, CarryOver, CloseReport, Version, VersionCloseInput, VersionDetail},
+        version::{self, CarryOver, CloseReport, CloseRules, Version, VersionCloseInput, VersionDetail},
     },
     error::{AppError, AppResult},
     state::AppState,
@@ -66,7 +66,12 @@ pub async fn version_close(
     }
     let (versions, _) = repos::to_versions(&cache.milestones().await?);
     let open = open_issues_of(&cache, &current).await?;
-    let plan = version::plan_close(&versions, &current, &input, open, &version::today())?;
+    let config = crate::commands::settings::load(&state).await?.config;
+    let rules = CloseRules {
+        sprint_days: i64::from(config.versioning.sprint_days),
+        tag_prefix: config.project.tag_prefix.clone(),
+    };
+    let plan = version::plan_close(&versions, &current, &input, open, &version::today(), &rules)?;
     if writes::tag_exists(http, &token, &repo, &plan.tag).await? {
         return Err(AppError::Validation(format!("Le tag {} existe déjà sur GitHub.", plan.tag)));
     }

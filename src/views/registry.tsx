@@ -79,7 +79,12 @@ export const registry: Registry = {
   agent: app("Agent", "Agent-CTO.dc.html · Agent-CEO · Agent-Dev · Agent-Deploy"),
 
   // 5 · Réglages
-  settings: app("Réglages", "Settings.dc.html"),
+  settings: {
+    title: "Réglages",
+    mockup: "Settings.dc.html",
+    layout: "app",
+    component: lazy(() => import("./settings/SettingsView")),
+  },
 
   // Outils de dev
   "design-system": {

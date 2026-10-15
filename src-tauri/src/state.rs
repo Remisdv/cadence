@@ -15,6 +15,7 @@ use crate::{
     domain::{
         auth::{CliAgentInfo, GithubAuth, GithubSources},
         project::{ProjectState, Repo},
+        settings::Config,
     },
     error::{AppError, AppResult},
     local_settings::SettingsStore,
@@ -39,6 +40,8 @@ pub struct AppState {
     pub cache_dir: PathBuf,
     /// Cache SQLite du dépôt ouvert, ouvert à la première lecture.
     pub cache: RwLock<Option<Arc<RepoCache>>>,
+    /// `.cadence/config.toml` du dépôt ouvert, lu une fois puis gardé.
+    pub config: RwLock<Option<LoadedConfig>>,
     /// Moyens de connexion GitHub détectés (gh, GCM), gardés pour la session.
     pub github_sources: RwLock<Option<GithubSources>>,
 }
@@ -56,6 +59,7 @@ impl AppState {
             repos: RwLock::default(),
             cache_dir,
             cache: RwLock::default(),
+            config: RwLock::default(),
             github_sources: RwLock::default(),
         }
     }
@@ -92,10 +96,12 @@ impl AppState {
     /// Oublie le dépôt ouvert ; les bases restent sur le disque pour le prochain lancement.
     pub async fn clear_project_data(&self) {
         *self.cache.write().await = None;
+        *self.config.write().await = None;
     }
 
     /// Déconnexion : supprime les bases de tous les dépôts (issues privées comprises).
     pub async fn delete_caches(&self) {
+        *self.config.write().await = None;
         if let Some(cache) = self.cache.write().await.take() {
             cache.close().await;
         }
@@ -123,6 +129,15 @@ impl AppState {
             handle.abort();
         }
     }
+}
+
+/// Configuration lue sur GitHub, avec de quoi la réécrire.
+#[derive(Clone)]
+pub struct LoadedConfig {
+    pub repo: String,
+    pub config: Config,
+    /// SHA du blob lu ; `None` tant que le fichier n'existe pas (valeurs par défaut).
+    pub sha: Option<String>,
 }
 
 #[derive(Default)]

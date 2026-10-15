@@ -43,18 +43,19 @@ export function versionStage(version: Version, current: string | null): VersionS
   return v && v[1] === 0 && v[2] === 0 && v[0] >= 1 ? "vision" : "milestone";
 }
 
-/** Durée d'un sprint (même règle que `SPRINT_DAYS` côté Rust). */
+/** Durée d'un sprint par défaut (`versioning.sprint_days` de `.cadence/config.toml`). */
 export const SPRINT_DAYS = 14;
 
 /**
  * Dates du sprint qui suit une clôture : il commence à l'échéance de la version close (ou
- * aujourd'hui si elle est dépassée) et dure `SPRINT_DAYS` jours. Dates `YYYY-MM-DD`.
+ * aujourd'hui si elle est dépassée) et dure `days` jours (même règle que `plan_close` côté
+ * Rust). Dates `YYYY-MM-DD`.
  */
-export function nextSprintRange(currentDue: string | null, now: Date = new Date()) {
+export function nextSprintRange(currentDue: string | null, now: Date = new Date(), days = SPRINT_DAYS) {
   const today = now.toISOString().slice(0, 10);
   const due = currentDue?.slice(0, 10) ?? null;
   const start = due && due > today ? due : today;
   const end = new Date(`${start}T12:00:00Z`);
-  end.setUTCDate(end.getUTCDate() + SPRINT_DAYS);
+  end.setUTCDate(end.getUTCDate() + days);
   return { start, end: end.toISOString().slice(0, 10) };
 }

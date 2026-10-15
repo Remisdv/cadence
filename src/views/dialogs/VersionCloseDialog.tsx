@@ -25,6 +25,7 @@ import {
   useCurrentProject,
   useIssues,
   usePullRequests,
+  useSettings,
   useVersions,
 } from "@/lib/query/queries";
 
@@ -40,6 +41,7 @@ export function VersionCloseDialog({ onDone }: { onDone: () => void }) {
   const versions = useVersions().data ?? [];
   const issues = useIssues().data ?? [];
   const prs = usePullRequests().data ?? [];
+  const config = useSettings().data;
   const close = useCloseVersion();
 
   const candidates = current ? nextVersions(current) : null;
@@ -47,6 +49,7 @@ export function VersionCloseDialog({ onDone }: { onDone: () => void }) {
   const [custom, setCustom] = useState("");
   const [carry, setCarry] = useState<CarryOver>("move-to-next");
   const [notes, setNotes] = useState(true);
+  const [confirmed, setConfirmed] = useState(false);
 
   if (!current || !candidates) {
     return (
@@ -82,10 +85,12 @@ export function VersionCloseDialog({ onDone }: { onDone: () => void }) {
 
   const currentVersion = versions.find((v) => v.title === current);
   const existingNext = versions.find((v) => v.title === next);
-  const range = nextSprintRange(currentVersion?.dueOn ?? null);
+  const range = nextSprintRange(currentVersion?.dueOn ?? null, new Date(), config?.versioning.sprintDays);
   const openIssues = issues.filter((i) => i.version === current && i.status !== "done");
   const openPrs = prs.filter((p) => isOpenPr(p) && p.version === current);
-  const tag = `v${current}`;
+  const tag = `${config?.project.tagPrefix ?? "v"}${current}`;
+  // « Demander confirmation avant un palier » : tout sauf le sprint suivant se confirme.
+  const needsConfirm = Boolean(config?.versioning.confirmMajorBump && next && next !== candidates[0]);
   const branch = project?.repo.defaultBranch ?? "main";
   const n = openIssues.length;
 
@@ -96,7 +101,7 @@ export function VersionCloseDialog({ onDone }: { onDone: () => void }) {
   };
 
   const submit = () => {
-    if (!next || nextError) return;
+    if (!next || nextError || (needsConfirm && !confirmed)) return;
     close.mutate({ next, carryOver: carry, generateNotes: notes });
   };
 
@@ -189,8 +194,20 @@ export function VersionCloseDialog({ onDone }: { onDone: () => void }) {
         </div>
       </div>
 
-      {(openPrs.length > 0 || close.isError) && (
+      {(openPrs.length > 0 || close.isError || needsConfirm) && (
         <div className="flex flex-col gap-2.5 px-[18px] pb-4">
+          {needsConfirm && (
+            <label className="flex items-center gap-2.5 rounded-[10px] border border-line2 bg-p2 px-3.5 py-[11px] text-body-sm text-tx2">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                className="size-3.5 accent-clay"
+              />
+              Je confirme le passage à <span className="mono text-tx">{next}</span>, au-delà du sprint
+              suivant.
+            </label>
+          )}
           {openPrs.length > 0 && (
             <Callout tone="warning">
               {openPrs.length > 1 ? `${openPrs.length} PR de cette version sont` : "Une PR de cette version est"}{" "}
@@ -220,7 +237,7 @@ export function VersionCloseDialog({ onDone }: { onDone: () => void }) {
         <Button
           variant="primary"
           icon={close.isPending ? undefined : "check"}
-          disabled={!next || Boolean(nextError) || close.isPending}
+          disabled={!next || Boolean(nextError) || (needsConfirm && !confirmed) || close.isPending}
           onClick={submit}
         >
           {close.isPending && <Spinner />}

@@ -3,6 +3,7 @@
 //! Chaque écriture part d'abord sur GitHub ; l'appelant range ensuite la réponse dans le
 //! cache. Les refus sont traduits en messages lisibles (droits, issues désactivées, 422).
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{header, Client, RequestBuilder, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -168,6 +169,71 @@ pub async fn create_draft_release(
     )
     .await?;
     Ok(body["html_url"].as_str().unwrap_or_default().to_string())
+}
+
+/* ---------- Fichiers du dépôt ---------- */
+
+/// Fichier texte du dépôt sur sa branche par défaut : (contenu, SHA du blob), `None` s'il
+/// n'existe pas.
+pub async fn get_file(
+    http: &Client,
+    token: &SecretString,
+    repo: &str,
+    path: &str,
+) -> AppResult<Option<(String, String)>> {
+    let resp = authed(http.get(format!("{API_URL}/repos/{repo}/contents/{path}")), token).send().await?;
+    match resp.status() {
+        StatusCode::NOT_FOUND => return Ok(None),
+        StatusCode::UNAUTHORIZED => return Err(AppError::Unauthenticated("GitHub")),
+        s if !s.is_success() => return Err(AppError::GitHub(format!("lecture de {path} : GitHub a répondu {s}"))),
+        _ => {}
+    }
+    let body: Value = resp.json().await?;
+    let sha = body["sha"].as_str().unwrap_or_default().to_string();
+    let encoded: String = body["content"].as_str().unwrap_or_default().split_whitespace().collect();
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|e| AppError::GitHub(format!("{path} : contenu illisible ({e})")))?;
+    let text = String::from_utf8(bytes).map_err(|_| AppError::Validation(format!("{path} n'est pas du texte UTF-8.")))?;
+    Ok(Some((text, sha)))
+}
+
+/// Crée ou remplace un fichier par un commit sur la branche par défaut. `sha` = blob
+/// remplacé (obligatoire pour un fichier existant : GitHub refuse si le fichier a changé
+/// entre-temps). Renvoie le nouveau SHA du blob.
+pub async fn put_file(
+    http: &Client,
+    token: &SecretString,
+    repo: &str,
+    path: &str,
+    text: &str,
+    sha: Option<&str>,
+    message: &str,
+) -> AppResult<String> {
+    let payload = json!({ "message": message, "content": STANDARD.encode(text), "sha": sha });
+    let req = authed(http.put(format!("{API_URL}/repos/{repo}/contents/{path}")), token).json(&payload);
+    let resp = req.send().await?;
+    if resp.status() == StatusCode::CONFLICT {
+        return Err(AppError::Validation(format!(
+            "{path} a changé sur GitHub depuis son ouverture : rechargez les réglages."
+        )));
+    }
+    // Remet la réponse dans le circuit commun d'erreurs.
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(match status {
+            StatusCode::UNAUTHORIZED => AppError::Unauthenticated("GitHub"),
+            StatusCode::FORBIDDEN | StatusCode::NOT_FOUND => AppError::Validation(format!(
+                "Écriture de {path} refusée : ce compte n'a pas les droits d'écriture sur le dépôt."
+            )),
+            StatusCode::UNPROCESSABLE_ENTITY => {
+                AppError::Validation(format!("Écriture de {path} refusée par GitHub : {}", describe_422(&body)))
+            }
+            other => AppError::GitHub(format!("écriture de {path} : GitHub a répondu {other}")),
+        });
+    }
+    Ok(body["content"]["sha"].as_str().unwrap_or_default().to_string())
 }
 
 #[cfg(test)]

@@ -293,7 +293,12 @@ const handlers: Handlers = {
   agent_apply: ({ ids }) => ({ applied: ids, failed: [] }),
 
   settings_get: () => data.config,
-  settings_set: ({ config }) => config,
+  settings_set: ({ config }) => {
+    if (!(config.versioning.sprintDays >= 1 && config.versioning.sprintDays <= 60))
+      fail("settings_set", "Un sprint dure entre 1 et 60 jours.");
+    Object.assign(data.config, config);
+    return config;
+  },
 };
 
 export async function handleMock<C extends CommandName>(

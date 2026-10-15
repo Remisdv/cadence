@@ -102,10 +102,18 @@ pub struct CloseReport {
     pub deploy_run: Option<String>,
 }
 
-/// Durée d'un sprint en jours (prévu : `versioning.sprint_days` de `.cadence/config.toml`).
-pub const SPRINT_DAYS: i64 = 14;
-/// Préfixe des tags (prévu : `project.tag_prefix`).
-pub const TAG_PREFIX: &str = "v";
+/// Règles de clôture tirées de `.cadence/config.toml`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CloseRules {
+    pub sprint_days: i64,
+    pub tag_prefix: String,
+}
+
+impl Default for CloseRules {
+    fn default() -> Self {
+        Self { sprint_days: 14, tag_prefix: "v".into() }
+    }
+}
 
 /// Ce que la clôture va écrire, décidé avant toute écriture.
 #[derive(Debug, Clone, PartialEq)]
@@ -132,6 +140,7 @@ pub fn plan_close(
     input: &VersionCloseInput,
     open_issues: Vec<u32>,
     today: &str,
+    rules: &CloseRules,
 ) -> AppResult<ClosePlan> {
     let next = parse(&input.next)
         .ok_or_else(|| AppError::Validation(format!("« {} » n'est pas une version semver.", input.next)))?
@@ -155,12 +164,12 @@ pub fn plan_close(
     };
     let next_due = match existing {
         Some(v) if v.due_on.is_some() => None,
-        _ => add_days(&start, SPRINT_DAYS).map(|d| format!("{d}T12:00:00Z")),
+        _ => add_days(&start, rules.sprint_days).map(|d| format!("{d}T12:00:00Z")),
     };
     Ok(ClosePlan {
         current: current.to_string(),
         current_milestone: cur.milestone_number,
-        tag: format!("{TAG_PREFIX}{current}"),
+        tag: format!("{}{current}", rules.tag_prefix),
         next_milestone: existing.map(|v| v.milestone_number),
         next_due,
         next_start: start,
@@ -280,7 +289,7 @@ mod tests {
     #[test]
     fn plans_the_next_sprint_from_the_closing_due_date() {
         let versions = [version("0.1.2", 4, VersionState::Open, Some("2026-09-23T07:00:00Z"))];
-        let plan = plan_close(&versions, "0.1.2", &input("v0.1.3"), vec![156, 160], "2026-09-20").unwrap();
+        let plan = plan_close(&versions, "0.1.2", &input("v0.1.3"), vec![156, 160], "2026-09-20", &CloseRules::default()).unwrap();
         assert_eq!(plan.next, "0.1.3");
         assert_eq!((plan.current_milestone, plan.next_milestone), (4, None));
         assert_eq!(plan.next_start, "2026-09-23");
@@ -296,10 +305,12 @@ mod tests {
             version("0.2.0", 6, VersionState::Open, None),
             version("0.1.3", 5, VersionState::Open, Some("2026-10-07T07:00:00Z")),
         ];
-        let palier = plan_close(&versions, "0.1.2", &input("0.2.0"), vec![], "2026-10-15T09:00:00Z").unwrap();
+        let rules = CloseRules { sprint_days: 7, tag_prefix: String::new() };
+        let palier = plan_close(&versions, "0.1.2", &input("0.2.0"), vec![], "2026-10-15T09:00:00Z", &rules).unwrap();
         assert_eq!((palier.next_milestone, palier.next_start.as_str()), (Some(6), "2026-10-15"));
-        assert_eq!(palier.next_due.as_deref(), Some("2026-10-29T12:00:00Z"));
-        let sprint = plan_close(&versions, "0.1.2", &input("0.1.3"), vec![], "2026-10-15").unwrap();
+        assert_eq!(palier.next_due.as_deref(), Some("2026-10-22T12:00:00Z"));
+        assert_eq!(palier.tag, "0.1.2");
+        let sprint = plan_close(&versions, "0.1.2", &input("0.1.3"), vec![], "2026-10-15", &CloseRules::default()).unwrap();
         assert_eq!((sprint.next_milestone, sprint.next_due), (Some(5), None));
     }
 
@@ -311,7 +322,7 @@ mod tests {
             version("0.1.5", 8, VersionState::Closed, None),
         ];
         for (current, next) in [("0.1.2", "0.1.1"), ("0.1.2", "0.1.2"), ("0.1.2", "abc"), ("0.1.1", "0.1.3"), ("0.1.2", "0.1.5")] {
-            assert!(plan_close(&versions, current, &input(next), vec![], "2026-09-20").is_err(), "{current} → {next}");
+            assert!(plan_close(&versions, current, &input(next), vec![], "2026-09-20", &CloseRules::default()).is_err(), "{current} → {next}");
         }
     }
 
