@@ -2,12 +2,11 @@
  * Registre des écrans : une entrée par vue du canvas « Cadence — Écrans de l'app ».
  *
  * `layout` décide du cadre : `app` = rail latéral + écran, `onboarding` = plein écran.
- * Les écrans non implémentés passent par `placeholder()` ; les vraies vues sont chargées
- * à la demande (`lazy`) pour garder un démarrage rapide.
+ * Les vues sont chargées à la demande (`lazy`) pour garder un démarrage rapide ; un écran pas
+ * encore fait passe par `placeholder()` (`./Placeholder`).
  */
 import { lazy, type ComponentType } from "react";
 import type { ViewId, ViewOf } from "@/stores/navigation";
-import { placeholder } from "./Placeholder";
 
 export type ViewProps<K extends ViewId> = { view: ViewOf<K> };
 
@@ -20,13 +19,6 @@ export interface ViewDef<K extends ViewId> {
 }
 
 type Registry = { [K in ViewId]: ViewDef<K> };
-
-const app = <K extends ViewId>(title: string, mockup: string): ViewDef<K> => ({
-  title,
-  mockup,
-  layout: "app",
-  component: placeholder(title, mockup),
-});
 
 export const registry: Registry = {
   // 1 · Connexion et configuration
