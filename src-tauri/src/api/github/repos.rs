@@ -242,7 +242,7 @@ pub async fn has_cadence_config(http: &Client, token: &SecretString, repo: &str)
     }
 }
 
-fn check_status(status: StatusCode) -> AppResult<()> {
+pub(super) fn check_status(status: StatusCode) -> AppResult<()> {
     match status {
         StatusCode::UNAUTHORIZED => Err(AppError::Unauthenticated("GitHub")),
         StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS => Err(AppError::RateLimited),

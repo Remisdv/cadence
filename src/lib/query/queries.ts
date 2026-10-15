@@ -196,11 +196,28 @@ export function useAnswerCto(number: number) {
 
 /* ---------- Pull requests & revues ---------- */
 
-export const usePullRequests = (filter: PrFilter = {}) =>
-  useQuery({ queryKey: keys.prList(filter), queryFn: () => call("prs_list", { filter }) });
+/** PR ouvertes et récentes. `live` : relit toutes les 60 s (une requête GraphQL côté Rust). */
+export const usePullRequests = (filter: PrFilter = {}, options: { live?: boolean } = {}) =>
+  useQuery({
+    queryKey: keys.prList(filter),
+    queryFn: () => call("prs_list", { filter }),
+    refetchInterval: options.live ? 60_000 : false,
+  });
 
-export const usePendingReviews = () =>
-  useQuery({ queryKey: keys.reviewsPending(), queryFn: () => call("reviews_pending") });
+export const usePendingReviews = (options: { live?: boolean } = {}) =>
+  useQuery({
+    queryKey: keys.reviewsPending(),
+    queryFn: () => call("reviews_pending"),
+    refetchInterval: options.live ? 60_000 : false,
+  });
+
+/** PR, description et fichiers avec leurs patchs (écran de revue). */
+export const usePrDetail = (number: number | null) =>
+  useQuery({
+    queryKey: keys.prDetail(number ?? 0),
+    queryFn: () => call("pr_detail", { number: number! }),
+    enabled: number !== null,
+  });
 
 /* ---------- Agents ---------- */
 

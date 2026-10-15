@@ -6,6 +6,7 @@
 //! `SecretString` — jamais exposé au webview.
 
 pub mod issues;
+pub mod pulls;
 pub mod rate_limit;
 pub mod repos;
 

@@ -64,6 +64,7 @@ pub fn run() {
             commands::issues::issue_answer_cto,
             commands::prs::prs_list,
             commands::prs::reviews_pending,
+            commands::prs::pr_detail,
             commands::agents::agent_engines_get,
             commands::agents::agent_engines_set,
             commands::agents::agents_overview,

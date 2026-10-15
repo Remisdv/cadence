@@ -4,7 +4,9 @@
 //! jamais plus d'une passe par ressource et par minute :
 //! - issues : incrémental (`since` = dernier `updated_at` vu), requête conditionnelle
 //!   (ETag) ; un 304 ne consomme pas de quota ;
-//! - milestones : relus d'un bloc, conditionnellement.
+//! - milestones : relus d'un bloc, conditionnellement ;
+//! - pull requests : une requête GraphQL (ouvertes + récentes), qui remplace le cache
+//!   (la CI d'un commit ne change pas le `updated_at` de la PR : pas d'incrémental ici).
 //!
 //! Prévu : tâche `tokio` par projet, intervalle donné par `RateLimitMode`, et
 //! `sync://updated` émis avec les numéros modifiés.
@@ -15,6 +17,7 @@ use secrecy::SecretString;
 use crate::{
     api::github::{
         issues::{self, IssuesFetch},
+        pulls,
         repos::{self, MilestonesFetch},
     },
     domain::sync::SyncResource,
@@ -38,6 +41,7 @@ pub async fn refresh(state: &AppState, cache: &RepoCache, resource: SyncResource
     let result = match resource {
         SyncResource::Issues => sync_issues(&state.http, &token, cache).await.map(drop),
         SyncResource::Milestones => sync_milestones(&state.http, &token, cache).await.map(drop),
+        SyncResource::PullRequests => sync_pulls(&state.http, &token, cache).await,
         _ => Err(AppError::NotImplemented("synchronisation de cette ressource")),
     };
     match result {
@@ -107,6 +111,13 @@ pub async fn sync_milestones(http: &Client, token: &SecretString, cache: &RepoCa
             Ok(true)
         }
     }
+}
+
+/// Relit les PR ouvertes et récentes (un appel GraphQL) et remplace le cache.
+pub async fn sync_pulls(http: &Client, token: &SecretString, cache: &RepoCache) -> AppResult<()> {
+    let items = pulls::fetch_pulls(http, token, &cache.repo).await?;
+    cache.replace_pulls(&items).await?;
+    cache.save_cursor(SyncResource::PullRequests, &SyncCursor::default()).await
 }
 
 #[cfg(test)]

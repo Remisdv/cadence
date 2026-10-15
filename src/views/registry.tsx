@@ -54,8 +54,18 @@ export const registry: Registry = {
   issue: app("Détail d'une issue", "Issue-Detail.dc.html"),
 
   // 3 · Code, revues et planification
-  "pull-requests": app("Pull requests", "Pull-Requests.dc.html"),
-  reviews: app("Revues à faire", "Reviews.dc.html"),
+  "pull-requests": {
+    title: "Pull requests",
+    mockup: "Pull-Requests.dc.html",
+    layout: "app",
+    component: lazy(() => import("./pulls/PullRequestsView")),
+  },
+  reviews: {
+    title: "Revues à faire",
+    mockup: "Reviews.dc.html",
+    layout: "app",
+    component: lazy(() => import("./pulls/ReviewsView")),
+  },
   roadmap: app("Roadmap", "Roadmap.dc.html"),
 
   // 4 · Versions et pilotage des agents

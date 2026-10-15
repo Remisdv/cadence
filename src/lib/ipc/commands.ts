@@ -23,6 +23,7 @@ import type {
   IssueFilter,
   IssueRow,
   PrFilter,
+  PrDetail,
   PrRow,
   ProjectState,
   ProposedAction,
@@ -71,6 +72,7 @@ export interface Commands {
   // Pull requests & revues
   prs_list: { args: { filter: PrFilter }; result: PrRow[] };
   reviews_pending: { args: NoArgs; result: ReviewRow[] };
+  pr_detail: { args: { number: number }; result: PrDetail };
   // Agents
   agent_engines_get: { args: NoArgs; result: AgentEngines };
   agent_engines_set: { args: { engines: AgentEngines }; result: AgentEngines };

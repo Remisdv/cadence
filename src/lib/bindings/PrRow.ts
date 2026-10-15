@@ -13,4 +13,16 @@ branch: string, base: string, author: UserRef,
 /**
  * Agent auteur, si la PR a été ouverte par un agent.
  */
-agent: AgentKind | null, state: PrState, ci: CiState, review: ReviewState | null, linkedIssue: number | null, version: string | null, additions: number, deletions: number, comments: number, updatedAt: string, };
+agent: AgentKind | null, state: PrState, ci: CiState, 
+/**
+ * Checks réussis (ou neutres / ignorés) sur le dernier commit, parmi `ci_total`.
+ */
+ciPassed: number, ciTotal: number, 
+/**
+ * Décision de revue : approuvée, changements demandés, ou en attente d'un relecteur.
+ */
+review: ReviewState | null, approvals: number, changesRequested: number, 
+/**
+ * Dernière demande de revue encore ouverte (« en attente · 2 j »).
+ */
+reviewRequestedAt: string | null, linkedIssue: number | null, version: string | null, additions: number, deletions: number, changedFiles: number, comments: number, createdAt: string, updatedAt: string, };

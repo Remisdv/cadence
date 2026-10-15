@@ -19,7 +19,7 @@ use sqlx::{
 use tokio::sync::Mutex;
 
 use crate::{
-    api::github::{issues::RawIssue, repos::Milestone},
+    api::github::{issues::RawIssue, pulls::RawPr, repos::Milestone},
     domain::sync::SyncResource,
     error::{AppError, AppResult},
 };
@@ -157,6 +157,56 @@ impl RepoCache {
             .bind(serde_json::to_string(&labels).unwrap_or_else(|_| "[]".into()))
             .bind(issue.assignees.first().map(|u| u.login.as_str()))
             .bind(&issue.updated_at)
+            .bind(raw.to_string())
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /* ---------- Pull requests ---------- */
+
+    /// PR en cache, la plus récemment active d'abord.
+    pub async fn pulls(&self) -> AppResult<Vec<RawPr>> {
+        let rows = sqlx::query("SELECT raw FROM pull_requests ORDER BY updated_at DESC, number DESC")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(|r| parse_raw(r.get("raw"))).collect()
+    }
+
+    pub async fn pull(&self, number: u32) -> AppResult<Option<RawPr>> {
+        let row = sqlx::query("SELECT raw FROM pull_requests WHERE number = ?")
+            .bind(number)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(|r| parse_raw(r.get("raw"))).transpose()
+    }
+
+    /// Remplace toutes les PR : le cache garde exactement la dernière lecture (ouvertes +
+    /// récentes), ainsi une PR fermée depuis longtemps n'y reste pas « ouverte ».
+    pub async fn replace_pulls(&self, items: &[(RawPr, serde_json::Value)]) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM pull_requests").execute(&mut *tx).await?;
+        for (pr, raw) in items {
+            let state = match (pr.state.as_str(), pr.is_draft) {
+                ("OPEN", true) => "draft",
+                ("OPEN", false) => "open",
+                ("MERGED", _) => "merged",
+                _ => "closed",
+            };
+            sqlx::query(
+                "INSERT OR REPLACE INTO pull_requests
+                   (number, title, state, head, base, linked_issue, updated_at, raw)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(pr.number)
+            .bind(&pr.title)
+            .bind(state)
+            .bind(&pr.head_ref_name)
+            .bind(&pr.base_ref_name)
+            .bind(pr.closing_issues.nodes.first().map(|i| i.number))
+            .bind(&pr.updated_at)
             .bind(raw.to_string())
             .execute(&mut *tx)
             .await?;
@@ -323,6 +373,24 @@ mod tests {
         cache.replace_milestones(&[ms(2, "0.1.1")]).await.unwrap();
         let titles: Vec<_> = cache.milestones().await.unwrap().into_iter().map(|m| m.title).collect();
         assert_eq!(titles, ["0.1.1"]);
+    }
+
+    #[tokio::test]
+    async fn replaces_pull_requests_and_reads_one() {
+        let cache = RepoCache::in_memory("me/app").await.unwrap();
+        let pr = |n: u32, state: &str, updated: &str| {
+            let raw = json!({"number": n, "title": format!("PR {n}"), "body": null, "state": state,
+                "isDraft": false, "url": "u", "headRefName": "feat/x", "baseRefName": "main",
+                "author": null, "milestone": null, "createdAt": updated, "updatedAt": updated,
+                "reviewDecision": null});
+            (serde_json::from_value::<RawPr>(raw.clone()).unwrap(), raw)
+        };
+        cache.replace_pulls(&[pr(1, "OPEN", "2026-10-01T00:00:00Z"), pr(2, "OPEN", "2026-10-02T00:00:00Z")]).await.unwrap();
+        cache.replace_pulls(&[pr(2, "MERGED", "2026-10-03T00:00:00Z"), pr(3, "OPEN", "2026-10-04T00:00:00Z")]).await.unwrap();
+        let numbers: Vec<_> = cache.pulls().await.unwrap().into_iter().map(|p| p.number).collect();
+        assert_eq!(numbers, [3, 2]);
+        assert_eq!(cache.pull(2).await.unwrap().unwrap().state, "MERGED");
+        assert!(cache.pull(1).await.unwrap().is_none());
     }
 
     #[test]

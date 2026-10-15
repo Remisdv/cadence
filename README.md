@@ -155,5 +155,12 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   brut ; une passe au plus par minute, incrémentale (`since` = dernier `updated_at` vu) et
   conditionnelle (ETag : un dépôt calme répond `304` sans consommer de quota). L'app sert le cache
   hors ligne et au lancement. La déconnexion supprime toutes les bases.
-- **À venir** : les autres écrans (Sprint, détail d'issue…), aujourd'hui des placeholders qui
-  pointent vers leur maquette.
+- **Pull requests** : PR ouvertes et 30 dernières fusionnées ou fermées, triées par activité (une
+  requête GraphQL par minute au plus : CI du dernier commit, approbations, changements demandés,
+  attente de revue, issue fermée, version). Filtres version / état / auteur / origine (agent si
+  label `agent/*`). Une ligne ouvre l'écran de revue.
+- **Revues à faire** : PR dont vous êtes relecteur, et vos PR qui attendent une revue ; pour la PR
+  choisie, diff fichier par fichier (patchs lus en REST), description, impact sur la version. Les
+  boutons de revue arrivent avec l'écriture (0.1.2), le résumé de l'agent CTO en 0.1.3.
+- **À venir** : les autres écrans (Sprint, roadmap, détail d'issue…), aujourd'hui des placeholders
+  qui pointent vers leur maquette.

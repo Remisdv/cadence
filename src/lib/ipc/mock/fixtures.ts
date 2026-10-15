@@ -12,6 +12,8 @@ import type {
   GithubSources,
   IssueDetail,
   IssueRow,
+  PrDetail,
+  PrFile,
   PrRow,
   ProjectState,
   RepoOwner,
@@ -385,81 +387,178 @@ export function issueDetail(number: number): IssueDetail {
   };
 }
 
+/** Il y a `hours` heures : les attentes de revue (« 2 j », « 6 h ») restent vraies. */
+const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+
 const pr = (p: Partial<PrRow> & Pick<PrRow, "number" | "title" | "branch">): PrRow => ({
   base: "main",
-  author: marc,
+  author: me,
   agent: null,
   state: "open",
   ci: "success",
+  ciPassed: 4,
+  ciTotal: 4,
   review: null,
+  approvals: 0,
+  changesRequested: 0,
+  reviewRequestedAt: null,
   linkedIssue: null,
   version: "0.1.2",
   additions: 0,
   deletions: 0,
+  changedFiles: 1,
   comments: 0,
-  updatedAt: "2026-09-16T10:00:00Z",
+  createdAt: hoursAgo(72),
+  updatedAt: hoursAgo(5),
   ...p,
 });
 
 export const pullRequests: PrRow[] = [
   pr({
     number: 88,
-    title: "Device flow OAuth GitHub",
+    title: "feat(auth) : device flow GitHub + stockage trousseau",
     branch: "feat/142-github-device-flow",
-    author: me,
     agent: "dev",
     state: "draft",
     ci: "pending",
+    ciPassed: 1,
     linkedIssue: 142,
-    additions: 412,
-    deletions: 87,
+    additions: 286,
+    deletions: 31,
+    changedFiles: 7,
+    updatedAt: hoursAgo(0.1),
   }),
   pr({
     number: 86,
-    title: "Vue roadmap : lanes par palier",
+    title: "feat(roadmap) : lanes par palier de version",
     branch: "feat/138-roadmap-lanes",
-    review: "approved",
+    author: marc,
+    review: "pending",
+    approvals: 1,
+    reviewRequestedAt: hoursAgo(6),
     linkedIssue: 138,
-    additions: 268,
-    deletions: 41,
+    additions: 412,
+    deletions: 87,
+    changedFiles: 11,
+    updatedAt: hoursAgo(1),
   }),
   pr({
     number: 85,
-    title: "Hauteur du rail latéral",
-    branch: "fix/133-rail-height",
-    review: "pending",
-    linkedIssue: 133,
-    additions: 18,
-    deletions: 6,
+    title: "feat(sync) : synchronisation incrémentale des milestones",
+    branch: "feat/140-milestone-sync",
+    ci: "failure",
+    ciPassed: 3,
+    review: "changes-requested",
+    changesRequested: 1,
+    reviewRequestedAt: hoursAgo(30),
+    linkedIssue: 140,
+    additions: 238,
+    deletions: 44,
+    changedFiles: 6,
+    updatedAt: hoursAgo(3),
   }),
   pr({
     number: 84,
-    title: "Synchronisation incrémentale des milestones",
-    branch: "feat/140-incremental-sync",
-    author: me,
-    ci: "failure",
-    review: "changes-requested",
-    linkedIssue: 140,
-    additions: 233,
-    deletions: 58,
+    title: "fix(ui) : hauteur du rail sur petits écrans",
+    branch: "fix/133-rail-height",
+    author: marc,
+    review: "pending",
+    reviewRequestedAt: hoursAgo(50),
+    additions: 18,
+    deletions: 6,
+    changedFiles: 2,
+    createdAt: hoursAgo(50),
+    updatedAt: hoursAgo(26),
   }),
   pr({
-    number: 80,
-    title: "Client GitHub typé (octocrab)",
+    number: 79,
+    title: "chore(api) : client GitHub typé avec octocrab",
     branch: "chore/134-octocrab-client",
     state: "merged",
     review: "approved",
+    approvals: 2,
     linkedIssue: 134,
-    additions: 540,
-    deletions: 12,
+    additions: 906,
+    deletions: 212,
+    changedFiles: 23,
+    updatedAt: hoursAgo(80),
+  }),
+  pr({
+    number: 76,
+    title: "feat(core) : squelette Tauri 2 et routeur de vues",
+    branch: "feat/131-tauri-shell",
+    state: "merged",
+    review: "approved",
+    approvals: 1,
+    version: "0.1.1",
+    additions: 1204,
+    deletions: 0,
+    changedFiles: 41,
+    updatedAt: hoursAgo(400),
   }),
 ];
 
+const prByNumber = (n: number) => pullRequests.find((p) => p.number === n)!;
+
 export const reviews: ReviewRow[] = [
-  { pr: pullRequests[3]!, audience: "you", requestedAt: "2026-09-15T09:00:00Z" },
-  { pr: pullRequests[2]!, audience: "you", requestedAt: "2026-09-17T04:00:00Z" },
-  { pr: pullRequests[1]!, audience: "others", requestedAt: "2026-09-16T12:00:00Z" },
+  { pr: prByNumber(84), audience: "you", requestedAt: prByNumber(84).reviewRequestedAt! },
+  { pr: prByNumber(85), audience: "others", requestedAt: prByNumber(85).reviewRequestedAt! },
+  { pr: prByNumber(86), audience: "you", requestedAt: prByNumber(86).reviewRequestedAt! },
 ];
+
+const railPatch = [
+  "@@ -1,9 +1,10 @@",
+  " .rail {",
+  "   display: flex;",
+  "-  height: 100vh;",
+  "+  height: 100%;",
+  "+  min-height: 0;",
+  "   flex-direction: column;",
+  " }",
+  " ",
+  " .rail__nav {",
+  "-  overflow: visible;",
+  "+  overflow-y: auto;",
+  "+  scrollbar-width: thin;",
+  " }",
+].join("\n");
+
+/** Détail d'une PR : description et fichiers (patchs réalistes pour #84, génériques sinon). */
+export function prDetailFor(number: number): PrDetail | undefined {
+  const pr = pullRequests.find((p) => p.number === number);
+  if (!pr) return undefined;
+  const files: PrFile[] =
+    number === 84
+      ? [
+          { path: "src/views/rail.css", status: "modified", additions: 12, deletions: 4, patch: railPatch },
+          {
+            path: "src/views/rail.tsx",
+            status: "modified",
+            additions: 6,
+            deletions: 2,
+            patch: "@@ -12,4 +12,8 @@\n export function Rail() {\n-  return <nav className=\"rail\">\n+  return (\n+    <nav className=\"rail\" aria-label=\"Navigation\">\n }",
+          },
+        ]
+      : [
+          {
+            path: `src/${pr.branch.split("/")[1] ?? "change"}.ts`,
+            status: "modified",
+            additions: pr.additions,
+            deletions: pr.deletions,
+            patch: "@@ -1,3 +1,4 @@\n import { invoke } from \"@tauri-apps/api/core\";\n+import { call } from \"@/lib/ipc/transport\";\n \n-export const run = () => invoke(\"run\");\n+export const run = () => call(\"run\");",
+          },
+          { path: "assets/logo.png", status: "added", additions: 0, deletions: 0, patch: null },
+        ];
+  return {
+    pr,
+    body:
+      number === 84
+        ? "Corrige le débordement du rail sous 720 px de hauteur : passage de `100vh` à une hauteur fluide et défilement interne de la zone de navigation.\n\nAucun changement de comportement au-dessus de 720 px."
+        : null,
+    url: `https://github.com/cadence-app/desktop/pull/${number}`,
+    files,
+  };
+}
 
 export const config: Config = {
   project: { repo: "cadence-app/desktop", tagPrefix: "v" },

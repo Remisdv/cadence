@@ -255,8 +255,18 @@ const handlers: Handlers = {
   issue_answer_cto: () => null,
 
   prs_list: ({ filter }) =>
-    data.pullRequests.filter((p) => !filter.state || filter.state.includes(p.state)),
+    data.pullRequests.filter(
+      (p) =>
+        (!filter.state || filter.state.includes(p.state)) &&
+        (!filter.author || p.author.login === filter.author) &&
+        (!filter.version || p.version === filter.version),
+    ),
   reviews_pending: () => data.reviews,
+  pr_detail: ({ number }) => {
+    const detail = data.prDetailFor(number);
+    if (!detail) fail("pr_detail", `PR #${number} absente du cache.`);
+    return detail;
+  },
 
   agent_engines_get: () => state.engines,
   agent_engines_set: ({ engines }) => {

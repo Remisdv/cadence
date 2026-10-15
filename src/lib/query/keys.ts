@@ -24,6 +24,7 @@ export const keys = {
 
   reviews: ["reviews"] as const,
   reviewsPending: () => ["reviews", "pending"] as const,
+  prDetail: (number: number) => ["pull-requests", "detail", number] as const,
 
   agents: ["agents"] as const,
   agentsOverview: () => ["agents", "overview"] as const,

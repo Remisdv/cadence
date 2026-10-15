@@ -55,6 +55,8 @@ export type { PrState } from "./bindings/PrState";
 export type { CiState } from "./bindings/CiState";
 export type { ReviewState } from "./bindings/ReviewState";
 export type { PrRow } from "./bindings/PrRow";
+export type { PrFile } from "./bindings/PrFile";
+export type { PrDetail } from "./bindings/PrDetail";
 export type { PrFilter } from "./bindings/PrFilter";
 export type { ReviewAudience } from "./bindings/ReviewAudience";
 export type { ReviewRow } from "./bindings/ReviewRow";
