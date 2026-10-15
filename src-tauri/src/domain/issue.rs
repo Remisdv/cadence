@@ -90,6 +90,8 @@ pub enum IssueFlag {
     IncompleteDescription,
     CtoQuestions,
     CiFailed,
+    /// Description réécrite et validée avec l'agent CTO (label `agent/cto`).
+    CtoReviewed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

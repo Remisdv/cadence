@@ -7,6 +7,8 @@ import { mockBus } from "./bus";
 import * as data from "./fixtures";
 
 let run: AgentRunDetail | null = null;
+/** Descriptions écrites par « Appliquer », pour le détail d'issue. */
+const appliedBodies = new Map<number, string>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 const STEP_MS = 450;
@@ -96,37 +98,35 @@ function finish(item: CtoItem, ask: boolean) {
 
 export const ctoMock = {
   latest: () => run,
+  appliedBody: (number: number) => appliedBodies.get(number),
+  item: (number: number) => run?.items.find((i) => i.number === number),
 
-  start(): string {
-    if (run && (run.state === "running" || run.state === "prepare")) return run.run;
+  start(only?: number[]): string {
+    if (run && (run.state === "running" || run.state === "prepare")) {
+      if (only) {
+        const known = run.items.map((i) => i.number);
+        run.items.push(...toItems(only.filter((n) => !known.includes(n))));
+        log("system", `› ajoutée(s) à la file : ${only.map((n) => `#${n}`).join(", ")}`);
+        emitState();
+      }
+      return run.run;
+    }
     const current = data.project.currentVersion;
-    const items: CtoItem[] = data.issues
-      .filter((i) => i.version === current && i.status !== "done")
-      .slice(0, 6)
-      .map((i) => ({
-        number: i.number,
-        title: i.title,
-        version: i.version,
-        issueType: i.issueType,
-        state: "queued",
-        before: i.flags.includes("incomplete-description")
-          ? ""
-          : "Quand on dépasse le quota, l'app affiche une erreur brute. Il faut quelque chose de lisible.",
-        after: null,
-        questions: [],
-        estimate: null,
-        estimateHours: null,
-        labels: [],
-        risk: null,
-        related: [],
-        error: null,
-      }));
+    const pending = run?.items.filter((i) => i.state === "ready" || i.state === "questions") ?? [];
+    const fresh = toItems(
+      only ??
+        data.issues
+          .filter((i) => i.version === current && i.status !== "done" && !i.flags.includes("cto-reviewed"))
+          .slice(0, 6)
+          .map((i) => i.number),
+    ).filter((i) => !pending.some((p) => p.number === i.number));
+    const items: CtoItem[] = [...pending, ...fresh];
     run = {
       run: `cto-${Date.now()}`,
       kind: "cto",
       state: "running",
       autonomy: data.config.agents.cto.autonomy,
-      version: current,
+      version: only ? null : current,
       model: data.config.agents.cto.model,
       startedAt: new Date().toISOString(),
       endedAt: null,
@@ -135,11 +135,12 @@ export const ctoMock = {
       error: null,
     };
     log("system", `› copie de ${data.project.repo.fullName} (main)…`);
-    log("system", `› ${items.length} issues à traiter`);
+    log("system", `› ${items.length} issue${items.length > 1 ? "s" : ""} à traiter`);
     emitState();
     timer = setTimeout(next, STEP_MS);
     return run.run;
   },
+
 
   stop() {
     if (!run) return;
@@ -162,8 +163,13 @@ export const ctoMock = {
       }
       item.state = "applied";
       item.before = item.after ?? "";
+      appliedBodies.set(item.number, item.before);
       const issue = data.issues.find((i) => i.number === item.number);
-      if (issue) issue.flags = [];
+      if (issue) {
+        issue.flags = ["cto-reviewed"];
+        issue.estimate = item.estimate;
+        issue.labels = [...new Set([...issue.labels, ...item.labels])];
+      }
       log("write", `write #${item.number} : description et labels`);
       applied.push(id);
     }
@@ -202,6 +208,29 @@ export const ctoMock = {
     }, 1200);
   },
 };
+
+function toItems(numbers: number[]): CtoItem[] {
+  return data.issues
+    .filter((i) => numbers.includes(i.number))
+    .map((i) => ({
+      number: i.number,
+      title: i.title,
+      version: i.version,
+      issueType: i.issueType,
+      state: "queued",
+      before: i.flags.includes("incomplete-description")
+        ? ""
+        : "Quand on dépasse le quota, l'app affiche une erreur brute. Il faut quelque chose de lisible.",
+      after: null,
+      questions: [],
+      estimate: null,
+      estimateHours: null,
+      labels: [],
+      risk: null,
+      related: [],
+      error: null,
+    }));
+}
 
 function settle() {
   if (!run) return;

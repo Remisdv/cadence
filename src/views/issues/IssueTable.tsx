@@ -206,9 +206,17 @@ function IssueLine({
         )}
       </span>
       <span className="flex w-[112px] shrink-0 justify-end text-tiny text-tx3">
-        {issue.flags.includes("incomplete-description") ? (
+        {issue.flags.includes("cto-questions") ? (
+          <span className="inline-flex items-center gap-1 text-amber">
+            <Icon name="review" size={12} /> questions
+          </span>
+        ) : issue.flags.includes("incomplete-description") ? (
           <span className="inline-flex items-center gap-1 text-amber">
             <Icon name="warning" size={12} /> à compléter
+          </span>
+        ) : issue.flags.includes("cto-reviewed") ? (
+          <span className="inline-flex items-center gap-1 text-green">
+            <Icon name="check" size={12} /> validée
           </span>
         ) : (
           "—"

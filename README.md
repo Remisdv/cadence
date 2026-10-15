@@ -193,5 +193,10 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   `agent/cto` et `estimate/*`, commentaire signé). Autonomie lue dans `config.toml` (`propose`
   bloque toute écriture, `auto` applique seul ce qui n'a pas de question). Journal et file gardés
   dans `agent_runs` (reprise après redémarrage), console en direct par `agent://event`.
-- **À venir** : les autres écrans (Sprint, détail d'issue, détail de version…), aujourd'hui des
-  placeholders qui pointent vers leur maquette.
+- **Détail d'une issue** (clic sur une ligne d'Issues) : description rendue (markdown, cases en
+  lecture seule), état de l'agent CTO (en file, en cours, proposition à relire, questions, validée)
+  avec « Envoyer à l'agent CTO », questions avec réponse renvoyée dans sa session, propriétés
+  (version, labels, assigné, branche et PR liée, estimation). Une issue créée avec « Envoyer à
+  l'agent CTO » rejoint la file en cours, ou en lance une.
+- **À venir** : les autres écrans (Sprint, détail de version, console des agents…), aujourd'hui
+  des placeholders qui pointent vers leur maquette.

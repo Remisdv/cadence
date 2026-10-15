@@ -1,6 +1,7 @@
 /**
  * Nouvelle issue (maquette Issue-Create.dc.html) : titre et version obligatoires, créée sur
- * GitHub avec le milestone de la version. Les agents (CTO, développeur) arrivent en 0.1.3.
+ * GitHub avec le milestone de la version, puis envoyée à l'agent CTO si demandé. L'agent
+ * développeur arrive en 0.2.0.
  */
 import { useId, useState, type KeyboardEvent } from "react";
 import type { IssueType, Version } from "@/lib/types";
@@ -14,7 +15,13 @@ import { SwitchField } from "@/components/ui/Switch";
 import { Icon } from "@/components/icons/Icon";
 import { issueTypes } from "@/lib/domain/issues";
 import { compareVersions } from "@/lib/domain/versions";
-import { useAuthStatus, useCreateIssue, useCurrentProject, useVersions } from "@/lib/query/queries";
+import {
+  useAuthStatus,
+  useCreateIssue,
+  useCurrentProject,
+  useSettings,
+  useVersions,
+} from "@/lib/query/queries";
 
 /** « 0.1.2 — sprint en cours », « 0.1.3 — sprint suivant », « 0.2.0 — palier ». */
 export function versionOptions(versions: Version[], current: string | null) {
@@ -52,6 +59,8 @@ export function IssueCreateDialog({ onDone }: { onDone: () => void }) {
   const [labels, setLabels] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [assignToMe, setAssignToMe] = useState(true);
+  const sendDefault = useSettings().data?.issues.sendToCtoOnCreate ?? true;
+  const [sendToCto, setSendToCto] = useState<boolean | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
   const options = versionOptions(versions.data ?? [], project?.currentVersion ?? null);
@@ -83,6 +92,7 @@ export function IssueCreateDialog({ onDone }: { onDone: () => void }) {
         body: body.trim() || undefined,
         labels: draft.trim() ? [...labels, draft.trim()] : labels,
         assignee: assignToMe && me ? me : undefined,
+        sendToCto: sendToCto ?? sendDefault,
       },
       { onSuccess: onDone },
     );
@@ -187,11 +197,10 @@ export function IssueCreateDialog({ onDone }: { onDone: () => void }) {
 
         <div className="flex flex-col gap-[11px] rounded-[10px] border border-line bg-p2 px-3.5 py-[13px]">
           <SwitchField
-            checked={false}
-            onCheckedChange={() => {}}
-            disabled
+            checked={sendToCto ?? sendDefault}
+            onCheckedChange={setSendToCto}
             label="Envoyer à l'agent CTO à la création"
-            hint="Arrive avec l'agent CTO (version 0.1.3)."
+            hint="Il complétera la description et posera ses questions dans la foulée."
           />
           <SwitchField
             checked={false}

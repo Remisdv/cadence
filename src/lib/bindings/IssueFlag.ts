@@ -3,4 +3,4 @@
 /**
  * Signaux affichés sur les cartes d'issue.
  */
-export type IssueFlag = "incomplete-description" | "cto-questions" | "ci-failed";
+export type IssueFlag = "incomplete-description" | "cto-questions" | "ci-failed" | "cto-reviewed";

@@ -80,3 +80,33 @@ describe("lineDiff", () => {
     expect(lineDiff("", "x")).toEqual([{ type: "add", text: "x" }]);
   });
 });
+
+describe("parseMarkdown", () => {
+  it("lit titres, listes, cases et paragraphes", async () => {
+    const { parseMarkdown } = await import("@/components/domain/Markdown");
+    const blocks = parseMarkdown(
+      "## Contexte\nLe client\nremonte l'erreur.\n\n## Attendu\n- un\n- deux\n\n- [ ] à faire\n- [x] fait\n\n> cité",
+    );
+    expect(blocks.map((b) => b.kind)).toEqual(["heading", "paragraph", "heading", "list", "tasks", "quote"]);
+    expect(blocks[1]).toEqual({ kind: "paragraph", text: "Le client remonte l'erreur." });
+    expect(blocks[4]).toEqual({
+      kind: "tasks",
+      items: [
+        { done: false, text: "à faire" },
+        { done: true, text: "fait" },
+      ],
+    });
+  });
+});
+
+describe("branchName", () => {
+  it("suit la convention de vcs::branch_name", async () => {
+    const { branchName } = await import("./issues");
+    expect(branchName("feat", 142, "Device flow OAuth GitHub + stockage trousseau")).toBe(
+      "feat/142-device-flow-oauth-github-stockage",
+    );
+    expect(branchName("fix", 156, "Message d'erreur lisible quand le quota API est atteint")).toBe(
+      "fix/156-message-d-erreur-lisible-quand-le-quota",
+    );
+  });
+});

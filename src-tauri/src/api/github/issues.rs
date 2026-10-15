@@ -184,7 +184,13 @@ pub fn to_row(raw: &RawIssue, me: Option<&str>) -> IssueRow {
         estimate: names.iter().find_map(|n| n.strip_prefix("estimate/")).map(str::to_string),
         active_agent: None,
         linked_pr: None,
-        flags: if empty_body && !closed { vec![IssueFlag::IncompleteDescription] } else { vec![] },
+        flags: [
+            (empty_body && !closed).then_some(IssueFlag::IncompleteDescription),
+            names.contains(&"agent/cto").then_some(IssueFlag::CtoReviewed),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         updated_at: raw.updated_at.clone(),
     }
 }

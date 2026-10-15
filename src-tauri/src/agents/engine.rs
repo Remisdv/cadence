@@ -184,8 +184,31 @@ pub async fn start_cto(app: &AppHandle, state: &AppState, input: AgentInput) -> 
     let cache = state.repo_cache().await?;
     crate::sync::refresh(state, &cache, crate::domain::sync::SyncResource::Issues).await?;
     let target = input.version.clone().or(project.current_version.clone());
-    let items = queue(&cache, target.as_deref(), input.issues.as_deref()).await?;
-    if items.is_empty() {
+    let mut items = queue(&cache, target.as_deref(), input.issues.as_deref()).await?;
+    // Propositions encore à relire dans l'exécution précédente : reportées dans la nouvelle,
+    // qui devient la seule à suivre (l'ancienne est close).
+    let mut carried = vec![];
+    if let Some(previous) = latest(state, AgentKind::Cto).await? {
+        let mut d = previous.detail.write().await;
+        let pending: Vec<CtoItem> = d.items.iter().filter(|i| i.state.awaits_review()).cloned().collect();
+        if !pending.is_empty() {
+            for item in d.items.iter_mut().filter(|i| i.state.awaits_review()) {
+                item.state = CtoItemState::Skipped;
+                item.error = Some("Reportée dans l'exécution suivante.".into());
+            }
+            d.state = RunState::Done;
+            d.ended_at.get_or_insert_with(version::now_iso);
+            carried = pending;
+        }
+        drop(d);
+        if !carried.is_empty() {
+            persist(state, &previous).await;
+        }
+    }
+    items.retain(|i| !carried.iter().any(|c| c.number == i.number));
+    let new_items = items.len();
+    items.splice(0..0, carried);
+    if new_items == 0 && items.is_empty() {
         return Err(AppError::Validation(match &target {
             Some(v) => format!("Aucune issue ouverte à traiter sur {v} : toutes sont déjà passées par l'agent CTO."),
             None => "Aucune issue à traiter.".into(),
@@ -228,6 +251,34 @@ pub async fn start_cto(app: &AppHandle, state: &AppState, input: AgentInput) -> 
         }
     });
     Ok(run)
+}
+
+/// Envoie des issues précises à l'agent CTO : ajoutées à l'exécution en cours (la file les
+/// prend au passage), sinon dans une nouvelle exécution.
+pub async fn send_issues(app: &AppHandle, state: &AppState, numbers: Vec<u32>) -> AppResult<String> {
+    if let Some(h) = latest(state, AgentKind::Cto).await? {
+        let active = matches!(h.detail.read().await.state, RunState::Prepare | RunState::Running);
+        if active {
+            let cache = state.repo_cache().await?;
+            crate::sync::refresh(state, &cache, crate::domain::sync::SyncResource::Issues).await?;
+            let fresh = queue(&cache, None, Some(&numbers)).await?;
+            let run = {
+                let mut d = h.detail.write().await;
+                let known: Vec<u32> = d.items.iter().map(|i| i.number).collect();
+                let added: Vec<CtoItem> = fresh.into_iter().filter(|i| !known.contains(&i.number)).collect();
+                if added.is_empty() {
+                    return Ok(d.run.clone());
+                }
+                d.items.extend(added);
+                d.run.clone()
+            };
+            log(app, &h, AgentEventKind::System, format!("› ajoutée(s) à la file : {}", numbers.iter().map(|n| format!("#{n}")).collect::<Vec<_>>().join(", "))).await;
+            persist(state, &h).await;
+            emit_state(app, &h).await;
+            return Ok(run);
+        }
+    }
+    start_cto(app, state, AgentInput { version: None, issues: Some(numbers) }).await
 }
 
 /// Issues à traiter : ouvertes, de la version (ou listées), pas encore passées par le CTO

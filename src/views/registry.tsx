@@ -51,7 +51,12 @@ export const registry: Registry = {
     layout: "app",
     component: lazy(() => import("./issues/IssuesView")),
   },
-  issue: app("Détail d'une issue", "Issue-Detail.dc.html"),
+  issue: {
+    title: "Détail d'une issue",
+    mockup: "Issue-Detail.dc.html",
+    layout: "app",
+    component: lazy(() => import("./issues/IssueDetailView")),
+  },
 
   // 3 · Code, revues et planification
   "pull-requests": {

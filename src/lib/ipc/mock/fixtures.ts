@@ -365,25 +365,13 @@ export function issueDetail(number: number): IssueDetail {
   const base = issues.find((i) => i.number === number) ?? issues[2]!;
   return {
     ...base,
-    body: "Quand on dépasse le quota, l'app affiche une erreur brute de l'API.",
+    body: base.flags.includes("incomplete-description")
+      ? ""
+      : "Quand on dépasse le quota, l'app affiche une erreur brute de l'API.\n\n## Attendu\n- Distinguer quota atteint et 403 de permissions\n- Afficher l'heure de réinitialisation\n\n- [ ] Bandeau, jamais de toast rouge",
     htmlUrl: `https://github.com/cadence-app/desktop/issues/${base.number}`,
     author: me,
     createdAt: "2026-09-15T09:30:00Z",
-    questions:
-      base.number === 156
-        ? [
-            {
-              id: "q1",
-              question: "Faut-il un compte à rebours jusqu'à la réinitialisation du quota ?",
-              answer: null,
-            },
-            {
-              id: "q2",
-              question: "Le message doit-il proposer de passer en mode économe ?",
-              answer: null,
-            },
-          ]
-        : [],
+    questions: [],
   };
 }
 

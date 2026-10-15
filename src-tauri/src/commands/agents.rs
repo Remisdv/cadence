@@ -90,7 +90,10 @@ pub async fn agent_start(
     input: AgentInput,
 ) -> AppResult<String> {
     match kind {
-        AgentKind::Cto => engine::start_cto(&app, &state, input).await,
+        AgentKind::Cto => match input.issues.clone().filter(|i| !i.is_empty()) {
+            Some(numbers) => engine::send_issues(&app, &state, numbers).await,
+            None => engine::start_cto(&app, &state, input).await,
+        },
         AgentKind::Ceo | AgentKind::Dev => Err(AppError::NotImplemented("cet agent (version 0.2.0)")),
         AgentKind::Deploy => Err(AppError::NotImplemented("l'agent déploiement (version 0.2.1)")),
     }

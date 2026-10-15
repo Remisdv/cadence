@@ -47,3 +47,17 @@ export function groupBy<T, K extends string>(items: T[], keyOf: (item: T) => K, 
   for (const item of items) groups.get(keyOf(item))?.push(item);
   return groups;
 }
+
+/** Nom de branche conventionné `<type>/<num>-<slug>` (même règle que `vcs::branch_name`). */
+export function branchName(type: IssueType | null, number: number, title: string): string {
+  const slug = title
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/œ/gi, "oe")
+    .replace(/æ/gi, "ae")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const cut = slug.length <= 40 ? slug : slug.slice(0, 40).replace(/-[^-]*$/, "");
+  return `${type ?? "feat"}/${number}-${cut}`;
+}

@@ -27,6 +27,7 @@ import { AgentQuestion } from "@/components/domain/AgentQuestion";
 import { TypeBadge, VersionBadge } from "@/components/domain/Badges";
 import { Burndown } from "@/components/domain/Burndown";
 import { DiffViewer, TextDiff } from "@/components/domain/Diff";
+import { Markdown } from "@/components/domain/Markdown";
 import { FilterChip, FilterInput, PillTabs } from "@/components/domain/Filters";
 import {
   BranchRef,
@@ -535,6 +536,21 @@ export default function DesignSystemView() {
               />
             </Card>
           </div>
+          <Card className="p-4">
+            <Markdown
+              source={[
+                "## Contexte",
+                "Le client renvoie `403` avec **x-ratelimit-remaining: 0**.",
+                "",
+                "## Attendu",
+                "- Distinguer quota et permissions",
+                "- Afficher l'heure de réinitialisation",
+                "",
+                "- [ ] Bandeau, jamais de toast rouge",
+                "- [x] Heure dans le fuseau local",
+              ].join("\n")}
+            />
+          </Card>
           <TextDiff
             lines={[
               { type: "del", text: "Quand on dépasse le quota, l'app affiche une erreur brute." },

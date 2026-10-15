@@ -52,7 +52,10 @@ pub async fn issue_get(state: State<'_, AppState>, number: u32) -> AppResult<Iss
         let d = handle.detail.read().await;
         if let Some(item) = d.items.iter().find(|i| i.number == number) {
             match item.state {
-                CtoItemState::Questions => questions = item.questions.clone(),
+                CtoItemState::Questions => {
+                    questions = item.questions.clone();
+                    row.flags.push(crate::domain::issue::IssueFlag::CtoQuestions);
+                }
                 CtoItemState::Running => row.active_agent = Some(AgentKind::Cto),
                 _ => {}
             }
@@ -75,9 +78,14 @@ pub async fn issue_get(state: State<'_, AppState>, number: u32) -> AppResult<Iss
 
 /// Crée l'issue sur GitHub, rattachée au milestone de sa version, puis la range dans le
 /// cache. Refuse une issue sans titre ou sans version ouverte (règle produit).
-/// L'envoi à l'agent CTO arrive avec l'agent (0.1.3).
+/// Avec `send_to_cto`, l'issue part ensuite chez l'agent CTO (son échec n'annule pas la
+/// création : il est seulement journalisé).
 #[tauri::command]
-pub async fn issue_create(state: State<'_, AppState>, input: IssueCreateInput) -> AppResult<IssueRow> {
+pub async fn issue_create(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    input: IssueCreateInput,
+) -> AppResult<IssueRow> {
     input.validate()?;
     let cache = state.repo_cache().await?;
     sync::refresh(&state, &cache, SyncResource::Milestones).await?;
@@ -105,7 +113,14 @@ pub async fn issue_create(state: State<'_, AppState>, input: IssueCreateInput) -
     cache.invalidate(SyncResource::Milestones).await?;
 
     let me = state.github.read().await.as_ref().and_then(|g| g.login.clone());
-    Ok(issues::to_row(&issue, me.as_deref()))
+    let mut row = issues::to_row(&issue, me.as_deref());
+    if input.send_to_cto == Some(true) {
+        match engine::send_issues(&app, &state, vec![issue.number]).await {
+            Ok(_) => row.active_agent = Some(AgentKind::Cto),
+            Err(err) => tracing::warn!(%err, number = issue.number, "issue non envoyée à l'agent CTO"),
+        }
+    }
+    Ok(row)
 }
 
 /// Renvoie les réponses dans la session CTO, qui reprend et complète la description.

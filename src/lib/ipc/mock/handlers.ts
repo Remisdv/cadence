@@ -242,7 +242,21 @@ const handlers: Handlers = {
         (!filter.issueType || i.issueType === filter.issueType) &&
         (!filter.query || i.title.toLowerCase().includes(filter.query.toLowerCase())),
     ),
-  issue_get: ({ number }) => data.issueDetail(number),
+  issue_get: ({ number }) => {
+    const detail = data.issueDetail(number);
+    const item = ctoMock.item(number);
+    const questions = item?.state === "questions" ? structuredClone(item.questions) : [];
+    return {
+      ...detail,
+      body: ctoMock.appliedBody(number) ?? detail.body,
+      questions,
+      activeAgent: item?.state === "running" ? "cto" : null,
+      flags: [
+        ...detail.flags.filter((f) => f !== "cto-questions"),
+        ...(questions.length > 0 ? (["cto-questions"] as const) : []),
+      ],
+    };
+  },
   issue_create: ({ input }) => {
     if (!input.title?.trim()) fail("issue_create", "Une issue doit avoir un titre.");
     if (!input.version?.trim())
@@ -264,6 +278,10 @@ const handlers: Handlers = {
       updatedAt: new Date().toISOString(),
     };
     data.issues.unshift(row);
+    if (input.sendToCto) {
+      ctoMock.start([row.number]);
+      row.activeAgent = "cto";
+    }
     return row;
   },
   issue_answer_cto: ({ number, answers }) => {
@@ -295,9 +313,9 @@ const handlers: Handlers = {
     return engines;
   },
   agents_overview: () => data.agentsOverview,
-  agent_start: ({ kind }) => {
+  agent_start: ({ kind, input }) => {
     if (kind !== "cto") fail("agent_start", "Cet agent arrive en version 0.2.0.");
-    return ctoMock.start();
+    return ctoMock.start(input.issues?.length ? input.issues : undefined);
   },
   agent_control: ({ cmd }) => {
     if (cmd.cmd !== "stop") fail("agent_control", "Pause et intervention arrivent en version 0.2.0.");
