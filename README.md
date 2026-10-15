@@ -209,5 +209,16 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   `curl` interdits à l'agent, aucun assistant d'identifiants dans son environnement, `pushurl`
   invalide sur la copie, et Cadence refuse de pousser sur la branche par défaut. Pause (après
   l'étape en cours), arrêt, et intervention depuis le terminal (reprise à l'étape suivante).
-- **À venir** : l'agent CEO, puis les autres écrans (Sprint, détail de version, console des
+- **Agent CEO** (barre latérale › CEO, ou « Proposer avec l'agent CEO » dans la Roadmap) : alimente
+  la roadmap. Lancé sur le prochain palier (premier milestone ouvert sans date après la version en
+  cours, ou celui choisi), une session Claude Code en lecture seule sur la copie du dépôt reçoit
+  les thèmes du palier (éléments de liste de la description), les autres versions ouvertes, les
+  versions livrées, les titres des issues existantes et le README, et rend au plus 8 propositions
+  (titre, corps, milestone, type, labels, thème, justification, recouvrement). Cadence écarte les
+  doublons exacts, les labels conventionnés (`type/`, `agent/`, `status/`) et les milestones fermés
+  ou inconnus. Verrouillé en `propose` : rien n'est créé sans un clic. Chaque proposition se modifie
+  (titre, corps) ou se rejette ; « Créer » ouvre l'issue dans son milestone avec les labels
+  `agent/ceo` et `type/*` et un pied signé (« Proposée par l'agent CEO — thème : … »). Un bandeau de
+  la Roadmap signale les propositions qui attendent.
+- **À venir** : les autres écrans (Sprint, détail de version, console des
   agents…), aujourd'hui des placeholders qui pointent vers leur maquette.

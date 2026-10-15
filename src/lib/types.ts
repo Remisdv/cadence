@@ -67,6 +67,8 @@ export type { CtoItemState } from "./bindings/CtoItemState";
 export type { DevTask } from "./bindings/DevTask";
 export type { DevTaskState } from "./bindings/DevTaskState";
 export type { DevFile } from "./bindings/DevFile";
+export type { CeoProposal } from "./bindings/CeoProposal";
+export type { CeoProposalState } from "./bindings/CeoProposalState";
 
 // Agents
 export type { AgentKind } from "./bindings/AgentKind";

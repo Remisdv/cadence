@@ -2,6 +2,7 @@
 import type { AgentKind } from "./AgentKind";
 import type { AgentLogLine } from "./AgentLogLine";
 import type { Autonomy } from "./Autonomy";
+import type { CeoProposal } from "./CeoProposal";
 import type { CtoItem } from "./CtoItem";
 import type { DevTask } from "./DevTask";
 import type { RunState } from "./RunState";
@@ -21,4 +22,8 @@ error: string | null,
 /**
  * En pause : la file s'arrête après l'étape en cours.
  */
-paused: boolean, };
+paused: boolean, 
+/**
+ * Issues proposées par l'agent CEO.
+ */
+proposals: Array<CeoProposal>, };

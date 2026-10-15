@@ -4,12 +4,14 @@
  *
  * Le nom d'une version est la première ligne de la description de son milestone
  * (`# Cockpit Tauri`), les thèmes d'un palier en sont les éléments de liste.
- * Créer une version arrive en 0.1.2, les propositions de l'agent CEO en 0.2.0.
+ * Créer une version arrive en 0.1.2. « Proposer avec l'agent CEO » lance l'agent sur le
+ * prochain palier (ou ouvre son écran), et un bandeau signale les propositions à relire.
  */
 import type { ReactNode } from "react";
 import { Page } from "@/components/layout/Page";
 import { EmptyState, ErrorState, LoadingState } from "@/components/layout/EmptyState";
 import { Icon, type IconName } from "@/components/icons/Icon";
+import { AgentBadge } from "@/components/domain/AgentBadge";
 import { VersionBadge } from "@/components/domain/Badges";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -18,8 +20,9 @@ import { ProgressBar, type ProgressTone } from "@/components/ui/ProgressBar";
 import { cn } from "@/lib/cn";
 import { formatDaysLeft, formatPercent, formatRange } from "@/lib/domain/format";
 import { buildRoadmap, daysUntil, periodOf, type RoadmapCard } from "@/lib/domain/roadmap";
+import { ceoTarget, pendingProposals, themesLabel } from "@/lib/domain/ceo";
 import { versionStageMeta, type VersionStage } from "@/lib/domain/versions";
-import { useCurrentProject, useIssues, useVersions } from "@/lib/query/queries";
+import { useAgentLatestRun, useCurrentProject, useIssues, useStartAgent, useVersions } from "@/lib/query/queries";
 import { useNavigation } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 
@@ -74,13 +77,37 @@ export default function RoadmapView() {
 
   const open = (title: string) => navigate({ id: "version", version: title });
 
+  // Agent CEO : propositions à relire, ou lancement sur le prochain palier.
+  const ceoRun = useAgentLatestRun("ceo").data ?? null;
+  const startAgent = useStartAgent();
+  const pending = pendingProposals(ceoRun);
+  const ceoActive = ceoRun?.state === "running" || ceoRun?.state === "prepare";
+  const ceoVersion = ceoTarget(versions.data ?? [], current);
+  const ceoVersionName = versions.data?.find((v) => v.title === ceoRun?.version)?.name ?? null;
+  const openCeo = () => navigate({ id: "agent", kind: "ceo" });
+  const proposeWithCeo = () => {
+    if (ceoActive || pending.length > 0 || !ceoVersion) return openCeo();
+    startAgent.mutate({ kind: "ceo", input: { version: ceoVersion } }, { onSettled: openCeo });
+  };
+
   return (
     <Page
       title="Roadmap"
       subtitle={subtitle}
       actions={
         <>
-          <Button icon="sparkle" disabled title="Arrive avec l'agent CEO (version 0.2.0)">
+          <Button
+            icon="sparkle"
+            disabled={startAgent.isPending}
+            onClick={proposeWithCeo}
+            title={
+              pending.length > 0 || ceoActive
+                ? "Ouvrir les propositions de l'agent CEO"
+                : ceoVersion
+                  ? `Dériver les issues manquantes de ${ceoVersion}`
+                  : "Aucun palier ouvert après la version en cours"
+            }
+          >
             Proposer avec l'agent CEO
           </Button>
           <Button variant="primary" icon="plus" disabled title="Arrive avec l'écriture sur GitHub (0.1.2)">
@@ -163,9 +190,60 @@ export default function RoadmapView() {
               })
             )}
           </Lane>
+
+          {pending.length > 0 && ceoRun && (
+            <CeoBanner
+              version={ceoRun.version}
+              titles={pending.map((p) => p.title)}
+              themes={ceoVersionName ? `de « ${ceoVersionName} »` : themesLabel(pending)}
+              onOpen={openCeo}
+            />
+          )}
         </>
       )}
     </Page>
+  );
+}
+
+/**
+ * Bandeau du bas : propositions de l'agent CEO en attente de relecture. `themes` complète
+ * « dérivées des thèmes … » (nom du palier, ou liste des thèmes à défaut).
+ */
+function CeoBanner({
+  version,
+  titles,
+  themes,
+  onOpen,
+}: {
+  version: string | null;
+  titles: string[];
+  themes: string;
+  onOpen: () => void;
+}) {
+  const n = titles.length;
+  return (
+    <section className="flex shrink-0 items-center gap-3.5 rounded-card border border-line bg-panel px-4 py-3.5">
+      <AgentBadge agent="ceo" size={32} />
+      <div className="min-w-0 grow">
+        <div className="text-body">
+          <span className="font-semibold">
+            L'agent CEO propose {n} issue{n > 1 ? "s" : ""}
+          </span>
+          {version && ` pour la version ${version}`}
+          {themes ? `, dérivée${n > 1 ? "s" : ""} des thèmes ${themes}.` : "."}
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {titles.map((t) => (
+            <Badge key={t} tone="muted">
+              {t}
+            </Badge>
+          ))}
+        </div>
+      </div>
+      <Button variant="purple" icon="review" className="h-[34px] gap-[7px] rounded-lg px-3.5" onClick={onOpen}>
+        Examiner les propositions
+      </Button>
+    </section>
   );
 }
 

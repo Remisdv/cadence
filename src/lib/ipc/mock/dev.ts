@@ -166,6 +166,7 @@ export const devMock = {
       log: [],
       error: null,
       paused: false,
+      proposals: [],
     };
     log("system", `› copie de ${data.project.repo.fullName} (main)…`);
     emitState();
