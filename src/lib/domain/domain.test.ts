@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareVersions, nextVersions, versionStage } from "./versions";
+import { compareVersions, nextSprintRange, nextVersions, versionStage } from "./versions";
 import { formatAgo, formatDaysLeft, formatDuration, formatRange } from "./format";
 import { groupBy, statusOrder } from "./issues";
 import { versions } from "@/lib/ipc/mock/fixtures";
@@ -51,5 +51,18 @@ describe("groupBy", () => {
     const groups = groupBy([{ s: "done" as const }], (x) => x.s, statusOrder);
     expect([...groups.keys()]).toEqual(statusOrder);
     expect(groups.get("todo")).toEqual([]);
+  });
+});
+
+describe("nextSprintRange", () => {
+  it("part de l'échéance close, ou d'aujourd'hui si elle est passée", () => {
+    expect(nextSprintRange("2026-09-23T07:00:00Z", new Date("2026-09-20T10:00:00Z"))).toEqual({
+      start: "2026-09-23",
+      end: "2026-10-07",
+    });
+    expect(nextSprintRange("2026-09-23T07:00:00Z", new Date("2026-10-15T10:00:00Z"))).toEqual({
+      start: "2026-10-15",
+      end: "2026-10-29",
+    });
   });
 });

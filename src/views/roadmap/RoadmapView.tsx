@@ -21,6 +21,7 @@ import { buildRoadmap, daysUntil, periodOf, type RoadmapCard } from "@/lib/domai
 import { versionStageMeta, type VersionStage } from "@/lib/domain/versions";
 import { useCurrentProject, useIssues, useVersions } from "@/lib/query/queries";
 import { useNavigation } from "@/stores/navigation";
+import { useUiStore } from "@/stores/ui";
 
 const stageText: Record<VersionStage, string> = {
   shipped: "text-green",
@@ -51,6 +52,7 @@ export default function RoadmapView() {
   const versions = useVersions();
   const issues = useIssues({}, { live: true });
   const navigate = useNavigation((s) => s.navigate);
+  const openDialog = useUiStore((s) => s.openDialog);
 
   const current = project?.currentVersion ?? null;
   const roadmap = buildRoadmap(versions.data ?? [], issues.data ?? [], current);
@@ -97,9 +99,14 @@ export default function RoadmapView() {
         <Badge tone="neutral">Une version = un milestone</Badge>
         <div className="grow" />
         {current && (
-          <Button variant="quiet" size="sm" onClick={() => open(current)}>
-            Ouvrir le détail de {current}
-          </Button>
+          <>
+            <Button variant="quiet" size="sm" onClick={() => open(current)}>
+              Ouvrir le détail de {current}
+            </Button>
+            <Button size="sm" icon="tag" onClick={() => openDialog("version-close")}>
+              Clôturer {current}
+            </Button>
+          </>
         )}
       </div>
 

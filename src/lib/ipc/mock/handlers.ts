@@ -10,7 +10,7 @@
  * Issue de la connexion GitHub simulée (navigateur ou code) : `&flow=ok` (défaut, autorisée
  * après quelques secondes), `denied`, `expired`, `config` (client ID / secret absent). Session de test de Claude Code : `&cli=ok` (défaut) ou `fail`.
  */
-import type { AuthChanged, CliAgentInfo, ProjectState } from "@/lib/types";
+import type { AuthChanged, CliAgentInfo, IssueRow, ProjectState } from "@/lib/types";
 import type { CommandArgs, CommandName, CommandResult } from "../commands";
 import { CommandError } from "../errors";
 import { mockBus } from "./bus";
@@ -216,13 +216,22 @@ const handlers: Handlers = {
 
   versions_list: () => data.versions,
   version_current: () => data.currentVersion,
-  version_close: ({ input }) => ({
-    closed: data.currentVersion.version.title,
-    opened: input.next,
-    movedIssues: input.carryOver === "move-to-next" ? 7 : 0,
-    tag: `v${data.currentVersion.version.title}`,
-    deployRun: "run-deploy-mock",
-  }),
+  version_close: ({ input }) => {
+    const closed = data.project.currentVersion ?? "0.1.2";
+    if (data.versions.some((v) => v.title === input.next && v.state === "closed"))
+      fail("version_close", `La version ${input.next} est déjà close sur GitHub.`);
+    const open = data.issues.filter((i) => i.version === closed && i.status !== "done").length;
+    return {
+      closed,
+      opened: input.next,
+      movedIssues: open,
+      tag: `v${closed}`,
+      releaseUrl: input.generateNotes
+        ? `https://github.com/cadence-app/desktop/releases/tag/untagged-${closed}`
+        : null,
+      deployRun: null,
+    };
+  },
 
   issues_list: ({ filter }) =>
     data.issues.filter(
@@ -237,20 +246,24 @@ const handlers: Handlers = {
     if (!input.title?.trim()) fail("issue_create", "Une issue doit avoir un titre.");
     if (!input.version?.trim())
       fail("issue_create", "Une issue doit être rattachée à une version.");
-    return {
-      number: 160,
+    if (!data.versions.some((v) => v.title === input.version && v.state === "open"))
+      fail("issue_create", `La version ${input.version} n'est pas un milestone ouvert du dépôt.`);
+    const row: IssueRow = {
+      number: Math.max(...data.issues.map((i) => i.number)) + 1,
       title: input.title,
       version: input.version,
       issueType: input.issueType ?? null,
       status: "todo",
       labels: input.labels ?? [],
-      assignee: data.me,
+      assignee: input.assignee ? data.me : null,
       estimate: null,
       activeAgent: input.sendToCto ? "cto" : null,
       linkedPr: null,
       flags: input.body ? [] : ["incomplete-description"],
       updatedAt: new Date().toISOString(),
     };
+    data.issues.unshift(row);
+    return row;
   },
   issue_answer_cto: () => null,
 

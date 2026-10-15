@@ -9,6 +9,7 @@ pub mod issues;
 pub mod pulls;
 pub mod rate_limit;
 pub mod repos;
+pub mod writes;
 
 use std::time::Duration;
 

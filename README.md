@@ -166,5 +166,15 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   bas, avec avancement et trois issues (ouvertes d'abord). Convention : la première ligne de la
   description du milestone nomme la version (`# Cockpit Tauri`), ses éléments de liste sont les
   thèmes d'un palier ; un sprint commence à l'échéance du précédent.
+- **Nouvelle issue** (bouton des écrans, `Ctrl+K`) : titre et version obligatoires (milestone ouvert),
+  type posé en label `type/*`, labels libres, assignation à soi. Créée sur GitHub puis rangée dans
+  le cache. L'envoi à l'agent CTO arrive en 0.1.3.
+- **Clôture de version** (roadmap, `Ctrl+K`) : version suivante (sprint, palier, majeure ou saisie),
+  sort des issues ouvertes (reporter, retirer, fermer comme non retenues), aperçu exact des
+  écritures. Tout est vérifié avant la première écriture (version semver plus grande, tag libre,
+  branche lisible), puis : milestone suivant créé ou daté (sprint de 14 jours), issues traitées,
+  milestone fermé, tag léger posé sur la branche par défaut, brouillon de release avec notes
+  générées (jamais publié automatiquement). Si une étape échoue, l'erreur dit ce qui a déjà été
+  écrit.
 - **À venir** : les autres écrans (Sprint, détail d'issue, détail de version…), aujourd'hui des
   placeholders qui pointent vers leur maquette.

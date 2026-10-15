@@ -117,6 +117,15 @@ impl RepoCache {
         Ok(())
     }
 
+    /// Force une relecture de `resource` à la prochaine demande (après une écriture).
+    pub async fn invalidate(&self, resource: SyncResource) -> AppResult<()> {
+        sqlx::query("UPDATE sync_state SET last_synced_at = NULL WHERE resource = ?")
+            .bind(resource_key(resource))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Âge de la dernière passe sur `resource` ; `None` si elle n'a jamais été synchronisée.
     pub async fn since_last_sync(&self, resource: SyncResource) -> AppResult<Option<Duration>> {
         let seconds: Option<f64> = sqlx::query_scalar(
@@ -358,6 +367,9 @@ mod tests {
         assert_eq!(cache.cursor(SyncResource::Issues).await.unwrap(), cursor);
         let age = cache.since_last_sync(SyncResource::Issues).await.unwrap().unwrap();
         assert!(age < Duration::from_secs(5));
+        cache.invalidate(SyncResource::Issues).await.unwrap();
+        assert_eq!(cache.since_last_sync(SyncResource::Issues).await.unwrap(), None);
+        assert_eq!(cache.cursor(SyncResource::Issues).await.unwrap(), cursor, "le curseur reste");
         assert_eq!(cache.since_last_sync(SyncResource::Milestones).await.unwrap(), None);
     }
 
