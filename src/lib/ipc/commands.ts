@@ -4,12 +4,16 @@
  * Les types viennent de ts-rs : si Rust change une structure, ce fichier casse à la compilation.
  */
 import type {
+  AppSettings,
+  AppSettingsPatch,
+  AppStatus,
   AuthProvider,
   AuthStatus,
   CliAgentInfo,
   CloseReport,
   DeviceFlowStart,
   GithubAuth,
+  InstalledPluginView,
   IssueCreateInput,
   IssueDetail,
   IssueFilter,
@@ -17,6 +21,7 @@ import type {
   PrFilter,
   PrDetail,
   PrRow,
+  PluginSettingsView,
   ProjectState,
   Repo,
   RepoCreateInput,
@@ -33,6 +38,23 @@ import type {
 type NoArgs = Record<never, never>;
 
 export interface Commands {
+  // App (Cadence 2)
+  app_status: { args: NoArgs; result: AppStatus };
+  app_settings_get: { args: NoArgs; result: AppSettings };
+  app_settings_set: { args: { patch: AppSettingsPatch }; result: AppSettings };
+  // Plugins installés
+  plugins_installed: { args: NoArgs; result: InstalledPluginView[] };
+  plugins_set_enabled: { args: { id: string; enabled: boolean }; result: InstalledPluginView };
+  plugins_reorder: { args: { order: string[] }; result: InstalledPluginView[] };
+  plugin_settings_get: { args: { plugin: string }; result: PluginSettingsView };
+  plugin_settings_set: {
+    args: { plugin: string; value: Record<string, unknown> };
+    result: PluginSettingsView;
+  };
+  /** Écriture seule : aucune commande ne renvoie la valeur d'un secret. */
+  plugin_secret_set: { args: { plugin: string; secret: string; value: string }; result: null };
+  plugin_secret_has: { args: { plugin: string; secret: string }; result: boolean };
+  plugin_secret_delete: { args: { plugin: string; secret: string }; result: null };
   // Auth
   auth_start_device_flow: { args: NoArgs; result: DeviceFlowStart };
   auth_start_web_flow: { args: NoArgs; result: WebFlowStart };

@@ -100,6 +100,8 @@ pub struct Manifest {
     pub version: String,
     pub description: String,
     pub authors: Vec<String>,
+    /// `icon` : chemin d'un SVG de l'archive (contrat), ou nom d'icône du kit.
+    pub icon: Option<String>,
     pub min_cadence: String,
     pub category: PluginCategory,
     pub color: PluginColor,
@@ -113,8 +115,12 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Icône de la tuile du rail : celle de la vue d'accueil, à défaut de la première vue.
+    /// Icône de la tuile du rail : `icon` quand c'est un nom d'icône du kit ; sinon (SVG, servi
+    /// avec l'hôte d'iframe) celle de la vue d'accueil, à défaut de la première vue.
     pub fn rail_icon(&self) -> String {
+        if let Some(icon) = self.icon.as_deref().filter(|i| !i.ends_with(".svg")) {
+            return icon.to_string();
+        }
         self.views
             .iter()
             .find(|v| v.home)
@@ -133,6 +139,7 @@ struct Raw {
     description: Option<String>,
     #[serde(default)]
     authors: Vec<String>,
+    icon: Option<String>,
     min_cadence: Option<String>,
     category: Option<String>,
     color: Option<String>,
@@ -297,6 +304,7 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         version,
         description,
         authors: raw.authors,
+        icon: raw.icon.filter(|i| !i.trim().is_empty()),
         min_cadence,
         category,
         color,
@@ -356,7 +364,9 @@ schema = "settings.schema.json"
         assert_eq!(m.views.len(), 3);
         assert_eq!(m.views[0].section.as_deref(), Some("Pilotage"));
         assert!(m.views[2].hidden);
-        assert_eq!(m.rail_icon(), "sprint");
+        assert_eq!(m.rail_icon(), "sprint", "icône SVG : celle de la vue d'accueil");
+        let kit = parse(&GESTION_PROJET.replacen("icon = \"icon.svg\"", "icon = \"board\"", 1), "0.3.0").unwrap();
+        assert_eq!(kit.rail_icon(), "board");
         assert_eq!(m.secrets[0].id, "github_token");
         assert!(m.secrets[0].required);
         assert_eq!(m.settings_schema.as_deref(), Some("settings.schema.json"));

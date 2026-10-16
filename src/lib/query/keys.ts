@@ -5,6 +5,14 @@ import type { IssueFilter, PrFilter, SyncResource } from "@/lib/types";
  * correspond à une `SyncResource` pour que `sync://updated` invalide le bon groupe.
  */
 export const keys = {
+  // Cadence 2 : app, préférences de la machine, plugins installés.
+  appStatus: () => ["app", "status"] as const,
+  appSettings: () => ["app", "settings"] as const,
+  plugins: ["plugins"] as const,
+  pluginsInstalled: () => ["plugins", "installed"] as const,
+  pluginSettings: (plugin: string) => ["plugins", "settings", plugin] as const,
+  pluginSecret: (plugin: string, secret: string) => ["plugins", "secret", plugin, secret] as const,
+
   auth: ["auth"] as const,
   project: ["project"] as const,
   projectCurrent: () => ["project", "current"] as const,

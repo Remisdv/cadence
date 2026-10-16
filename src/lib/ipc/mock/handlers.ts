@@ -3,19 +3,33 @@
  * le type `Handlers` le vérifie à la compilation.
  *
  * Scénario de démarrage via l'URL :
- * - `?scenario=app` (défaut) : connecté, projet ouvert ;
- * - `?scenario=onboarding` : compte GitHub non connecté ;
- * - `?scenario=no-project` : connecté, aucun projet choisi.
+ * - `?scenario=app` (défaut) : connecté, projet ouvert, plugins factices installés ;
+ * - `?scenario=onboarding` : onboarding à faire, compte GitHub non connecté ;
+ * - `?scenario=no-project` : connecté, aucun projet choisi ;
+ * - `?scenario=empty` : aucun plugin installé.
  *
  * Issue de la connexion GitHub simulée (navigateur ou code) : `&flow=ok` (défaut, autorisée
  * après quelques secondes), `denied`, `expired`, `config` (client ID / secret absent). Session de test de Claude Code : `&cli=ok` (défaut) ou `fail`.
  */
-import type { AuthChanged, CliAgentInfo, IssueRow, ProjectState } from "@/lib/types";
+import type {
+  AuthChanged,
+  CliAgentInfo,
+  InstalledPluginView,
+  IssueRow,
+  ProjectState,
+} from "@/lib/types";
 import type { CommandArgs, CommandName, CommandResult } from "../commands";
 import { CommandError } from "../errors";
 import { mockBus } from "./bus";
 import * as data from "./fixtures";
 import { versionReport } from "./versions";
+import {
+  mockAppSettings,
+  mockPlugins,
+  mockSettingsSchema,
+  validateMockSettings,
+  withMockDefaults,
+} from "./plugins";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -31,6 +45,10 @@ const state = {
   claudeCode: scenario === "onboarding" ? data.claudeDetected : data.claudeConnected,
   codex: data.cliNotFound,
   project: scenario === "app" ? data.project : (null as ProjectState | null),
+  settings: { ...structuredClone(mockAppSettings), onboarded: scenario !== "onboarding" },
+  plugins: scenario === "empty" ? [] : structuredClone(mockPlugins),
+  pluginSettings: {} as Record<string, Record<string, unknown>>,
+  secrets: new Set<string>(),
 };
 let flowTimer: number | undefined;
 
@@ -54,7 +72,106 @@ function cliKey(provider: string): "claudeCode" | "codex" {
   return provider === "codex" ? "codex" : "claudeCode";
 }
 
+function installed(command: string, id: string): InstalledPluginView {
+  const plugin = state.plugins.find((p) => p.id === id);
+  if (!plugin) fail(command, `Le plugin « ${id} » n'est pas installé.`);
+  return plugin;
+}
+
+function declaredSecret(command: string, plugin: string, secret: string): string {
+  const found = installed(command, plugin).secrets.some((s) => s.id === secret);
+  if (!found) fail(command, `Le plugin « ${plugin} » ne déclare pas le secret « ${secret} ».`);
+  return `plugin/${plugin}/${secret}`;
+}
+
+/** Statut recalculé après un changement de secret (`needs-setup` tant qu'un requis manque). */
+function refreshStatus(plugin: InstalledPluginView) {
+  if (plugin.status === "invalid") return;
+  const missing = plugin.secrets.some(
+    (s) => s.required && !state.secrets.has(`plugin/${plugin.id}/${s.id}`),
+  );
+  plugin.status = missing ? "needs-setup" : "ok";
+}
+
 const handlers: Handlers = {
+  app_status: () => ({ onboarded: state.settings.onboarded, version: "0.3.0-dev" }),
+  app_settings_get: () => state.settings,
+  app_settings_set: ({ patch }) => {
+    const next = structuredClone(state.settings);
+    if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
+    if (patch.defaultAi !== undefined) next.defaultAi = patch.defaultAi;
+    for (const change of patch.ai ?? []) {
+      const key = change.ai === "claude-code" ? "claudeCode" : change.ai;
+      if (change.path !== undefined) next.ai[key].path = change.path.trim() || null;
+      if (change.enabled !== undefined) next.ai[key].enabled = change.enabled;
+    }
+    for (const [action, ai] of Object.entries(patch.actionAi ?? {})) {
+      if (!/^[a-z0-9_-]+\/[a-z0-9_-]+$/.test(action))
+        fail("app_settings_set", `« ${action} » n'est pas une action <plugin>/<action>.`);
+      if (ai) next.actionAi[action] = ai;
+      else delete next.actionAi[action];
+    }
+    if (patch.catalogUrl !== undefined) {
+      const url = patch.catalogUrl.trim();
+      if (url && !url.startsWith("https://"))
+        fail("app_settings_set", "L'URL du catalogue doit commencer par https://.");
+      next.catalogUrl = url || null;
+    }
+    if (patch.devPlugins !== undefined)
+      next.devPlugins = [...new Set(patch.devPlugins.map((d) => d.trim()).filter(Boolean))];
+    state.settings = next;
+    return next;
+  },
+
+  plugins_installed: () => state.plugins,
+  plugins_set_enabled: ({ id, enabled }) => {
+    const plugin = installed("plugins_set_enabled", id);
+    plugin.enabled = enabled;
+    return plugin;
+  },
+  plugins_reorder: ({ order }) => {
+    const ids = state.plugins.map((p) => p.id).sort();
+    if (new Set(order).size !== order.length || [...order].sort().join() !== ids.join())
+      fail("plugins_reorder", "L'ordre du rail doit citer chaque plugin installé exactement une fois.");
+    const categories = ["projet", "etudes", "code", "donnees", "outils"];
+    state.plugins = order
+      .map((id) => state.plugins.find((p) => p.id === id)!)
+      .sort((a, b) => categories.indexOf(a.category) - categories.indexOf(b.category));
+    return state.plugins;
+  },
+  plugin_settings_get: ({ plugin }) => {
+    installed("plugin_settings_get", plugin);
+    const schema = mockSettingsSchema[plugin] ?? null;
+    return {
+      plugin,
+      schema,
+      value: withMockDefaults(schema, state.pluginSettings[plugin] ?? {}),
+      errors: [],
+    };
+  },
+  plugin_settings_set: ({ plugin, value }) => {
+    installed("plugin_settings_set", plugin);
+    const schema = mockSettingsSchema[plugin] ?? null;
+    const errors = validateMockSettings(schema, value);
+    if (errors.length === 0) state.pluginSettings[plugin] = value;
+    return { plugin, schema, value: withMockDefaults(schema, value), errors };
+  },
+  plugin_secret_set: ({ plugin, secret, value }) => {
+    const account = declaredSecret("plugin_secret_set", plugin, secret);
+    if (!value.trim()) fail("plugin_secret_set", "Le secret est vide.");
+    state.secrets.add(account);
+    refreshStatus(installed("plugin_secret_set", plugin));
+    return null;
+  },
+  plugin_secret_has: ({ plugin, secret }) =>
+    state.secrets.has(declaredSecret("plugin_secret_has", plugin, secret)),
+  plugin_secret_delete: ({ plugin, secret }) => {
+    state.secrets.delete(`plugin/${plugin}/${secret}`);
+    const found = state.plugins.find((p) => p.id === plugin);
+    if (found) refreshStatus(found);
+    return null;
+  },
+
   auth_start_device_flow: () => {
     if (flow === "config") {
       fail(

@@ -10,6 +10,27 @@ export type { IpcError } from "./bindings/IpcError";
 // Commun
 export type { UserRef } from "./bindings/UserRef";
 
+// App et préférences de la machine (Cadence 2)
+export type { AppStatus } from "./bindings/AppStatus";
+export type { AiId } from "./bindings/AiId";
+export type { AiCliSettings } from "./bindings/AiCliSettings";
+export type { AiSettings } from "./bindings/AiSettings";
+export type { AppSettings } from "./bindings/AppSettings";
+export type { AiCliPatch } from "./bindings/AiCliPatch";
+export type { AppSettingsPatch } from "./bindings/AppSettingsPatch";
+
+// Plugins
+export type { PluginCategory } from "./bindings/PluginCategory";
+export type { PluginColor } from "./bindings/PluginColor";
+export type { PluginService } from "./bindings/PluginService";
+export type { PluginSource } from "./bindings/PluginSource";
+export type { PluginStatus } from "./bindings/PluginStatus";
+export type { PluginViewInfo } from "./bindings/PluginViewInfo";
+export type { PluginSecretInfo } from "./bindings/PluginSecretInfo";
+export type { InstalledPluginView } from "./bindings/InstalledPluginView";
+export type { SettingsFieldError } from "./bindings/SettingsFieldError";
+export type { PluginSettingsView } from "./bindings/PluginSettingsView";
+
 // Auth
 export type { AuthProvider } from "./bindings/AuthProvider";
 export type { ProviderStatus } from "./bindings/ProviderStatus";
