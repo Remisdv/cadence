@@ -3,4 +3,4 @@
 /**
  * Provenance d'un plugin installé.
  */
-export type PluginSource = "catalog" | "dev";
+export type PluginSource = "catalog" | "file" | "dev";

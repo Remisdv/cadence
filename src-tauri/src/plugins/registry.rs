@@ -10,7 +10,7 @@
 //! ```
 //!
 //! Les fichiers d'un plugin sont sous `<données>/plugins/<id>/<version>/` (ou `devPath` pour
-//! un plugin de développement). L'installation elle-même arrive avec l'étape « Plugins ».
+//! un plugin de développement). L'installation et la désinstallation sont dans `install`.
 
 use std::{
     collections::BTreeMap,
@@ -31,6 +31,8 @@ use crate::error::{AppError, AppResult};
 #[ts(export)]
 pub enum PluginSource {
     Catalog,
+    /// Archive locale (« Installer depuis un fichier » du mode développement).
+    File,
     /// Dossier local non zippé (mode développement).
     Dev,
 }
@@ -143,7 +145,7 @@ impl PluginRegistry {
         manifest::load(&self.plugin_dir(id, &entry), &self.app_version)
     }
 
-    fn entry(&self, id: &str) -> AppResult<InstalledEntry> {
+    pub fn entry(&self, id: &str) -> AppResult<InstalledEntry> {
         self.file
             .lock()
             .unwrap()
@@ -169,6 +171,15 @@ impl PluginRegistry {
             if !f.order.iter().any(|o| o == id) {
                 f.order.push(id.to_string());
             }
+            Ok(())
+        })
+    }
+
+    /// Retire un plugin du registre et de l'ordre du rail (ses fichiers sont supprimés à part).
+    pub fn remove(&self, id: &str) -> AppResult<()> {
+        self.change(|f| {
+            f.plugins.remove(id);
+            f.order.retain(|o| o != id);
             Ok(())
         })
     }
@@ -335,6 +346,9 @@ mod tests {
         assert!(registry.reorder(vec!["documents".into(), "documents".into()]).is_err());
         assert!(registry.reorder(vec!["documents".into(), "autre".into()]).is_err());
         assert_eq!(registry.ordered_ids(), ["documents", "biblio"]);
+        registry.remove("documents").unwrap();
+        assert_eq!(registry.snapshot().order, ["biblio"]);
+        assert!(registry.entry("documents").is_err());
         let _ = fs::remove_dir_all(&root);
     }
 }

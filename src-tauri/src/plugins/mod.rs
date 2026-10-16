@@ -9,6 +9,7 @@
 //!
 //! Catalogue en ligne et passerelle MCP viennent aux étapes suivantes.
 
+pub mod install;
 pub mod manifest;
 pub mod registry;
 pub mod settings;

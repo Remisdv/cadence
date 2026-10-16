@@ -497,7 +497,7 @@ function PluginSection({ plugin }: { plugin: InstalledPluginView }) {
           <h2 className="font-display text-title font-semibold">{plugin.name}</h2>
           <div className="mono text-caption text-tx3">
             {plugin.id} · v{plugin.version} ·{" "}
-            {plugin.source === "dev" ? "mode développement" : "catalogue"}
+            {{ dev: "mode développement", file: "archive locale", catalog: "catalogue" }[plugin.source]}
           </div>
         </div>
         <span className="text-caption text-tx2">{plugin.enabled ? "Activé" : "Désactivé"}</span>
