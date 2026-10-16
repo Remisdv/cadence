@@ -23,7 +23,7 @@ use crate::{
     domain::{
         agent::{
             AgentAction, AgentInput, AgentKind, AgentLogLine, AgentRunDetail, ApplyFailure, ApplyReport,
-            Autonomy, CtoItem, CtoItemState, DevTaskState, ProposedAction, RunState,
+            Autonomy, CeoProposalState, CtoItem, CtoItemState, DevTaskState, ProposedAction, RunState,
         },
         issue::CtoAnswer,
         settings::AgentEngine as Engine,
@@ -140,10 +140,15 @@ fn recovered(mut detail: AgentRunDetail) -> AgentRunDetail {
     if let Some(dp) = detail.deploy.as_mut().filter(|_| interrupted) {
         crate::agents::deploy::fail_running(dp, "Session interrompue (Cadence a été fermé).", false);
     }
+    for p in detail.proposals.iter_mut().filter(|p| p.state == CeoProposalState::Queued) {
+        p.state = CeoProposalState::Failed;
+        p.error = Some("Création interrompue (Cadence a été fermé) : vérifiez sur GitHub avant de réessayer.".into());
+    }
     if interrupted {
         let waiting = detail.items.iter().any(|i| i.state.awaits_review())
             || detail.tasks.iter().any(|t| t.state == DevTaskState::Review)
-            || crate::agents::deploy::awaits_review(&detail);
+            || crate::agents::deploy::awaits_review(&detail)
+            || detail.proposals.iter().any(|p| p.state == CeoProposalState::Ready);
         detail.state = if waiting { RunState::Review } else { RunState::Discarded };
         detail.ended_at.get_or_insert_with(version::now_iso);
     }
@@ -194,6 +199,18 @@ pub fn proposed_actions(detail: &AgentRunDetail) -> Vec<ProposedAction> {
         });
     }
     out.extend(crate::agents::deploy::proposed_actions(detail));
+    for p in detail.proposals.iter().filter(|p| p.state == CeoProposalState::Ready) {
+        out.push(ProposedAction {
+            id: format!("propose-{}", p.index),
+            preview: format!("Créer « {} » dans {}", p.title, p.milestone),
+            action: AgentAction::ProposeIssue {
+                title: p.title.clone(),
+                body: p.body.clone(),
+                milestone: p.milestone.clone(),
+                labels: crate::agents::ceo::issue_labels(p),
+            },
+        });
+    }
     out
 }
 
@@ -269,6 +286,7 @@ pub async fn start_cto(app: &AppHandle, state: &AppState, input: AgentInput) -> 
         tasks: vec![],
         paused: false,
         deploy: None,
+        proposals: vec![],
     };
     let run = detail.run.clone();
     cache.save_run(&detail).await?;
@@ -611,6 +629,13 @@ pub async fn apply(app: &AppHandle, state: &AppState, run: &str, ids: Vec<String
             }
             continue;
         }
+        if let Some(index) = crate::agents::ceo::proposal_index(&id) {
+            match crate::agents::ceo::apply(app, state, &handle, index).await {
+                Ok(()) => report.applied.push(id),
+                Err(err) => report.failed.push(ApplyFailure { id, message: err.to_string() }),
+            }
+            continue;
+        }
         let Some(number) = id.strip_prefix("update-").and_then(|n| n.parse::<u32>().ok()) else {
             report.failed.push(ApplyFailure { id, message: "Action inconnue.".into() });
             continue;
@@ -641,6 +666,12 @@ pub async fn reject(app: &AppHandle, state: &AppState, run: &str, numbers: Vec<u
         }
         if let Some(dp) = d.deploy.as_mut() {
             crate::agents::deploy::ignore(dp, &numbers);
+        }
+        // Agent CEO : les numéros sont les index des propositions.
+        for p in d.proposals.iter_mut().filter(|p| numbers.contains(&p.index)) {
+            if matches!(p.state, CeoProposalState::Ready | CeoProposalState::Failed) {
+                p.state = CeoProposalState::Skipped;
+            }
         }
     }
     settle(app, state, &handle).await;
@@ -675,7 +706,8 @@ pub async fn stop(app: &AppHandle, state: &AppState, run: &str) -> AppResult<()>
         if !d.state.is_terminal() {
             let waiting = d.items.iter().any(|i| i.state.awaits_review())
                 || d.tasks.iter().any(|t| t.state == DevTaskState::Review)
-                || crate::agents::deploy::awaits_review(&d);
+                || crate::agents::deploy::awaits_review(&d)
+                || d.proposals.iter().any(|p| p.state == CeoProposalState::Ready);
             d.state = if waiting { RunState::Review } else { RunState::Discarded };
             d.ended_at.get_or_insert_with(version::now_iso);
         }
@@ -807,7 +839,8 @@ async fn settle(app: &AppHandle, state: &AppState, handle: &Arc<RunHandle>) {
             || d.tasks.iter().any(|t| matches!(t.state, DevTaskState::Queued | DevTaskState::Running));
         let waiting = d.items.iter().any(|i| i.state.awaits_review())
             || d.tasks.iter().any(|t| t.state == DevTaskState::Review)
-            || crate::agents::deploy::awaits_review(&d);
+            || crate::agents::deploy::awaits_review(&d)
+            || d.proposals.iter().any(|p| matches!(p.state, CeoProposalState::Ready | CeoProposalState::Queued));
         if d.state == RunState::Review && !busy && !waiting {
             d.state = RunState::Done;
             d.ended_at = Some(version::now_iso());
@@ -918,6 +951,7 @@ mod tests {
             tasks: vec![],
             paused: false,
             deploy: None,
+            proposals: vec![],
         }
     }
 
@@ -939,6 +973,36 @@ mod tests {
         assert!(d.ended_at.is_some());
         let idle = recovered(detail(vec![item(2, CtoItemState::Running)], RunState::Running));
         assert_eq!(idle.state, RunState::Discarded);
+    }
+
+    #[test]
+    fn ceo_proposals_become_actions_and_keep_the_run_in_review() {
+        use crate::domain::agent::CeoProposal;
+        let proposal = |index: u32, state: CeoProposalState| CeoProposal {
+            index,
+            title: format!("Proposition {index}"),
+            body: "## Contexte".into(),
+            milestone: "0.2.0".into(),
+            issue_type: Some(crate::domain::issue::IssueType::Feat),
+            labels: vec!["area/auth".into()],
+            theme: Some("Rôles".into()),
+            rationale: "Rien ne la couvre.".into(),
+            overlap: None,
+            overlap_issues: vec![],
+            state,
+            issue: None,
+            issue_url: None,
+            error: None,
+        };
+        let mut d = detail(vec![], RunState::Running);
+        d.kind = AgentKind::Ceo;
+        d.proposals = vec![proposal(1, CeoProposalState::Ready), proposal(2, CeoProposalState::Applied), proposal(3, CeoProposalState::Queued)];
+        let actions = proposed_actions(&d);
+        assert_eq!(actions.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["propose-1"]);
+        assert!(matches!(&actions[0].action, AgentAction::ProposeIssue { labels, .. } if labels == &["agent/ceo", "type/feat", "area/auth"]));
+        let d = recovered(d);
+        assert_eq!(d.state, RunState::Review, "une proposition à relire survit au redémarrage");
+        assert_eq!(d.proposals[2].state, CeoProposalState::Failed);
     }
 
     #[test]

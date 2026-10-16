@@ -165,6 +165,7 @@ pub async fn start(app: &AppHandle, state: &AppState, input: AgentInput) -> AppR
         error: None,
         paused: false,
         deploy: None,
+        proposals: vec![],
     };
     let run = detail.run.clone();
     cache.save_run(&detail).await?;

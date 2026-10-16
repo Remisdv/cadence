@@ -2,6 +2,7 @@
 import type { AgentKind } from "./AgentKind";
 import type { AgentLogLine } from "./AgentLogLine";
 import type { Autonomy } from "./Autonomy";
+import type { CeoProposal } from "./CeoProposal";
 import type { CtoItem } from "./CtoItem";
 import type { DeployState } from "./DeployState";
 import type { DevTask } from "./DevTask";
@@ -26,4 +27,8 @@ paused: boolean,
 /**
  * Pipeline de l'agent déploiement.
  */
-deploy: DeployState | null, };
+deploy: DeployState | null, 
+/**
+ * Issues proposées par l'agent CEO.
+ */
+proposals: Array<CeoProposal>, };

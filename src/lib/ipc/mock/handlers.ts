@@ -15,6 +15,7 @@ import type { CommandArgs, CommandName, CommandResult } from "../commands";
 import { CommandError } from "../errors";
 import { mockBus } from "./bus";
 import * as data from "./fixtures";
+import { ceoMock } from "./ceo";
 import { ctoMock } from "./cto";
 import { devMock } from "./dev";
 import { agentsMock } from "./agents";
@@ -321,7 +322,14 @@ const handlers: Handlers = {
     state.engines = engines;
     return engines;
   },
-  agents_overview: () => agentsMock.overview(),
+  agents_overview: () =>
+    agentsMock.overview().map((a) => {
+      if (a.kind !== "ceo") return a;
+      const run = ceoMock.latest();
+      const pending = run?.proposals.filter((p) => p.state === "ready").length ?? 0;
+      const running = run?.state === "running";
+      return { ...a, pendingActions: pending, activity: running ? "running" : pending > 0 ? "waiting" : "idle" };
+    }),
   agent_start: ({ kind, input }) => {
     if (kind === "dev") {
       if (!input.issues?.length) fail("agent_start", "Choisissez au moins une tâche.");
@@ -338,11 +346,23 @@ const handlers: Handlers = {
         fail("agent_start", (e as Error).message);
       }
     }
+    if (kind === "ceo") {
+      try {
+        return ceoMock.start(input.version);
+      } catch (e) {
+        fail("agent_start", (e as Error).message);
+      }
+    }
     if (kind !== "cto") fail("agent_start", "Cet agent arrive plus tard.");
     return ctoMock.start(input.issues?.length ? input.issues : undefined);
   },
   agent_control: ({ run, cmd }) => {
     const dev = run.startsWith("dev-");
+    if (run.startsWith("ceo-")) {
+      if (cmd.cmd !== "stop") fail("agent_control", "L'agent CEO se met seulement en arrêt.");
+      ceoMock.stop();
+      return null;
+    }
     const steps = run.startsWith("deploy-") ? deployMock : dev ? devMock : null;
     if (cmd.cmd === "stop") (steps ?? ctoMock).stop();
     else if (!steps && cmd.cmd !== "message") ctoMock.pause(cmd.cmd === "pause");
@@ -354,11 +374,13 @@ const handlers: Handlers = {
   },
   agent_actions: () => [],
   agent_apply: ({ run, ids }) =>
-    run.startsWith("deploy-")
-      ? deployMock.apply(ids)
-      : run.startsWith("dev-")
-        ? devMock.push(ids)
-        : ctoMock.apply(ids),
+    run.startsWith("ceo-")
+      ? ceoMock.apply(ids)
+      : run.startsWith("deploy-")
+        ? deployMock.apply(ids)
+        : run.startsWith("dev-")
+          ? devMock.push(ids)
+          : ctoMock.apply(ids),
   agent_latest_run: ({ kind }) =>
     structuredClone(
       kind === "cto"
@@ -367,19 +389,29 @@ const handlers: Handlers = {
           ? devMock.latest()
           : kind === "deploy"
             ? deployMock.latest()
-            : null,
+            : kind === "ceo"
+              ? ceoMock.latest()
+              : null,
     ),
   agent_run_get: ({ run }) => {
-    const found = run.startsWith("deploy-")
-      ? deployMock.latest()
-      : run.startsWith("dev-")
-        ? devMock.latest()
-        : ctoMock.latest();
+    const found = run.startsWith("ceo-")
+      ? ceoMock.latest()
+      : run.startsWith("deploy-")
+        ? deployMock.latest()
+        : run.startsWith("dev-")
+          ? devMock.latest()
+          : ctoMock.latest();
     if (!found) fail("agent_run_get", "Exécution introuvable.");
     return structuredClone(found);
   },
   agent_reject: ({ run, numbers }) => {
-    (run.startsWith("deploy-") ? deployMock.ignore : run.startsWith("dev-") ? devMock.skip : ctoMock.reject)(numbers);
+    (run.startsWith("ceo-")
+      ? ceoMock.reject
+      : run.startsWith("deploy-")
+        ? deployMock.ignore
+        : run.startsWith("dev-")
+          ? devMock.skip
+          : ctoMock.reject)(numbers);
     return null;
   },
   agent_edit_body: ({ number, body }) => {
@@ -392,6 +424,14 @@ const handlers: Handlers = {
       deployMock.editNotes(notes);
     } catch (e) {
       fail("agent_edit_notes", (e as Error).message);
+    }
+    return null;
+  },
+  agent_edit_proposal: ({ index, title, body }) => {
+    try {
+      ceoMock.edit(index, title, body);
+    } catch (e) {
+      fail("agent_edit_proposal", (e as Error).message);
     }
     return null;
   },

@@ -25,3 +25,7 @@ dist-ssr
 
 # Rust
 src-tauri/target
+
+# Worktrees des sous-agents et dossier de build séparé
+.claude/worktrees/
+src-tauri/target-agents/

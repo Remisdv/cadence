@@ -293,6 +293,7 @@ export const deployMock = {
         published: false,
         worktree: null,
       },
+      proposals: [],
     };
     log("system", `› déploiement de ${tag}`);
     emitState();

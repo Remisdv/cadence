@@ -91,6 +91,7 @@ export interface Commands {
   agent_edit_body: { args: { run: string; number: number; body: string }; result: null };
   agent_runs_list: { args: { limit: number }; result: AgentRunEntry[] };
   agent_edit_notes: { args: { run: string; notes: string }; result: null };
+  agent_edit_proposal: { args: { run: string; index: number; title: string; body: string }; result: null };
   // Réglages
   settings_get: { args: NoArgs; result: Config };
   settings_set: { args: { config: Config }; result: Config };

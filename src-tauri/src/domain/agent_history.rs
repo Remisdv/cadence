@@ -114,6 +114,7 @@ mod tests {
             error: None,
             paused: false,
             deploy: None,
+            proposals: vec![],
         }
     }
 

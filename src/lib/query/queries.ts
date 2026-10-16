@@ -315,6 +315,16 @@ export function useEditReleaseNotes(run: string) {
   });
 }
 
+/** Agent CEO : titre et corps d'une proposition, avant sa création. */
+export function useEditCeoProposal(run: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ index, title, body }: { index: number; title: string; body: string }) =>
+      call("agent_edit_proposal", { run, index, title, body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
+  });
+}
+
 export const useAgentActions = (run: string | null) =>
   useQuery({
     queryKey: keys.agentActions(run ?? ""),

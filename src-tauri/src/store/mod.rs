@@ -481,6 +481,7 @@ mod tests {
             tasks: vec![],
             paused: false,
             deploy: None,
+            proposals: vec![],
         };
         cache.save_run(&run("cto-1", "2026-10-14T10:00:00Z", RunState::Done)).await.unwrap();
         cache.save_run(&run("cto-2", "2026-10-15T10:00:00Z", RunState::Running)).await.unwrap();
@@ -510,6 +511,7 @@ mod tests {
             tasks: vec![],
             paused: false,
             deploy: None,
+            proposals: vec![],
         };
         cache.save_run(&run("cto-1", AgentKind::Cto, "2026-10-13T10:00:00Z")).await.unwrap();
         cache.save_run(&run("dev-1", AgentKind::Dev, "2026-10-15T09:00:00Z")).await.unwrap();

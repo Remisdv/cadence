@@ -248,6 +248,9 @@ pub struct AgentRunDetail {
     /// Pipeline de l'agent déploiement.
     #[serde(default)]
     pub deploy: Option<DeployState>,
+    /// Issues proposées par l'agent CEO.
+    #[serde(default)]
+    pub proposals: Vec<CeoProposal>,
 }
 
 /* ---------- Exécution de l'agent développeur ---------- */
@@ -412,6 +415,54 @@ pub struct DeployState {
     #[ts(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+}
+
+/* ---------- Exécution de l'agent CEO ---------- */
+
+/// Où en est une issue proposée par l'agent CEO.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum CeoProposalState {
+    /// Création demandée, en cours d'écriture sur GitHub (évite un doublon).
+    Queued,
+    /// À relire.
+    Ready,
+    /// Issue créée sur GitHub.
+    Applied,
+    /// Rejetée sans rien écrire.
+    Skipped,
+    /// La création a échoué (on peut réessayer).
+    Failed,
+}
+
+/// Issue que l'agent CEO propose de créer, avec sa justification.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CeoProposal {
+    /// Rang dans l'exécution ; l'action correspondante est `propose-<index>`.
+    pub index: u32,
+    pub title: String,
+    pub body: String,
+    /// Version (titre semver du milestone) où créer l'issue.
+    pub milestone: String,
+    pub issue_type: Option<IssueType>,
+    /// Labels proposés (hors conventions `type/`, `agent/`…).
+    pub labels: Vec<String>,
+    /// Thème de la roadmap dont elle découle.
+    pub theme: Option<String>,
+    /// Pourquoi rien ne la couvre déjà.
+    pub rationale: String,
+    /// Recouvrement éventuel avec une issue existante.
+    pub overlap: Option<String>,
+    /// Issues existantes citées dans le recouvrement.
+    pub overlap_issues: Vec<u32>,
+    pub state: CeoProposalState,
+    /// Numéro de l'issue créée.
+    pub issue: Option<u32>,
+    pub issue_url: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

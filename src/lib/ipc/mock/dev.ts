@@ -170,6 +170,7 @@ export const devMock = {
       error: null,
       paused: false,
       deploy: null,
+      proposals: [],
     };
     history.push(run);
     log("system", `› copie de ${data.project.repo.fullName} (main)…`);

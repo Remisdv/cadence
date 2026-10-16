@@ -255,4 +255,15 @@ texte ou un nouveau rayon se déclare aussi dans `src/lib/cn.ts` pour que `cn()`
   l'issue d'un test en échec sur le milestone suivant, « Ignorer » la garde dans les notes. Rien
   n'est publié sans validation (même en `auto`), jamais en file hors-ligne ; aucun push. Notes
   éditables avant publication (`agent_edit_notes`), « Rejouer les tests » relance sur le même tag.
-- **À venir** : l'agent CEO (0.2.0), le mode hors-ligne complet (1.0.0).
+- **Agent CEO** (barre latérale › CEO, ou « Proposer avec l'agent CEO » dans la Roadmap) : alimente
+  la roadmap. Lancé sur le prochain palier (premier milestone ouvert sans date après la version en
+  cours, ou celui choisi), une session Claude Code en lecture seule sur la copie du dépôt reçoit
+  les thèmes du palier (éléments de liste de la description), les autres versions ouvertes, les
+  versions livrées, les titres des issues existantes et le README, et rend au plus 8 propositions
+  (titre, corps, milestone, type, labels, thème, justification, recouvrement). Cadence écarte les
+  doublons exacts, les labels conventionnés (`type/`, `agent/`, `status/`) et les milestones fermés
+  ou inconnus. Verrouillé en `propose` : rien n'est créé sans un clic. Chaque proposition se modifie
+  (titre, corps) ou se rejette ; « Créer » ouvre l'issue dans son milestone avec les labels
+  `agent/ceo` et `type/*` et un pied signé (« Proposée par l'agent CEO — thème : … »). Un bandeau de
+  la Roadmap signale les propositions qui attendent.
+- **À venir** : le mode hors-ligne complet et le quota (1.0.0).

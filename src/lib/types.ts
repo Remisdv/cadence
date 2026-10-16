@@ -76,6 +76,8 @@ export type { DeployTest } from "./bindings/DeployTest";
 export type { DeployTestStatus } from "./bindings/DeployTestStatus";
 export type { DeployDecision } from "./bindings/DeployDecision";
 export type { DeployArtifact } from "./bindings/DeployArtifact";
+export type { CeoProposal } from "./bindings/CeoProposal";
+export type { CeoProposalState } from "./bindings/CeoProposalState";
 
 // Agents
 export type { AgentKind } from "./bindings/AgentKind";

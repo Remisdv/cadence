@@ -35,6 +35,7 @@ const detail = (patch: Partial<AgentRunDetail> = {}): AgentRunDetail => ({
   error: null,
   paused: false,
   deploy: null,
+  proposals: [],
   ...patch,
 });
 

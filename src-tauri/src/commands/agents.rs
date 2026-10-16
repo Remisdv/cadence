@@ -6,11 +6,11 @@ use crate::{
         agent_history::AgentRunEntry,
         agent::{
             AgentActivity, AgentControl, AgentInput, AgentKind, AgentOverview, AgentRunDetail, ApplyReport,
-            CtoItemState, DevTaskState, ProposedAction, RunState, RunSummary,
+            CeoProposalState, CtoItemState, DevTaskState, ProposedAction, RunState, RunSummary,
         },
         settings::AgentEngines,
     },
-    error::{AppError, AppResult},
+    error::AppResult,
     state::AppState,
 };
 
@@ -55,7 +55,8 @@ pub async fn agents_overview(state: State<'_, AppState>) -> AppResult<Vec<AgentO
                 let d = handle.detail.read().await;
                 let pending = (d.items.iter().filter(|i| i.state.awaits_review()).count()
                     + d.tasks.iter().filter(|t| t.state == DevTaskState::Review).count()
-                    + crate::agents::deploy::proposed_actions(&d).len()) as u32;
+                    + crate::agents::deploy::proposed_actions(&d).len()
+                    + d.proposals.iter().filter(|p| p.state == CeoProposalState::Ready).count()) as u32;
                 let running = matches!(d.state, RunState::Prepare | RunState::Running)
                     || d.items.iter().any(|i| i.state == CtoItemState::Running)
                     || d.tasks.iter().any(|t| t.state == DevTaskState::Running);
@@ -108,7 +109,7 @@ pub async fn agent_start(
             None => engine::start_cto(&app, &state, input).await,
         },
         AgentKind::Dev => crate::agents::dev::start(&app, &state, input).await,
-        AgentKind::Ceo => Err(AppError::NotImplemented("l'agent CEO (version 0.2.0)")),
+        AgentKind::Ceo => crate::agents::ceo::start(&app, &state, input).await,
         AgentKind::Deploy => crate::agents::deploy::start(&app, &state, input).await,
     }
 }
@@ -201,4 +202,17 @@ pub async fn agent_runs_list(state: State<'_, AppState>, limit: u32) -> AppResul
 #[tauri::command]
 pub async fn agent_edit_notes(app: AppHandle, state: State<'_, AppState>, run: String, notes: String) -> AppResult<()> {
     crate::agents::deploy::edit_notes(&app, &state, &run, notes).await
+}
+
+/// Agent CEO : remplace le titre et le corps d'une proposition avant sa création.
+#[tauri::command]
+pub async fn agent_edit_proposal(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    run: String,
+    index: u32,
+    title: String,
+    body: String,
+) -> AppResult<()> {
+    crate::agents::ceo::edit(&app, &state, &run, index, title, body).await
 }

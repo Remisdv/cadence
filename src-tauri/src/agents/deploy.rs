@@ -462,6 +462,7 @@ pub async fn start(app: &AppHandle, state: &AppState, input: AgentInput) -> AppR
             worktree: None,
             session_id: None,
         }),
+        proposals: vec![],
     };
     let run = detail.run.clone();
     cache.save_run(&detail).await?;
@@ -897,6 +898,7 @@ mod tests {
             error: None,
             paused: false,
             deploy: Some(dp),
+            proposals: vec![],
         }
     }
 
