@@ -13,6 +13,7 @@ pub mod ai;
 pub mod api;
 pub mod app_settings;
 pub mod auth;
+pub mod chat;
 pub mod commands;
 pub mod domain;
 pub mod error;
@@ -78,6 +79,51 @@ pub fn run() {
                 Ok(gateway) => state.gateway = Some(gateway),
                 Err(err) => tracing::error!(%err, "passerelle MCP impossible à démarrer"),
             }
+
+            // Chat du cœur : historique local, une IA dans un dossier neutre par conversation.
+            let config = chat::ChatConfig::new(
+                app.path().app_data_dir()?.join("sessions"),
+                app.path().app_local_data_dir()?.join("ai-sessions"),
+            );
+            ai::staging::sweep(&config.staging_root);
+            let settings = state.settings.clone();
+            let claude: chat::ClaudeLocator = Arc::new(move || {
+                let cli = settings.get().ai.claude_code;
+                if !cli.enabled {
+                    return Err(error::AppError::Validation("Claude Code est désactivé dans les réglages.".into()));
+                }
+                auth::cli::locate(auth::cli::CliTool::ClaudeCode, cli.path.as_deref()).ok_or_else(|| {
+                    error::AppError::Validation(
+                        "Claude Code est introuvable : installez-le ou indiquez son chemin dans Réglages › IA.".into(),
+                    )
+                })
+            });
+            let registry = state.plugins.clone();
+            let skills: chat::SkillSource = Arc::new(move || ai::staging::plugin_skills(&registry));
+            let gateway_access =
+                state.gateway.as_ref().map(|g| chat::GatewayAccess { url: g.url(), context: g.context().clone() });
+            let handle = app.handle().clone();
+            let chat_events: chat::ChatSink = Arc::new(move |notice| match notice {
+                chat::ChatNotice::Event(payload) => events::emit(&handle, events::CHAT_EVENT, payload),
+                chat::ChatNotice::State(payload) => events::emit(&handle, events::CHAT_STATE, payload),
+            });
+            let history = app.path().app_data_dir()?.join("chat.sqlite3");
+            let opened = tauri::async_runtime::block_on(async move {
+                let store = chat::store::ChatStore::open(&history).await?;
+                store.reset_running().await?;
+                Ok::<_, error::AppError>(store)
+            });
+            match opened {
+                Ok(store) => {
+                    let service = chat::ChatService::new(store, config, claude, skills, gateway_access, chat_events);
+                    tauri::async_runtime::spawn(chat::run_idle_closer(
+                        Arc::downgrade(&service),
+                        std::time::Duration::from_secs(60),
+                    ));
+                    state.chat = Some(service);
+                }
+                Err(err) => tracing::error!(%err, "historique du chat illisible"),
+            }
             app.manage(state);
             Ok(())
         })
@@ -98,6 +144,13 @@ pub fn run() {
             commands::plugins::plugin_uninstall,
             commands::plugins::plugin_status,
             commands::plugins::plugin_restart,
+            commands::chat::chat_sessions,
+            commands::chat::chat_session_get,
+            commands::chat::chat_send,
+            commands::chat::chat_interrupt,
+            commands::chat::chat_approve,
+            commands::chat::chat_session_rename,
+            commands::chat::chat_session_delete,
             commands::auth::auth_start_device_flow,
             commands::auth::auth_start_web_flow,
             commands::auth::auth_use_gh_cli,
@@ -129,6 +182,9 @@ pub fn run() {
             // Fermeture : les serveurs de plugin s'arrêtent proprement (stdin fermé, grâce, kill).
             if let RunEvent::Exit = event {
                 let state = app.state::<state::AppState>();
+                if let Some(chat) = &state.chat {
+                    tauri::async_runtime::block_on(chat.shutdown());
+                }
                 if let Some(gateway) = &state.gateway {
                     gateway.shutdown();
                 }

@@ -8,7 +8,12 @@ import type {
   AppSettingsPatch,
   AppStatus,
   AuthProvider,
+  ApprovalDecision,
   AuthStatus,
+  ChatSendInput,
+  ChatSendResult,
+  ChatSessionDetail,
+  ChatSessionRow,
   CliAgentInfo,
   CloseReport,
   DeviceFlowStart,
@@ -67,6 +72,17 @@ export interface Commands {
   /** Serveurs MCP des plugins installés qui en déclarent un ; changements par `plugin://state`. */
   plugin_status: { args: NoArgs; result: PluginProcessView[] };
   plugin_restart: { args: { plugin: string }; result: null };
+  // Chat du cœur (réponses par `chat://event` et `chat://state`)
+  chat_sessions: { args: NoArgs; result: ChatSessionRow[] };
+  chat_session_get: { args: { id: string }; result: ChatSessionDetail };
+  chat_send: { args: { input: ChatSendInput }; result: ChatSendResult };
+  chat_interrupt: { args: { session: string }; result: null };
+  chat_approve: {
+    args: { session: string; request: string; decision: ApprovalDecision };
+    result: null;
+  };
+  chat_session_rename: { args: { id: string; title: string }; result: ChatSessionRow };
+  chat_session_delete: { args: { id: string }; result: null };
   // Auth
   auth_start_device_flow: { args: NoArgs; result: DeviceFlowStart };
   auth_start_web_flow: { args: NoArgs; result: WebFlowStart };

@@ -3,6 +3,8 @@
  */
 import type {
   AuthChanged,
+  ChatEventPayload,
+  ChatStatePayload,
   OpenViewRequest,
   PluginInstallEvent,
   PluginStateEvent,
@@ -23,6 +25,9 @@ export interface Events {
   "ui://open-view": OpenViewRequest;
   /** Progression ou résultat d'une exécution de fond (`cadence__run_report`). */
   "run://report": RunReport;
+  /** Événement d'une conversation ; `seq` nul pour un delta (jamais enregistré). */
+  "chat://event": ChatEventPayload;
+  "chat://state": ChatStatePayload;
 }
 
 export type EventName = keyof Events;

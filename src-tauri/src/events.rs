@@ -24,6 +24,10 @@ pub const PLUGIN_INSTALL: &str = "plugin://install";
 pub const UI_OPEN_VIEW: &str = "ui://open-view";
 /// `RunReport` : progression ou résultat d'une exécution de fond (`cadence__run_report`).
 pub const RUN_REPORT: &str = "run://report";
+/// `ChatEventPayload` : événement d'une conversation (deltas compris).
+pub const CHAT_EVENT: &str = "chat://event";
+/// `ChatStatePayload` : état d'une conversation.
+pub const CHAT_STATE: &str = "chat://state";
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

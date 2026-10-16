@@ -13,6 +13,11 @@ export const keys = {
   pluginSettings: (plugin: string) => ["plugins", "settings", plugin] as const,
   pluginSecret: (plugin: string, secret: string) => ["plugins", "secret", plugin, secret] as const,
   pluginStatus: () => ["plugins", "status"] as const,
+  chat: ["chat"] as const,
+  chatSessions: () => ["chat", "sessions"] as const,
+  chatSession: (id: string) => ["chat", "session", id] as const,
+  /** Textes en cours de diffusion d'une conversation (deltas), par message. */
+  chatDrafts: (id: string) => ["chat", "drafts", id] as const,
 
   auth: ["auth"] as const,
   project: ["project"] as const,

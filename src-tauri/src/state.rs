@@ -19,6 +19,7 @@ use crate::{
     },
     app_settings::AppSettingsStore,
     error::{AppError, AppResult},
+    chat::ChatService,
     gateway::server::Gateway,
     plugins::{
         env::{self, HostPaths},
@@ -54,7 +55,7 @@ pub struct AppState {
     /// Détection des agents de code, gardée pour la session.
     pub cli: RwLock<CliCache>,
     /// Préférences de la machine (`settings.json` v2).
-    pub settings: AppSettingsStore,
+    pub settings: Arc<AppSettingsStore>,
     /// Trousseau du système (secrets des plugins, jeton GitHub).
     pub secrets: Arc<dyn SecretStore>,
     /// Plugins installés, activation et ordre du rail.
@@ -65,6 +66,8 @@ pub struct AppState {
     pub plugin_host: Arc<PluginHost>,
     /// Passerelle MCP des IA ; `None` si elle n'a pas pu démarrer.
     pub gateway: Option<Gateway>,
+    /// Chat du cœur ; `None` si son historique n'a pas pu s'ouvrir.
+    pub chat: Option<Arc<ChatService>>,
     /// Dépôts accessibles au jeton, lus une fois puis filtrés localement.
     pub repos: RwLock<Option<Vec<Repo>>>,
     /// Dossier des bases SQLite, une par dépôt.
@@ -103,12 +106,13 @@ impl AppState {
             github: RwLock::default(),
             sign_in: Mutex::default(),
             cli: RwLock::default(),
-            settings: AppSettingsStore::load(&config_dir),
+            settings: Arc::new(AppSettingsStore::load(&config_dir)),
             secrets,
             plugins,
             plugin_settings,
             plugin_host,
             gateway: None,
+            chat: None,
             repos: RwLock::default(),
             checkout_dir: cache_dir.with_file_name("repos"),
             cache_dir,

@@ -1,10 +1,14 @@
 /**
  * Hooks de données, un par intention métier. Les vues n'appellent jamais `call()` directement.
  */
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call } from "@/lib/ipc/transport";
+import { buildThread } from "@/lib/domain/chat";
 import type {
+  ApprovalDecision,
   AppSettingsPatch,
+  ChatSendInput,
   AuthProvider,
   AuthStatus,
   CliAgentInfo,
@@ -156,6 +160,82 @@ export function useRestartPlugin() {
   return useMutation({
     mutationFn: (plugin: string) => call("plugin_restart", { plugin }),
     onSettled: () => qc.invalidateQueries({ queryKey: keys.pluginStatus() }),
+  });
+}
+
+/* ---------- Chat du cœur ---------- */
+
+/** Conversations, la plus récemment active d'abord. */
+export const useChatSessions = () =>
+  useQuery({ queryKey: keys.chatSessions(), queryFn: () => call("chat_sessions") });
+
+/** Historique d'une conversation, tenu à jour par `chat://event` (useBackendEvents). */
+export const useChatSession = (id: string | null) =>
+  useQuery({
+    queryKey: keys.chatSession(id ?? ""),
+    queryFn: () => call("chat_session_get", { id: id! }),
+    enabled: id !== null,
+  });
+
+/** Fil affichable d'une conversation, textes en cours de diffusion compris. */
+export function useChatThread(id: string | null) {
+  const detail = useChatSession(id);
+  const drafts = useQuery<Record<string, string>>({
+    queryKey: keys.chatDrafts(id ?? ""),
+    queryFn: () => ({}),
+    enabled: false,
+    initialData: {},
+  }).data;
+  const items = useMemo(
+    () => buildThread(detail.data?.events ?? [], drafts),
+    [detail.data?.events, drafts],
+  );
+  return { ...detail, items };
+}
+
+/** Envoie un message ; sans `session`, ouvre une conversation (renvoie son id). */
+export function useSendChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ChatSendInput) => call("chat_send", { input }),
+    onSuccess: ({ session }) => {
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
+      void qc.invalidateQueries({ queryKey: keys.chatSession(session) });
+    },
+  });
+}
+
+export function useInterruptChat() {
+  return useMutation({ mutationFn: (session: string) => call("chat_interrupt", { session }) });
+}
+
+export function useApproveChat(session: string) {
+  return useMutation({
+    mutationFn: ({ request, decision }: { request: string; decision: ApprovalDecision }) =>
+      call("chat_approve", { session, request, decision }),
+  });
+}
+
+export function useRenameChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      call("chat_session_rename", { id, title }),
+    onSuccess: (row) => {
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
+      void qc.invalidateQueries({ queryKey: keys.chatSession(row.id) });
+    },
+  });
+}
+
+export function useDeleteChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => call("chat_session_delete", { id }),
+    onSuccess: (_, id) => {
+      qc.removeQueries({ queryKey: keys.chatSession(id) });
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
+    },
   });
 }
 

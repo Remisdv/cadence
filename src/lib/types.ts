@@ -38,6 +38,25 @@ export type { InstallPhase } from "./bindings/InstallPhase";
 export type { PluginInstallEvent } from "./bindings/PluginInstallEvent";
 export type { OpenViewRequest } from "./bindings/OpenViewRequest";
 export type { RunReport } from "./bindings/RunReport";
+
+// IA et chat du cœur
+export type { AiEvent } from "./bindings/AiEvent";
+export type { AiErrorKind } from "./bindings/AiErrorKind";
+export type { ApprovalDecision } from "./bindings/ApprovalDecision";
+export type { ApprovalKind } from "./bindings/ApprovalKind";
+export type { FileChange } from "./bindings/FileChange";
+export type { PlanItem } from "./bindings/PlanItem";
+export type { PlanStatus } from "./bindings/PlanStatus";
+export type { ToolSource } from "./bindings/ToolSource";
+export type { ChatState } from "./bindings/ChatState";
+export type { ChatMode } from "./bindings/ChatMode";
+export type { ChatSessionRow } from "./bindings/ChatSessionRow";
+export type { ChatEventRow } from "./bindings/ChatEventRow";
+export type { ChatSessionDetail } from "./bindings/ChatSessionDetail";
+export type { ChatSendInput } from "./bindings/ChatSendInput";
+export type { ChatSendResult } from "./bindings/ChatSendResult";
+export type { ChatEventPayload } from "./bindings/ChatEventPayload";
+export type { ChatStatePayload } from "./bindings/ChatStatePayload";
 export type { SettingsFieldError } from "./bindings/SettingsFieldError";
 export type { PluginSettingsView } from "./bindings/PluginSettingsView";
 

@@ -28,6 +28,14 @@ import { mockBus } from "./bus";
 import * as data from "./fixtures";
 import { versionReport } from "./versions";
 import {
+  answerApproval,
+  mockChats,
+  newChat,
+  recordMockChatEvent,
+  requestInterrupt,
+  simulateTurn,
+} from "./chat";
+import {
   mockAppSettings,
   mockInstalledPlugin,
   mockPlugins,
@@ -56,6 +64,7 @@ const state = {
   pluginSettings: {} as Record<string, Record<string, unknown>>,
   secrets: new Set<string>(),
   processes: mockProcesses(scenario === "plugin-crash"),
+  chats: mockChats(scenario !== "app"),
 };
 let flowTimer: number | undefined;
 
@@ -255,6 +264,53 @@ const handlers: Handlers = {
     if (deleteSecrets) plugin.secrets.forEach((s) => state.secrets.delete(`plugin/${id}/${s.id}`));
     if (plugin.source === "dev")
       state.settings.devPlugins = state.settings.devPlugins.filter((d) => baseName(d) !== id);
+    return null;
+  },
+  chat_sessions: () =>
+    [...state.chats.values()]
+      .map((c) => c.session)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+  chat_session_get: ({ id }) => {
+    const chat = state.chats.get(id);
+    if (!chat) fail("chat_session_get", `Conversation « ${id} » introuvable.`);
+    return structuredClone(chat);
+  },
+  chat_send: ({ input }) => {
+    const text = input.text.trim();
+    if (!text) fail("chat_send", "Le message est vide.");
+    const ai = input.ai ?? state.settings.defaultAi ?? "claude-code";
+    if (!input.session && ai !== "claude-code")
+      fail("chat_send", "Seul Claude Code est pris en charge pour l'instant dans le chat.");
+    const id = input.session ?? newChat(state.chats, text).id;
+    const chat = state.chats.get(id);
+    if (!chat) fail("chat_send", `Conversation « ${id} » introuvable.`);
+    if (chat.session.state === "running" || chat.session.state === "waiting-approval")
+      fail("chat_send", "Un tour est déjà en cours dans cette conversation.");
+    recordMockChatEvent(state.chats, id, { type: "user-message", text });
+    void simulateTurn(state.chats, id, text);
+    return { session: id };
+  },
+  chat_interrupt: ({ session }) => {
+    const chat = state.chats.get(session);
+    if (chat?.session.state !== "running")
+      fail("chat_interrupt", "Aucun tour en cours dans cette conversation.");
+    requestInterrupt(session);
+    return null;
+  },
+  chat_approve: ({ request, decision }) => {
+    if (!answerApproval(request, decision))
+      fail("chat_approve", "Cette demande d'approbation n'attend plus de réponse.");
+    return null;
+  },
+  chat_session_rename: ({ id, title }) => {
+    const chat = state.chats.get(id);
+    if (!chat) fail("chat_session_rename", `Conversation « ${id} » introuvable.`);
+    if (!title.trim()) fail("chat_session_rename", "Le titre est vide.");
+    chat.session = { ...chat.session, title: title.trim() };
+    return chat.session;
+  },
+  chat_session_delete: ({ id }) => {
+    if (!state.chats.delete(id)) fail("chat_session_delete", `Conversation « ${id} » introuvable.`);
     return null;
   },
   plugin_status: () =>
