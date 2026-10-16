@@ -28,6 +28,9 @@ export type { PluginStatus } from "./bindings/PluginStatus";
 export type { PluginViewInfo } from "./bindings/PluginViewInfo";
 export type { PluginSecretInfo } from "./bindings/PluginSecretInfo";
 export type { InstalledPluginView } from "./bindings/InstalledPluginView";
+export type { ActionMode } from "./bindings/ActionMode";
+export type { PluginActionInfo } from "./bindings/PluginActionInfo";
+export type { PluginSetupStep } from "./bindings/PluginSetupStep";
 export type { SettingsFieldError } from "./bindings/SettingsFieldError";
 export type { PluginSettingsView } from "./bindings/PluginSettingsView";
 

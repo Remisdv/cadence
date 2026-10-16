@@ -282,7 +282,7 @@ mod tests {
         fs::write(
             dir.join("plugin.toml"),
             format!(
-                "api = 1\nid = \"{id}\"\nname = \"Plugin {id}\"\nversion = \"0.1.0\"\nauthors = [\"a\"]\nmin_cadence = \"0.1.0\"\ncategory = \"{category}\"\n\n[ui]\nviews = [{{ id = \"home\", title = \"Accueil\", icon = \"book\", home = true }}]\n{secret}"
+                "api = 1\nid = \"{id}\"\nname = \"Plugin {id}\"\nversion = \"0.1.0\"\nauthors = [\"a\"]\nmin_cadence = \"0.1.0\"\ncategory = \"{category}\"\n\n[ui]\nentry = \"index.html\"\nviews =[{{ id = \"home\", title = \"Accueil\", icon = \"book\", home = true }}]\n{secret}"
             ),
         )
         .unwrap();

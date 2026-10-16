@@ -1,16 +1,21 @@
 //! Lecture de `plugin.toml` (API 1, plan Cadence 2 § 3.1, révision 1.1).
 //!
-//! Le socle ne lit que ce dont l'hôte a besoin pour afficher un plugin : identité, catégorie
-//! du rail, vues, secrets déclarés, schéma de réglages. Le serveur MCP, les skills et les
-//! actions sont lus tels quels et validés à l'étape « Plugins » (installation, hôte).
-//! Une clé inconnue est ignorée (compatibilité ascendante dans l'API 1).
+//! `parse` valide le texte seul : identité, catégorie du rail, vues, secrets, `[server]`,
+//! `[[actions]]`, `[[setup]]`. `load` lit en plus le dossier du plugin et applique les règles
+//! « (R) » qui portent sur ses fichiers : skills (`skills/<s>/SKILL.md`), skill de chaque
+//! action, binaire du serveur. Une clé inconnue est ignorée (compatibilité ascendante dans
+//! l'API 1).
 
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::skills::{self, SkillInfo};
 use crate::error::{AppError, AppResult};
 
 /// Plus haute version de l'API plugins prise en charge.
@@ -92,6 +97,90 @@ pub struct PluginSecretInfo {
     pub required: bool,
 }
 
+/// Les quatre cibles de compilation des binaires de plugin (`bin/<cible>/`).
+pub const TARGETS: [&str; 4] =
+    ["x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"];
+
+/// Cible de la machine courante, `None` hors des quatre cibles prises en charge.
+pub fn current_target() -> Option<&'static str> {
+    if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some(TARGETS[0])
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some(TARGETS[1])
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        Some(TARGETS[2])
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        Some(TARGETS[3])
+    } else {
+        None
+    }
+}
+
+/// Arrêt sur inactivité par défaut (secondes).
+pub const DEFAULT_IDLE_SHUTDOWN_S: u32 = 600;
+
+/// Serveur MCP déclaré par `[server]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerSpec {
+    /// Nom du binaire, sans extension.
+    pub bin: String,
+    /// Cibles annoncées (défaut : les quatre).
+    pub targets: Vec<String>,
+    pub args: Vec<String>,
+    /// `0` = jamais.
+    pub idle_shutdown_s: u32,
+}
+
+impl ServerSpec {
+    /// `bin/<cible>/<bin>[.exe]` dans le dossier du plugin.
+    pub fn binary(&self, dir: &Path, target: &str) -> PathBuf {
+        let name = if target.contains("windows") { format!("{}.exe", self.bin) } else { self.bin.clone() };
+        dir.join("bin").join(target).join(name)
+    }
+}
+
+/// Mode de lancement d'une action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ActionMode {
+    /// Nouvelle session de chat ouverte dans le shell.
+    Chat,
+    /// Exécution de fond, visible dans le panneau Activité.
+    Background,
+}
+
+/// Bouton déclaré par `[[actions]]` : un skill lancé avec un contexte.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginActionInfo {
+    pub id: String,
+    pub label: String,
+    /// Dossier sous `skills/`.
+    pub skill: String,
+    pub mode: ActionMode,
+    /// Type de contexte attendu (`issue`, `version`…) ; `None` = action globale.
+    pub context: Option<String>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
+    /// Texte d'une confirmation avant lancement.
+    pub confirm: Option<String>,
+}
+
+/// Étape de configuration déclarée par `[[setup]]`, montrée par l'onboarding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginSetupStep {
+    pub id: String,
+    pub title: String,
+    /// Vue du plugin (`ui.views[].id`) qui mène l'étape.
+    pub view: String,
+    /// Étape bloquante de l'onboarding.
+    pub required: bool,
+}
+
 /// Manifeste validé.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
@@ -103,11 +192,20 @@ pub struct Manifest {
     /// `icon` : chemin d'un SVG de l'archive (contrat), ou nom d'icône du kit.
     pub icon: Option<String>,
     pub min_cadence: String,
+    /// Lien « Documentation » du catalogue (https).
+    pub homepage: Option<String>,
     pub category: PluginCategory,
     pub color: PluginColor,
     pub services: Vec<PluginService>,
+    pub server: Option<ServerSpec>,
+    /// Fichier HTML de l'UI, sous `ui/` (obligatoire dès qu'il y a une section `[ui]`).
+    pub ui_entry: Option<String>,
     pub views: Vec<PluginViewInfo>,
     pub secrets: Vec<PluginSecretInfo>,
+    pub setup: Vec<PluginSetupStep>,
+    pub actions: Vec<PluginActionInfo>,
+    /// Skills du dossier `skills/`, lus par `load` (vide après `parse` seul).
+    pub skills: Vec<SkillInfo>,
     /// Chemin relatif du JSON Schema des réglages.
     pub settings_schema: Option<String>,
     /// Clés ignorées ou valeurs ramenées à leur défaut, à montrer en mode dev.
@@ -141,18 +239,34 @@ struct Raw {
     authors: Vec<String>,
     icon: Option<String>,
     min_cadence: Option<String>,
+    homepage: Option<String>,
     category: Option<String>,
     color: Option<String>,
     #[serde(default)]
     services: Vec<String>,
+    server: Option<RawServer>,
     ui: Option<RawUi>,
     #[serde(default)]
     secrets: Vec<RawSecret>,
+    #[serde(default)]
+    setup: Vec<RawSetup>,
+    #[serde(default)]
+    actions: Vec<RawAction>,
     settings: Option<RawSettings>,
 }
 
 #[derive(Deserialize)]
+struct RawServer {
+    bin: String,
+    targets: Option<Vec<String>>,
+    #[serde(default)]
+    args: Vec<String>,
+    idle_shutdown_s: Option<u32>,
+}
+
+#[derive(Deserialize)]
 struct RawUi {
+    entry: Option<String>,
     #[serde(default)]
     views: Vec<RawView>,
 }
@@ -179,6 +293,27 @@ struct RawSecret {
 }
 
 #[derive(Deserialize)]
+struct RawSetup {
+    id: String,
+    title: String,
+    view: String,
+    #[serde(default)]
+    required: bool,
+}
+
+#[derive(Deserialize)]
+struct RawAction {
+    id: String,
+    label: String,
+    skill: String,
+    mode: String,
+    context: Option<String>,
+    description: Option<String>,
+    icon: Option<String>,
+    confirm: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct RawSettings {
     schema: Option<String>,
 }
@@ -194,15 +329,93 @@ fn is_view_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Identifiant d'action ou d'étape : minuscules, chiffres, `-` et `_`.
+fn is_item_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// Nom de binaire : lettres, chiffres, `-`, `_`, `.` ; ni chemin ni extension `.exe`.
+fn is_bin_name(bin: &str) -> bool {
+    !bin.is_empty()
+        && bin.len() <= 64
+        && !bin.starts_with('.')
+        && !bin.to_ascii_lowercase().ends_with(".exe")
+        && bin.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Chemin relatif sous le dossier du plugin, sans `..` ni racine.
+fn is_relative_path(path: &str) -> bool {
+    let p = Path::new(path);
+    !path.is_empty() && !p.is_absolute() && p.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::Validation(message.into())
 }
 
-/// Lit `plugin.toml` dans `dir`.
+/// Lit `plugin.toml` dans `dir`, puis ses skills, et vérifie les fichiers qu'il désigne.
+///
+/// Le binaire du serveur n'est exigé que pour la cible de la machine (un plugin de dev n'est
+/// compilé que pour elle) ; `check_all_targets` vérifie les autres à l'installation d'une archive.
 pub fn load(dir: &Path, app_version: &str) -> AppResult<Manifest> {
     let text = std::fs::read_to_string(dir.join(FILE_NAME))
         .map_err(|e| invalid(format!("{FILE_NAME} illisible ({e}).")))?;
-    parse(&text, app_version)
+    let mut manifest = parse(&text, app_version)?;
+    check_dir(dir, &mut manifest)?;
+    Ok(manifest)
+}
+
+/// Règles « (R) » sur les fichiers du plugin.
+fn check_dir(dir: &Path, m: &mut Manifest) -> AppResult<()> {
+    m.skills = skills::load_all(&dir.join("skills"))?;
+    for action in &m.actions {
+        if !m.skills.iter().any(|s| s.name == action.skill) {
+            return Err(invalid(format!(
+                "Action « {} » : le skill « {} » n'existe pas sous `skills/`.",
+                action.id, action.skill
+            )));
+        }
+    }
+    if let Some(server) = &m.server {
+        match current_target() {
+            Some(target) if server.targets.iter().any(|t| t == target) => {
+                let bin = server.binary(dir, target);
+                if !bin.is_file() {
+                    return Err(invalid(format!("Binaire du serveur absent : `bin/{target}/{}`.", file_name(&bin))));
+                }
+            }
+            _ => m.warnings.push("Aucun binaire du serveur pour cette machine.".into()),
+        }
+    }
+    if let Some(entry) = &m.ui_entry
+        && !dir.join("ui").join(entry).is_file()
+    {
+        m.warnings.push(format!("`ui/{entry}` absent."));
+    }
+    if let Some(icon) = m.icon.as_deref().filter(|i| i.ends_with(".svg")) {
+        match std::fs::metadata(dir.join(icon)) {
+            Ok(meta) if meta.len() > 64 * 1024 => m.warnings.push(format!("`{icon}` dépasse 64 Kio.")),
+            Ok(_) => {}
+            Err(_) => m.warnings.push(format!("Icône `{icon}` absente.")),
+        }
+    }
+    Ok(())
+}
+
+/// Binaire présent pour chaque cible annoncée (règle d'une archive publiée).
+pub fn check_all_targets(dir: &Path, m: &Manifest) -> AppResult<()> {
+    let Some(server) = &m.server else { return Ok(()) };
+    for target in &server.targets {
+        let bin = server.binary(dir, target);
+        if !bin.is_file() {
+            return Err(invalid(format!("Binaire du serveur absent : `bin/{target}/{}`.", file_name(&bin))));
+        }
+    }
+    Ok(())
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// Analyse et valide le texte d'un manifeste.
@@ -244,6 +457,15 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         return Err(invalid(format!("Nécessite Cadence {min_cadence} ou plus récent (installé : {app_version}).")));
     }
 
+    let homepage = match raw.homepage.filter(|h| !h.trim().is_empty()) {
+        Some(h) if h.starts_with("https://") => Some(h),
+        Some(_) => {
+            warnings.push("`homepage` doit être une URL https : ignorée.".into());
+            None
+        }
+        None => None,
+    };
+
     let category = match raw.category.as_deref() {
         Some(c) => serde_json::from_value(serde_json::Value::String(c.into()))
             .map_err(|_| invalid(format!("Catégorie « {c} » inconnue (projet, etudes, code, donnees, outils).")))?,
@@ -268,9 +490,25 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         }
     }
 
+    let server = match raw.server {
+        None => None,
+        Some(srv) => Some(parse_server(srv)?),
+    };
+
+    let (ui_entry, raw_views) = match raw.ui {
+        None => (None, Vec::new()),
+        Some(ui) => {
+            let entry = ui.entry.filter(|e| !e.trim().is_empty()).ok_or_else(|| invalid("`ui.entry` absent."))?;
+            if !is_relative_path(&entry) {
+                return Err(invalid(format!("`ui.entry` « {entry} » doit être un chemin relatif sous `ui/`.")));
+            }
+            (Some(entry), ui.views)
+        }
+    };
+
     let mut seen = HashSet::new();
     let mut views = Vec::new();
-    for v in raw.ui.map(|ui| ui.views).unwrap_or_default() {
+    for v in raw_views {
         if !is_view_id(&v.id) {
             return Err(invalid(format!("Vue « {} » : identifiant invalide.", v.id)));
         }
@@ -295,7 +533,47 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         if !crate::secrets::is_secret_id(&s.id) {
             return Err(invalid(format!("Secret « {} » : identifiant invalide ([a-z0-9_]).", s.id)));
         }
+        if secrets.iter().any(|known: &PluginSecretInfo| known.id == s.id) {
+            return Err(invalid(format!("Secret « {} » déclaré deux fois.", s.id)));
+        }
         secrets.push(PluginSecretInfo { id: s.id, label: s.label, description: s.description, required: s.required });
+    }
+
+    let mut setup = Vec::new();
+    for step in raw.setup {
+        if !is_item_id(&step.id) || setup.iter().any(|known: &PluginSetupStep| known.id == step.id) {
+            return Err(invalid(format!("Étape de configuration « {} » : identifiant invalide ou en double.", step.id)));
+        }
+        if !views.iter().any(|v| v.id == step.view) {
+            return Err(invalid(format!("Étape de configuration « {} » : la vue « {} » n'existe pas.", step.id, step.view)));
+        }
+        setup.push(PluginSetupStep { id: step.id, title: step.title, view: step.view, required: step.required });
+    }
+
+    let mut actions = Vec::new();
+    for a in raw.actions {
+        if !is_item_id(&a.id) || actions.iter().any(|known: &PluginActionInfo| known.id == a.id) {
+            return Err(invalid(format!("Action « {} » : identifiant invalide ou en double.", a.id)));
+        }
+        let mode = match a.mode.as_str() {
+            "chat" => ActionMode::Chat,
+            "background" => ActionMode::Background,
+            other => return Err(invalid(format!("Action « {} » : mode « {other} » inconnu (chat, background).", a.id))),
+        };
+        if !skills::is_skill_name(&a.skill) {
+            return Err(invalid(format!("Action « {} » : « {} » n'est pas un nom de skill.", a.id, a.skill)));
+        }
+        let some = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
+        actions.push(PluginActionInfo {
+            id: a.id,
+            label: a.label,
+            skill: a.skill,
+            mode,
+            context: some(a.context),
+            description: some(a.description),
+            icon: some(a.icon),
+            confirm: some(a.confirm),
+        });
     }
 
     Ok(Manifest {
@@ -306,13 +584,49 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         authors: raw.authors,
         icon: raw.icon.filter(|i| !i.trim().is_empty()),
         min_cadence,
+        homepage,
         category,
         color,
         services,
+        server,
+        ui_entry,
         views,
         secrets,
+        setup,
+        actions,
+        skills: Vec::new(),
         settings_schema: raw.settings.and_then(|s| s.schema),
         warnings,
+    })
+}
+
+fn parse_server(srv: RawServer) -> AppResult<ServerSpec> {
+    if !is_bin_name(&srv.bin) {
+        return Err(invalid(format!("`server.bin` « {} » : nom de binaire sans chemin ni extension attendu.", srv.bin)));
+    }
+    let targets = match srv.targets {
+        None => TARGETS.iter().map(|t| t.to_string()).collect(),
+        Some(list) => {
+            if list.is_empty() {
+                return Err(invalid("`server.targets` est vide."));
+            }
+            let mut seen = HashSet::new();
+            for t in &list {
+                if !TARGETS.contains(&t.as_str()) {
+                    return Err(invalid(format!("`server.targets` : cible « {t} » inconnue ({}).", TARGETS.join(", "))));
+                }
+                if !seen.insert(t.as_str()) {
+                    return Err(invalid(format!("`server.targets` : cible « {t} » en double.")));
+                }
+            }
+            list
+        }
+    };
+    Ok(ServerSpec {
+        bin: srv.bin,
+        targets,
+        args: srv.args,
+        idle_shutdown_s: srv.idle_shutdown_s.unwrap_or(DEFAULT_IDLE_SHUTDOWN_S),
     })
 }
 
@@ -400,6 +714,114 @@ schema = "settings.schema.json"
         ] {
             assert!(parse(&text, "0.3.0").is_err(), "{why} devrait être refusé");
         }
+    }
+
+    const ACTIONS: &str = r#"
+[[setup]]
+id = "github"
+title = "Connexion GitHub"
+view = "issue"
+required = true
+
+[[actions]]
+id = "preparer-issue"
+label = "Préparer l'issue"
+skill = "preparer-issue"
+mode = "chat"
+context = "issue"
+confirm = ""
+
+[[actions]]
+id = "rapport_version"
+label = "Rapport de version"
+skill = "rapport-version"
+mode = "background"
+"#;
+
+    #[test]
+    fn reads_server_actions_and_setup() {
+        let m = parse(&format!("{GESTION_PROJET}{ACTIONS}"), "0.3.0").unwrap();
+        let server = m.server.as_ref().unwrap();
+        assert_eq!(server.bin, "cadence-gestion-projet");
+        assert_eq!(server.targets.len(), 4, "défaut : les quatre cibles");
+        assert_eq!(server.idle_shutdown_s, DEFAULT_IDLE_SHUTDOWN_S);
+        assert!(server.binary(Path::new("p"), TARGETS[0]).ends_with("bin/x86_64-pc-windows-msvc/cadence-gestion-projet.exe"));
+        assert!(server.binary(Path::new("p"), TARGETS[3]).ends_with("bin/x86_64-unknown-linux-gnu/cadence-gestion-projet"));
+        assert_eq!(m.ui_entry.as_deref(), Some("index.html"));
+        assert_eq!(m.setup[0].view, "issue");
+        assert!(m.setup[0].required);
+        assert_eq!(m.actions.len(), 2);
+        assert_eq!((m.actions[0].mode, m.actions[0].context.as_deref()), (ActionMode::Chat, Some("issue")));
+        assert_eq!(m.actions[0].confirm, None, "texte vide = pas de confirmation");
+        assert_eq!(m.actions[1].mode, ActionMode::Background);
+        assert!(m.skills.is_empty(), "`parse` ne lit pas le dossier");
+
+        let custom = GESTION_PROJET.replacen(
+            "bin = \"cadence-gestion-projet\"",
+            "bin = \"srv\"\ntargets = [\"x86_64-unknown-linux-gnu\"]\nargs = [\"--stdio\"]\nidle_shutdown_s = 0",
+            1,
+        );
+        let server = parse(&custom, "0.3.0").unwrap().server.unwrap();
+        assert_eq!((server.targets.len(), server.args.as_slice(), server.idle_shutdown_s), (1, ["--stdio".to_string()].as_slice(), 0));
+    }
+
+    #[test]
+    fn rejects_invalid_server_actions_and_setup() {
+        let full = format!("{GESTION_PROJET}{ACTIONS}");
+        let with = |from: &str, to: &str| full.replacen(from, to, 1);
+        for (text, why) in [
+            (with("bin = \"cadence-gestion-projet\"", "bin = \"bin/srv\""), "chemin dans bin"),
+            (with("bin = \"cadence-gestion-projet\"", "bin = \"srv.exe\""), "extension"),
+            (with("bin = \"cadence-gestion-projet\"", "bin = \"srv\"\ntargets = [\"riscv64\"]"), "cible inconnue"),
+            (with("bin = \"cadence-gestion-projet\"", "bin = \"srv\"\ntargets = []"), "aucune cible"),
+            (with("entry = \"index.html\"", "entry = \"../index.html\""), "entrée hors de ui/"),
+            (with("entry = \"index.html\"", ""), "entrée absente"),
+            (with("view = \"issue\"", "view = \"absente\""), "vue de setup inconnue"),
+            (with("mode = \"chat\"", "mode = \"auto\""), "mode inconnu"),
+            (with("skill = \"preparer-issue\"", "skill = \"Préparer\""), "nom de skill"),
+            (with("id = \"rapport_version\"", "id = \"preparer-issue\""), "action en double"),
+            (with("[[actions]]\nid = \"preparer-issue\"\nlabel", "[[actions]]\nid = \"preparer-issue\"\nlabelle"), "label absent"),
+            (format!("{full}\n[[secrets]]\nid = \"github_token\"\nlabel = \"Bis\"\n"), "secret en double"),
+        ] {
+            assert!(parse(&text, "0.3.0").is_err(), "{why} devrait être refusé");
+        }
+        let http = parse(&GESTION_PROJET.replacen("min_cadence", "homepage = \"http://x.fr\"\nmin_cadence", 1), "0.3.0").unwrap();
+        assert_eq!((http.homepage, http.warnings.len()), (None, 1));
+    }
+
+    #[test]
+    fn checks_the_plugin_files() {
+        let dir = crate::app_settings::temp_dir("plugin-manifest-files");
+        let target = current_target().expect("tests lancés sur une des quatre cibles");
+        let write = |path: &str, text: &str| {
+            let path = dir.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(FILE_NAME, &format!("{GESTION_PROJET}{ACTIONS}"));
+        write("ui/index.html", "<html></html>");
+        write("icon.svg", "<svg/>");
+        write("skills/preparer-issue/SKILL.md", "---\nname: preparer-issue\ndescription: Prépare une issue.\n---\n");
+
+        let err = load(&dir, "0.3.0").unwrap_err().to_string();
+        assert!(err.contains("rapport-version"), "skill d'action absent : {err}");
+        write("skills/rapport-version/SKILL.md", "---\nname: rapport-version\ndescription: Rapport.\n---\n");
+
+        let err = load(&dir, "0.3.0").unwrap_err().to_string();
+        assert!(err.contains("Binaire du serveur absent"), "{err}");
+        let bin = if target.contains("windows") { "cadence-gestion-projet.exe" } else { "cadence-gestion-projet" };
+        write(&format!("bin/{target}/{bin}"), "");
+
+        let m = load(&dir, "0.3.0").unwrap();
+        assert_eq!(m.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["preparer-issue", "rapport-version"]);
+        assert!(m.warnings.is_empty(), "{:?}", m.warnings);
+        assert!(check_all_targets(&dir, &m).is_err(), "les autres cibles manquent");
+        for t in TARGETS {
+            let bin = if t.contains("windows") { "cadence-gestion-projet.exe" } else { "cadence-gestion-projet" };
+            write(&format!("bin/{t}/{bin}"), "");
+        }
+        assert!(check_all_targets(&dir, &m).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
