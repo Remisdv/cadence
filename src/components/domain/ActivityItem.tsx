@@ -1,18 +1,17 @@
 import type { ReactNode } from "react";
-import type { AgentKind } from "@/lib/types";
-import { AgentBadge } from "./AgentBadge";
 
 export interface ActivityItemProps {
-  agent: AgentKind;
+  /** Pastille de tête (avatar, icône de plugin…), 21–22px. */
+  badge: ReactNode;
   children: ReactNode;
   time: ReactNode;
 }
 
-/** Ligne du fil « Activité des agents » : carré d'agent, texte tx2 12.5px, horodatage. */
-export function ActivityItem({ agent, children, time }: ActivityItemProps) {
+/** Ligne d'un fil d'activité : pastille, texte tx2 12.5px, horodatage. */
+export function ActivityItem({ badge, children, time }: ActivityItemProps) {
   return (
     <div className="flex gap-2.5 border-b border-line py-2.5 last:border-b-0">
-      <AgentBadge agent={agent} size={22} />
+      {badge}
       <div className="min-w-0 grow">
         <div className="text-body-sm leading-normal text-tx2">{children}</div>
         <div className="mt-[3px] text-tiny text-tx3">{time}</div>

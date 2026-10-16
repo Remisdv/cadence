@@ -3,7 +3,7 @@ import { OnboardingSteps } from "@/components/domain/Steps";
 import { Logo } from "./Logo";
 
 /** Le dépôt se choisit ensuite dans la barre latérale, à tout moment. */
-export const onboardingSteps = ["Compte GitHub", "Agents de code"];
+export const onboardingSteps = ["Compte GitHub"];
 
 export interface OnboardingLayoutProps {
   /** Étape en cours (0-based). */

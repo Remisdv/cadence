@@ -9,7 +9,6 @@ use serde_json::json;
 use super::{repos::check_status, API_URL, API_VERSION};
 use crate::{
     domain::{
-        agent::AgentKind,
         pr::{CiState, PrFile, PrRow, PrState, ReviewAudience, ReviewRow, ReviewState},
         version, UserRef,
     },
@@ -260,7 +259,6 @@ pub fn to_row(raw: &RawPr, me: Option<&str>) -> PrRow {
         Some("REVIEW_REQUIRED") => Some(ReviewState::Pending),
         _ => None,
     };
-    let labels: Vec<&str> = raw.labels.nodes.iter().map(|l| l.name.as_str()).collect();
     PrRow {
         number: raw.number,
         title: raw.title.clone(),
@@ -275,9 +273,6 @@ pub fn to_row(raw: &RawPr, me: Option<&str>) -> PrRow {
             },
             None => UserRef { login: "ghost".into(), name: None, avatar_url: None, is_self: false },
         },
-        agent: [AgentKind::Cto, AgentKind::Ceo, AgentKind::Dev, AgentKind::Deploy]
-            .into_iter()
-            .find(|k| labels.contains(&k.label())),
         state,
         ci,
         ci_passed,
@@ -430,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn converts_ci_reviews_version_and_agent() {
+    fn converts_ci_reviews_and_version() {
         let row = to_row(&raw(node(json!({}))), Some("remisdv"));
         assert_eq!(row.state, PrState::Open);
         assert_eq!((row.ci, row.ci_passed, row.ci_total), (CiState::Failure, 3, 4));
@@ -438,7 +433,6 @@ mod tests {
         assert_eq!(row.review_requested_at.as_deref(), Some("2026-10-14T08:00:00Z"));
         assert_eq!(row.version.as_deref(), Some("0.1.2"));
         assert_eq!(row.linked_issue, Some(138));
-        assert_eq!(row.agent, Some(AgentKind::Dev));
         assert!(!row.author.is_self);
     }
 

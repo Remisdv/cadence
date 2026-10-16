@@ -78,7 +78,7 @@ async fn report(state: &AppState, title: Option<String>) -> AppResult<VersionRep
         .collect();
     let prs: Vec<_> = cache.pulls().await?.iter().map(|raw| pulls::to_row(raw, me.as_deref())).collect();
     // Le préfixe de tag vient de `.cadence/config.toml` ; illisible (hors ligne), celui par défaut.
-    let tag_prefix = match crate::commands::settings::load(state).await {
+    let tag_prefix = match crate::project_config::load(state).await {
         Ok(loaded) => loaded.config.project.tag_prefix,
         Err(_) => CloseRules::default().tag_prefix,
     };
@@ -120,7 +120,7 @@ pub async fn version_close(
     }
     let (versions, _) = repos::to_versions(&cache.milestones().await?);
     let open = open_issues_of(&cache, &current).await?;
-    let config = crate::commands::settings::load(&state).await?.config;
+    let config = crate::project_config::load(&state).await?.config;
     let rules = CloseRules {
         sprint_days: i64::from(config.versioning.sprint_days),
         tag_prefix: config.project.tag_prefix.clone(),
@@ -210,7 +210,6 @@ pub async fn version_close(
         moved_issues: moved,
         tag: plan.tag,
         release_url,
-        deploy_run: None,
     })
 }
 

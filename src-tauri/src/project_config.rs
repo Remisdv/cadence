@@ -2,19 +2,16 @@
 //!
 //! Le fichier est écrit en `snake_case` (convention TOML) alors que l'IPC parle `camelCase` :
 //! la conversion passe par une valeur JSON intermédiaire. Un fichier partiel ou ancien est
-//! complété par les valeurs par défaut, une clé inconnue est ignorée.
+//! complété par les valeurs par défaut, une clé inconnue (dont l'ancienne section `[agents]`)
+//! est ignorée.
 
 use serde_json::{Map, Value};
 
 use crate::{
-    domain::{
-        agent::Autonomy,
-        settings::{
-            AgentConfig, AgentEngines, AgentsConfig, Config, EngineChoice, IssuesConfig, ProjectConfig,
-            VersioningConfig,
-        },
-    },
+    api::github::writes,
+    domain::settings::{Config, IssuesConfig, ProjectConfig, VersioningConfig},
     error::{AppError, AppResult},
+    state::{AppState, LoadedConfig},
 };
 
 pub const PATH: &str = ".cadence/config.toml";
@@ -22,31 +19,29 @@ pub const PATH: &str = ".cadence/config.toml";
 const HEADER: &str = "# Configuration Cadence — https://github.com/cadence-app/desktop\n\
                       # Versionnée avec le dépôt ; aucun secret ici.\n\n";
 
-/// Configuration d'un projet qui n'a pas encore de `config.toml`. Les moteurs d'agents
-/// reprennent l'affectation faite à l'onboarding sur cette machine.
-pub fn defaults(repo: &str, engines: &AgentEngines) -> Config {
-    let agent = |choice: &EngineChoice, autonomy: Autonomy| AgentConfig {
-        engine: choice.engine,
-        model: choice.model.clone(),
-        autonomy,
-        max_session_minutes: 30,
-    };
+/// Configuration d'un projet qui n'a pas encore de `config.toml`.
+pub fn defaults(repo: &str) -> Config {
     Config {
         project: ProjectConfig { repo: repo.to_string(), tag_prefix: "v".into() },
         versioning: VersioningConfig { scheme: "semver".into(), confirm_major_bump: true, sprint_days: 14 },
-        issues: IssuesConfig {
-            require_milestone: true,
-            send_to_cto_on_create: true,
-            template: "contexte-attendu-criteres".into(),
-        },
-        agents: AgentsConfig {
-            cto: agent(&engines.cto, Autonomy::ApplyAfterReview),
-            ceo: agent(&engines.ceo, Autonomy::Propose),
-            dev: agent(&engines.dev, Autonomy::ApplyAfterReview),
-            deploy: agent(&engines.deploy, Autonomy::ApplyAfterReview),
-            worktree_root: "~/.cadence/wt".into(),
-        },
+        issues: IssuesConfig { require_milestone: true, template: "contexte-attendu-criteres".into() },
     }
+}
+
+/// Configuration du dépôt ouvert, lue sur GitHub au premier appel.
+pub async fn load(state: &AppState) -> AppResult<LoadedConfig> {
+    let repo = state.require_project().await?.repo.full_name;
+    if let Some(loaded) = state.config.read().await.as_ref().filter(|c| c.repo == repo) {
+        return Ok(loaded.clone());
+    }
+    let base = defaults(&repo);
+    let token = state.github_token()?;
+    let loaded = match writes::get_file(&state.http, &token, &repo, PATH).await? {
+        Some((text, sha)) => LoadedConfig { config: parse(&text, &base)?, sha: Some(sha), repo },
+        None => LoadedConfig { config: base, sha: None, repo },
+    };
+    *state.config.write().await = Some(loaded.clone());
+    Ok(loaded)
 }
 
 /// Lit un `config.toml` par-dessus `base` (valeurs par défaut).
@@ -78,15 +73,6 @@ pub fn validate(config: &Config) -> AppResult<()> {
     }
     if !(1..=60).contains(&config.versioning.sprint_days) {
         return Err(AppError::Validation("Un sprint dure entre 1 et 60 jours.".into()));
-    }
-    let agents = &config.agents;
-    for (name, agent) in [("CTO", &agents.cto), ("CEO", &agents.ceo), ("développeur", &agents.dev), ("déploiement", &agents.deploy)] {
-        if !(1..=240).contains(&agent.max_session_minutes) {
-            return Err(AppError::Validation(format!("Agent {name} : une session dure entre 1 et 240 minutes.")));
-        }
-    }
-    if agents.ceo.autonomy != Autonomy::Propose {
-        return Err(AppError::Validation("L'agent CEO reste en mode « proposer ».".into()));
     }
     Ok(())
 }
@@ -156,25 +142,22 @@ fn snake_to_camel(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::settings::AgentEngine;
 
     fn base() -> Config {
-        defaults("me/app", &AgentEngines::default())
+        defaults("me/app")
     }
 
     #[test]
     fn round_trips_through_snake_case_toml() {
         let mut config = base();
         config.versioning.sprint_days = 7;
-        config.agents.dev.model = None;
         let text = to_toml(&config).unwrap();
         assert!(text.contains("tag_prefix = \"v\""), "{text}");
         assert!(text.contains("sprint_days = 7"));
-        assert!(text.contains("autonomy = \"apply-after-review\""));
+        assert!(text.contains("require_milestone = true"));
         assert!(!text.contains("tagPrefix"));
         let back = parse(&text, &base()).unwrap();
         assert_eq!(back.versioning.sprint_days, 7);
-        assert_eq!(back.agents.dev.model, base().agents.dev.model, "clé absente → défaut");
     }
 
     #[test]
@@ -186,7 +169,6 @@ mod tests {
         .unwrap();
         assert_eq!(config.project.tag_prefix, "");
         assert_eq!(config.project.repo, "me/app", "le dépôt ouvert fait foi");
-        assert_eq!(config.agents.cto.engine, AgentEngine::Codex);
         assert_eq!(config.versioning.sprint_days, 14);
     }
 
@@ -199,9 +181,6 @@ mod tests {
         assert!(validate(&config).is_err());
         let mut config = base();
         config.versioning.sprint_days = 0;
-        assert!(validate(&config).is_err());
-        let mut config = base();
-        config.agents.ceo.autonomy = Autonomy::Auto;
         assert!(validate(&config).is_err());
         assert!(validate(&base()).is_ok());
     }

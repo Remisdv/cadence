@@ -4,20 +4,10 @@
  * Les types viennent de ts-rs : si Rust change une structure, ce fichier casse à la compilation.
  */
 import type {
-  AgentControl,
-  AgentEngines,
-  AgentInput,
-  AgentKind,
-  AgentOverview,
-  AgentRunDetail,
-  AgentRunEntry,
-  ApplyReport,
   AuthProvider,
   AuthStatus,
   CliAgentInfo,
   CloseReport,
-  Config,
-  CtoAnswer,
   DeviceFlowStart,
   GithubAuth,
   IssueCreateInput,
@@ -28,7 +18,6 @@ import type {
   PrDetail,
   PrRow,
   ProjectState,
-  ProposedAction,
   Repo,
   RepoCreateInput,
   RepoOwner,
@@ -72,29 +61,10 @@ export interface Commands {
   issues_list: { args: { filter: IssueFilter }; result: IssueRow[] };
   issue_get: { args: { number: number }; result: IssueDetail };
   issue_create: { args: { input: IssueCreateInput }; result: IssueRow };
-  issue_answer_cto: { args: { number: number; answers: CtoAnswer[] }; result: null };
   // Pull requests & revues
   prs_list: { args: { filter: PrFilter }; result: PrRow[] };
   reviews_pending: { args: NoArgs; result: ReviewRow[] };
   pr_detail: { args: { number: number }; result: PrDetail };
-  // Agents
-  agent_engines_get: { args: NoArgs; result: AgentEngines };
-  agent_engines_set: { args: { engines: AgentEngines }; result: AgentEngines };
-  agents_overview: { args: NoArgs; result: AgentOverview[] };
-  agent_start: { args: { kind: AgentKind; input: AgentInput }; result: string };
-  agent_control: { args: { run: string; cmd: AgentControl }; result: null };
-  agent_actions: { args: { run: string }; result: ProposedAction[] };
-  agent_apply: { args: { run: string; ids: string[] }; result: ApplyReport };
-  agent_latest_run: { args: { kind: AgentKind }; result: AgentRunDetail | null };
-  agent_run_get: { args: { run: string }; result: AgentRunDetail };
-  agent_reject: { args: { run: string; numbers: number[] }; result: null };
-  agent_edit_body: { args: { run: string; number: number; body: string }; result: null };
-  agent_runs_list: { args: { limit: number }; result: AgentRunEntry[] };
-  agent_edit_notes: { args: { run: string; notes: string }; result: null };
-  agent_edit_proposal: { args: { run: string; index: number; title: string; body: string }; result: null };
-  // Réglages
-  settings_get: { args: NoArgs; result: Config };
-  settings_set: { args: { config: Config }; result: Config };
 }
 
 export type CommandName = keyof Commands;

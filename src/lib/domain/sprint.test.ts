@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { agentsOverview, issues, pullRequests } from "@/lib/ipc/mock/fixtures";
-import type { AgentOverview, IssueRow, ReviewRow } from "@/lib/types";
+import { issues, pullRequests } from "@/lib/ipc/mock/fixtures";
+import type { IssueRow, ReviewRow } from "@/lib/types";
 import {
-  agentActivity,
   closeChecks,
   daysLeftLabel,
   delayLabel,
@@ -14,13 +13,11 @@ import {
   sprintBoard,
   sprintTodos,
   statusMeters,
-  withActiveAgents,
 } from "./sprint";
 
 const now = new Date("2026-10-15T12:00:00Z");
 const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000).toISOString();
-const base = issues[0]!;
-const issue = (p: Partial<IssueRow>): IssueRow => ({ ...base, ...p });
+const issue = (p: Partial<IssueRow>): IssueRow => ({ ...issues[0]!, ...p });
 
 describe("sprintBoard", () => {
   it("range par état et ne garde que les dernières issues faites", () => {
@@ -29,19 +26,6 @@ describe("sprintBoard", () => {
     expect(board.map((c) => c.total)).toEqual([4, 3, 4, 7]);
     expect(board[3]!.issues).toHaveLength(2);
     expect(board[0]!.issues.map((i) => i.number)).toEqual([151, 153, 156, 157]);
-  });
-});
-
-describe("withActiveAgents", () => {
-  it("marque l'issue de l'exécution en cours", () => {
-    const rows = [
-      issue({ number: 147, activeAgent: null }),
-      issue({ number: 151, activeAgent: null }),
-    ];
-    const overview: AgentOverview[] = [
-      { ...agentsOverview[2]!, currentRun: { ...agentsOverview[2]!.currentRun!, issue: 147 } },
-    ];
-    expect(withActiveAgents(rows, overview).map((i) => i.activeAgent)).toEqual(["dev", null]);
   });
 });
 
@@ -79,10 +63,9 @@ describe("KPI", () => {
     expect(daysLeftLabel(null)).toBe("sans échéance");
   });
 
-  it("compte les PR ouvertes, fusionnées et la part des agents", () => {
-    const stats = pullStats([...pullRequests, { ...pullRequests[4]!, number: 90, agent: "dev" }]);
-    expect(stats).toEqual({ open: 4, openByAgent: 1, merged: 3, agentShare: (1 / 3) * 100 });
-    expect(pullStats([]).agentShare).toBe(0);
+  it("compte les PR ouvertes et fusionnées", () => {
+    expect(pullStats(pullRequests)).toEqual({ open: 4, merged: 2 });
+    expect(pullStats([])).toEqual({ open: 0, merged: 0 });
   });
 
   it("garde les revues demandées à l'utilisateur et la plus ancienne", () => {
@@ -97,31 +80,14 @@ describe("KPI", () => {
 });
 
 describe("sprintTodos", () => {
-  it("liste les questions du CTO puis les revues en retard", () => {
+  it("liste les revues en retard", () => {
     const reviews: ReviewRow[] = [
       { pr: pullRequests[1]!, audience: "you", requestedAt: hoursAgo(6) },
       { pr: pullRequests[3]!, audience: "you", requestedAt: hoursAgo(50) },
     ];
-    expect(sprintTodos(issues, reviews, now)).toEqual([
-      { kind: "cto-questions", issue: 156, text: "Répondre aux questions du CTO sur #156" },
+    expect(sprintTodos(reviews, now)).toEqual([
       { kind: "review", pr: 84, text: "PR #84 en attente de revue depuis 2 jours" },
     ]);
-  });
-});
-
-describe("agentActivity", () => {
-  it("met l'agent en cours d'abord, puis les attentes, puis les derniers passages", () => {
-    const overview: AgentOverview[] = agentsOverview.map((a) =>
-      a.currentRun ? { ...a, currentRun: { ...a.currentRun, startedAt: hoursAgo(0.1) } } : a,
-    );
-    const lines = agentActivity(overview, now);
-    expect(lines.map((l) => l.agent)).toEqual(["dev", "ceo", "cto", "deploy"]);
-    expect(lines[0]).toMatchObject({ lead: "#142", text: "en cours de traitement · étape 3/6." });
-    expect(lines[1]).toMatchObject({
-      lead: "5 propositions",
-      text: "en attente de votre validation.",
-    });
-    expect(agentActivity([{ ...agentsOverview[0]!, lastRunAt: null }], now)).toEqual([]);
   });
 });
 

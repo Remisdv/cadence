@@ -3,11 +3,9 @@ use tauri::State;
 use serde_json::json;
 
 use crate::{
-    agents::engine,
     api::github::{issues, repos, writes},
     domain::{
-        agent::{AgentKind, CtoItemState},
-        issue::{CtoAnswer, IssueCreateInput, IssueDetail, IssueFilter, IssueRow},
+        issue::{IssueCreateInput, IssueDetail, IssueFilter, IssueRow},
         sync::SyncResource,
         version::{self, VersionState},
     },
@@ -34,7 +32,7 @@ pub async fn issues_list(state: State<'_, AppState>, filter: IssueFilter) -> App
         .collect())
 }
 
-/// Détail d'une issue (cache), avec les questions de l'agent CTO en attente sur elle.
+/// Détail d'une issue (cache).
 #[tauri::command]
 pub async fn issue_get(state: State<'_, AppState>, number: u32) -> AppResult<IssueDetail> {
     let cache = state.repo_cache().await?;
@@ -46,21 +44,7 @@ pub async fn issue_get(state: State<'_, AppState>, number: u32) -> AppResult<Iss
         .find(|i| i.number == number)
         .ok_or_else(|| AppError::Validation(format!("Issue #{number} introuvable dans ce dépôt.")))?;
     let me = state.github.read().await.as_ref().and_then(|g| g.login.clone());
-    let mut row = issues::to_row(&raw, me.as_deref());
-    let mut questions = vec![];
-    if let Some(handle) = engine::latest(&state, AgentKind::Cto).await? {
-        let d = handle.detail.read().await;
-        if let Some(item) = d.items.iter().find(|i| i.number == number) {
-            match item.state {
-                CtoItemState::Questions => {
-                    questions = item.questions.clone();
-                    row.flags.push(crate::domain::issue::IssueFlag::CtoQuestions);
-                }
-                CtoItemState::Running => row.active_agent = Some(AgentKind::Cto),
-                _ => {}
-            }
-        }
-    }
+    let row = issues::to_row(&raw, me.as_deref());
     Ok(IssueDetail {
         body: raw.body.clone().unwrap_or_default(),
         html_url: raw.html_url.clone().unwrap_or_else(|| format!("https://github.com/{}/issues/{number}", cache.repo)),
@@ -71,18 +55,14 @@ pub async fn issue_get(state: State<'_, AppState>, number: u32) -> AppResult<Iss
             is_self: me.as_deref() == Some(u.login.as_str()),
         }),
         created_at: raw.created_at.clone().unwrap_or_else(|| raw.updated_at.clone()),
-        questions,
         row,
     })
 }
 
 /// Crée l'issue sur GitHub, rattachée au milestone de sa version, puis la range dans le
 /// cache. Refuse une issue sans titre ou sans version ouverte (règle produit).
-/// Avec `send_to_cto`, l'issue part ensuite chez l'agent CTO (son échec n'annule pas la
-/// création : il est seulement journalisé).
 #[tauri::command]
 pub async fn issue_create(
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
     input: IssueCreateInput,
 ) -> AppResult<IssueRow> {
@@ -113,23 +93,5 @@ pub async fn issue_create(
     cache.invalidate(SyncResource::Milestones).await?;
 
     let me = state.github.read().await.as_ref().and_then(|g| g.login.clone());
-    let mut row = issues::to_row(&issue, me.as_deref());
-    if input.send_to_cto == Some(true) {
-        match engine::send_issues(&app, &state, vec![issue.number]).await {
-            Ok(_) => row.active_agent = Some(AgentKind::Cto),
-            Err(err) => tracing::warn!(%err, number = issue.number, "issue non envoyée à l'agent CTO"),
-        }
-    }
-    Ok(row)
-}
-
-/// Renvoie les réponses dans la session CTO, qui reprend et complète la description.
-#[tauri::command]
-pub async fn issue_answer_cto(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    number: u32,
-    answers: Vec<CtoAnswer>,
-) -> AppResult<()> {
-    engine::answer(&app, &state, number, answers).await
+    Ok(issues::to_row(&issue, me.as_deref()))
 }

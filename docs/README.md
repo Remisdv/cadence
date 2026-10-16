@@ -1,19 +1,21 @@
 # Documentation de Cadence
 
+> **Cadence 2 en cours (0.3.0).** Cadence devient un hôte entre les IA de code (Claude Code,
+> Codex CLI, OpenCode) et des plugins ; les agents sont supprimés et la gestion de projet devient
+> le plugin `gestion-projet`. Les pages ci-dessous décrivent encore la 0.2 (tag `v0.2-final`) et
+> seront réécrites avec la documentation des plugins.
+
 Cadence est un cockpit de projet logiciel adossé à GitHub : un sprint est une version, une
-version est un milestone, et des agents Claude Code proposent pendant que vous disposez. C'est
-une application de bureau (macOS, Windows, Linux).
+version est un milestone. C'est une application de bureau (macOS, Windows, Linux).
 
 ## Utiliser Cadence
 
 1. [Installation](installation.md) — télécharger, installer, mettre à jour, par système.
 2. [Premiers pas](premiers-pas.md) — connexion à GitHub, agents de code, choix du dépôt.
 3. [Issues, versions et roadmap](projet.md) — comment Cadence lit et écrit votre dépôt.
-4. [Les agents](agents.md) — CTO, CEO, développeur, déploiement, et leurs garde-fous.
-5. [Référence de `.cadence/config.toml`](configuration.md) — toutes les clés, valeurs et défauts.
-6. [Hors ligne et quota GitHub](hors-ligne-et-quota.md) — ce qui marche sans réseau, et comment
+4. [Hors ligne et quota GitHub](hors-ligne-et-quota.md) — ce qui marche sans réseau, et comment
    Cadence ménage le quota de l'API.
-7. [FAQ et dépannage](depannage.md).
+5. [FAQ et dépannage](depannage.md).
 
 ## Maintenir Cadence
 
@@ -28,5 +30,3 @@ une application de bureau (macOS, Windows, Linux).
   Le cache local n'est qu'une copie.
 - **Le jeton GitHub reste dans le trousseau du système.** Il n'est jamais écrit sur disque, ni
   montré dans l'interface.
-- **Les agents proposent, vous disposez.** Par défaut, rien n'est écrit sur GitHub sans votre
-  validation explicite ; les garde-fous restent actifs quelle que soit l'autonomie choisie.

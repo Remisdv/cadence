@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::{agent::AgentKind, UserRef};
+use super::UserRef;
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -88,9 +88,8 @@ impl IssueStatus {
 #[ts(export)]
 pub enum IssueFlag {
     IncompleteDescription,
-    CtoQuestions,
     CiFailed,
-    /// Description réécrite et validée avec l'agent CTO (label `agent/cto`).
+    /// Description préparée avec l'IA (label `agent/cto`, convention de Cadence 1).
     CtoReviewed,
 }
 
@@ -107,22 +106,11 @@ pub struct IssueRow {
     /// Labels hors conventions `type/`, `status/`, `agent/`.
     pub labels: Vec<String>,
     pub assignee: Option<UserRef>,
-    /// Estimation proposée par l'agent CTO (XS, S, M, L).
+    /// Estimation (XS, S, M, L), lue dans les labels.
     pub estimate: Option<String>,
-    /// Agent qui travaille dessus en ce moment.
-    pub active_agent: Option<AgentKind>,
     pub linked_pr: Option<u32>,
     pub flags: Vec<IssueFlag>,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct CtoQuestion {
-    pub id: String,
-    pub question: String,
-    pub answer: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -136,7 +124,6 @@ pub struct IssueDetail {
     pub html_url: String,
     pub author: Option<UserRef>,
     pub created_at: String,
-    pub questions: Vec<CtoQuestion>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
@@ -160,8 +147,6 @@ pub struct IssueCreateInput {
     pub body: Option<String>,
     pub labels: Option<Vec<String>>,
     pub assignee: Option<String>,
-    pub send_to_cto: Option<bool>,
-    pub launch_dev: Option<bool>,
 }
 
 impl IssueCreateInput {
@@ -177,14 +162,6 @@ impl IssueCreateInput {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct CtoAnswer {
-    pub question_id: String,
-    pub answer: String,
 }
 
 #[cfg(test)]

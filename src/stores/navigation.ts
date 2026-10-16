@@ -3,15 +3,13 @@
  * Chaque écran du canvas est une `View` typée : ses paramètres sont vérifiés à la compilation.
  */
 import { create } from "zustand";
-import type { AgentKind } from "@/lib/types";
 
 export type SettingsSection =
-  "accounts" | "project" | "agents" | "machine" | "appearance" | "shortcuts" | "about";
+  "accounts" | "machine" | "appearance" | "shortcuts" | "about";
 
 export type View =
   // 1 · Connexion et configuration
   | { id: "onboarding-github" }
-  | { id: "onboarding-agents" }
   // 2 · Travail quotidien
   | { id: "sprint" }
   | { id: "issues" }
@@ -20,10 +18,8 @@ export type View =
   | { id: "pull-requests" }
   | { id: "reviews"; pr?: number }
   | { id: "roadmap" }
-  // 4 · Versions et pilotage des agents
+  // 4 · Versions
   | { id: "version"; version?: string }
-  | { id: "agents" }
-  | { id: "agent"; kind: AgentKind }
   // 5 · Réglages
   | { id: "settings"; section?: SettingsSection }
   // Outils de dev

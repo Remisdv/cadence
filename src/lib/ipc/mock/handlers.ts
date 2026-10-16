@@ -15,12 +15,7 @@ import type { CommandArgs, CommandName, CommandResult } from "../commands";
 import { CommandError } from "../errors";
 import { mockBus } from "./bus";
 import * as data from "./fixtures";
-import { ceoMock } from "./ceo";
-import { ctoMock } from "./cto";
-import { devMock } from "./dev";
-import { agentsMock } from "./agents";
 import { versionReport } from "./versions";
-import { deployMock } from "./deploy";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -35,7 +30,6 @@ const state = {
   github: scenario === "onboarding" ? data.githubDisconnected : data.githubConnected,
   claudeCode: scenario === "onboarding" ? data.claudeDetected : data.claudeConnected,
   codex: data.cliNotFound,
-  engines: data.defaultEngines,
   project: scenario === "app" ? data.project : (null as ProjectState | null),
 };
 let flowTimer: number | undefined;
@@ -240,7 +234,6 @@ const handlers: Handlers = {
       releaseUrl: input.generateNotes
         ? `https://github.com/cadence-app/desktop/releases/tag/untagged-${closed}`
         : null,
-      deployRun: null,
     };
   },
 
@@ -252,21 +245,7 @@ const handlers: Handlers = {
         (!filter.issueType || i.issueType === filter.issueType) &&
         (!filter.query || i.title.toLowerCase().includes(filter.query.toLowerCase())),
     ),
-  issue_get: ({ number }) => {
-    const detail = data.issueDetail(number);
-    const item = ctoMock.item(number);
-    const questions = item?.state === "questions" ? structuredClone(item.questions) : [];
-    return {
-      ...detail,
-      body: ctoMock.appliedBody(number) ?? detail.body,
-      questions,
-      activeAgent: item?.state === "running" ? "cto" : null,
-      flags: [
-        ...detail.flags.filter((f) => f !== "cto-questions"),
-        ...(questions.length > 0 ? (["cto-questions"] as const) : []),
-      ],
-    };
-  },
+  issue_get: ({ number }) => data.issueDetail(number),
   issue_create: ({ input }) => {
     if (!input.title?.trim()) fail("issue_create", "Une issue doit avoir un titre.");
     if (!input.version?.trim())
@@ -282,25 +261,12 @@ const handlers: Handlers = {
       labels: input.labels ?? [],
       assignee: input.assignee ? data.me : null,
       estimate: null,
-      activeAgent: input.sendToCto ? "cto" : null,
       linkedPr: null,
       flags: input.body ? [] : ["incomplete-description"],
       updatedAt: new Date().toISOString(),
     };
     data.issues.unshift(row);
-    if (input.sendToCto) {
-      ctoMock.start([row.number]);
-      row.activeAgent = "cto";
-    }
     return row;
-  },
-  issue_answer_cto: ({ number, answers }) => {
-    try {
-      ctoMock.answer(number, answers);
-    } catch (e) {
-      fail("issue_answer_cto", (e as Error).message);
-    }
-    return null;
   },
 
   prs_list: ({ filter }) =>
@@ -315,133 +281,6 @@ const handlers: Handlers = {
     const detail = data.prDetailFor(number);
     if (!detail) fail("pr_detail", `PR #${number} absente du cache.`);
     return detail;
-  },
-
-  agent_engines_get: () => state.engines,
-  agent_engines_set: ({ engines }) => {
-    state.engines = engines;
-    return engines;
-  },
-  agents_overview: () =>
-    agentsMock.overview().map((a) => {
-      if (a.kind !== "ceo") return a;
-      const run = ceoMock.latest();
-      const pending = run?.proposals.filter((p) => p.state === "ready").length ?? 0;
-      const running = run?.state === "running";
-      return { ...a, pendingActions: pending, activity: running ? "running" : pending > 0 ? "waiting" : "idle" };
-    }),
-  agent_start: ({ kind, input }) => {
-    if (kind === "dev") {
-      if (!input.issues?.length) fail("agent_start", "Choisissez au moins une tâche.");
-      try {
-        return devMock.start(input.issues);
-      } catch (e) {
-        fail("agent_start", (e as Error).message);
-      }
-    }
-    if (kind === "deploy") {
-      try {
-        return deployMock.start(input.version);
-      } catch (e) {
-        fail("agent_start", (e as Error).message);
-      }
-    }
-    if (kind === "ceo") {
-      try {
-        return ceoMock.start(input.version);
-      } catch (e) {
-        fail("agent_start", (e as Error).message);
-      }
-    }
-    if (kind !== "cto") fail("agent_start", "Cet agent arrive plus tard.");
-    return ctoMock.start(input.issues?.length ? input.issues : undefined);
-  },
-  agent_control: ({ run, cmd }) => {
-    const dev = run.startsWith("dev-");
-    if (run.startsWith("ceo-")) {
-      if (cmd.cmd !== "stop") fail("agent_control", "L'agent CEO se met seulement en arrêt.");
-      ceoMock.stop();
-      return null;
-    }
-    const steps = run.startsWith("deploy-") ? deployMock : dev ? devMock : null;
-    if (cmd.cmd === "stop") (steps ?? ctoMock).stop();
-    else if (!steps && cmd.cmd !== "message") ctoMock.pause(cmd.cmd === "pause");
-    else if (!steps) fail("agent_control", "L'agent CTO ne prend pas d'intervention en cours de route.");
-    else if (cmd.cmd === "pause") steps.pause(true);
-    else if (cmd.cmd === "resume") steps.pause(false);
-    else steps.message(cmd.text);
-    return null;
-  },
-  agent_actions: () => [],
-  agent_apply: ({ run, ids }) =>
-    run.startsWith("ceo-")
-      ? ceoMock.apply(ids)
-      : run.startsWith("deploy-")
-        ? deployMock.apply(ids)
-        : run.startsWith("dev-")
-          ? devMock.push(ids)
-          : ctoMock.apply(ids),
-  agent_latest_run: ({ kind }) =>
-    structuredClone(
-      kind === "cto"
-        ? ctoMock.latest()
-        : kind === "dev"
-          ? devMock.latest()
-          : kind === "deploy"
-            ? deployMock.latest()
-            : kind === "ceo"
-              ? ceoMock.latest()
-              : null,
-    ),
-  agent_run_get: ({ run }) => {
-    const found = run.startsWith("ceo-")
-      ? ceoMock.latest()
-      : run.startsWith("deploy-")
-        ? deployMock.latest()
-        : run.startsWith("dev-")
-          ? devMock.latest()
-          : ctoMock.latest();
-    if (!found) fail("agent_run_get", "Exécution introuvable.");
-    return structuredClone(found);
-  },
-  agent_reject: ({ run, numbers }) => {
-    (run.startsWith("ceo-")
-      ? ceoMock.reject
-      : run.startsWith("deploy-")
-        ? deployMock.ignore
-        : run.startsWith("dev-")
-          ? devMock.skip
-          : ctoMock.reject)(numbers);
-    return null;
-  },
-  agent_edit_body: ({ number, body }) => {
-    ctoMock.edit(number, body);
-    return null;
-  },
-  agent_runs_list: ({ limit }) => agentsMock.runs(limit),
-  agent_edit_notes: ({ notes }) => {
-    try {
-      deployMock.editNotes(notes);
-    } catch (e) {
-      fail("agent_edit_notes", (e as Error).message);
-    }
-    return null;
-  },
-  agent_edit_proposal: ({ index, title, body }) => {
-    try {
-      ceoMock.edit(index, title, body);
-    } catch (e) {
-      fail("agent_edit_proposal", (e as Error).message);
-    }
-    return null;
-  },
-
-  settings_get: () => data.config,
-  settings_set: ({ config }) => {
-    if (!(config.versioning.sprintDays >= 1 && config.versioning.sprintDays <= 60))
-      fail("settings_set", "Un sprint dure entre 1 et 60 jours.");
-    Object.assign(data.config, config);
-    return config;
   },
 };
 

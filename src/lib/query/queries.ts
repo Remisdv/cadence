@@ -4,15 +4,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call } from "@/lib/ipc/transport";
 import type {
-  AgentControl,
-  AgentEngines,
-  AgentInput,
-  AgentKind,
   AuthProvider,
   AuthStatus,
   CliAgentInfo,
-  Config,
-  CtoAnswer,
   IssueCreateInput,
   IssueFilter,
   PrFilter,
@@ -90,20 +84,6 @@ export function useSetCliEnabled(provider: CliProvider) {
   return useMutation({
     mutationFn: (enabled: boolean) => call("cli_agent_set_enabled", { provider, enabled }),
     onSuccess: (info) => patch(cliPatch(provider, info)),
-  });
-}
-
-export const useAgentEngines = () =>
-  useQuery({ queryKey: keys.agentEngines(), queryFn: () => call("agent_engines_get") });
-
-export function useSaveAgentEngines() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (engines: AgentEngines) => call("agent_engines_set", { engines }),
-    // Optimiste : le select reflète le choix tout de suite.
-    onMutate: (engines) => qc.setQueryData(keys.agentEngines(), engines),
-    onSuccess: (engines) => qc.setQueryData(keys.agentEngines(), engines),
-    onError: () => qc.invalidateQueries({ queryKey: keys.agentEngines() }),
   });
 }
 
@@ -198,17 +178,6 @@ export function useCreateIssue() {
   });
 }
 
-export function useAnswerCto(number: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (answers: CtoAnswer[]) => call("issue_answer_cto", { number, answers }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.issue(number) });
-      void qc.invalidateQueries({ queryKey: keys.agents });
-    },
-  });
-}
-
 /* ---------- Pull requests & revues ---------- */
 
 /** PR ouvertes et récentes. `live` : relit toutes les 60 s (une requête GraphQL côté Rust). */
@@ -233,134 +202,6 @@ export const usePrDetail = (number: number | null) =>
     queryFn: () => call("pr_detail", { number: number! }),
     enabled: number !== null,
   });
-
-/* ---------- Agents ---------- */
-
-export const useAgentsOverview = () =>
-  useQuery({ queryKey: keys.agentsOverview(), queryFn: () => call("agents_overview") });
-
-export function useStartAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ kind, input }: { kind: AgentKind; input: AgentInput }) =>
-      call("agent_start", { kind, input }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Dernière exécution d'un agent (file, journal) ; rafraîchie à chaque `agent://state`. */
-export const useAgentLatestRun = (kind: AgentKind) =>
-  useQuery({ queryKey: keys.agentLatestRun(kind), queryFn: () => call("agent_latest_run", { kind }) });
-
-/** Pause (après l'étape en cours), reprise, ou intervention dans le terminal de l'agent. */
-export function useControlAgent(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (cmd: AgentControl) => call("agent_control", { run, cmd }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-export function useStopAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (run: string) => call("agent_control", { run, cmd: { cmd: "stop" } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Passe des issues de la file sans rien écrire. */
-export function useRejectItems(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (numbers: number[]) => call("agent_reject", { run, numbers }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Remplace la description proposée (« Éditer avant d'appliquer »). */
-export function useEditProposal(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ number, body }: { number: number; body: string }) =>
-      call("agent_edit_body", { run, number, body }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Journal des exécutions récentes, tous agents confondus ; rafraîchi à chaque `agent://state`. */
-export const useAgentRuns = (limit: number) =>
-  useQuery({
-    queryKey: keys.agentRunsList(limit),
-    queryFn: () => call("agent_runs_list", { limit }),
-    placeholderData: (previous) => previous,
-  });
-
-/** Même commande pour plusieurs exécutions (« Tout suspendre » de la console). */
-export function useControlAgents() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ runs, cmd }: { runs: string[]; cmd: AgentControl }) =>
-      Promise.all(runs.map((run) => call("agent_control", { run, cmd }))),
-    onSettled: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Agent déploiement : remplace les notes de version avant la publication. */
-export function useEditReleaseNotes(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (notes: string) => call("agent_edit_notes", { run, notes }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Agent CEO : titre et corps d'une proposition, avant sa création. */
-export function useEditCeoProposal(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ index, title, body }: { index: number; title: string; body: string }) =>
-      call("agent_edit_proposal", { run, index, title, body }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-export const useAgentActions = (run: string | null) =>
-  useQuery({
-    queryKey: keys.agentActions(run ?? ""),
-    queryFn: () => call("agent_actions", { run: run! }),
-    enabled: run !== null,
-  });
-
-export function useApplyActions(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (ids: string[]) => call("agent_apply", { run, ids }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.agents });
-      void qc.invalidateQueries({ queryKey: keys.issues });
-    },
-  });
-}
-
-/* ---------- Réglages ---------- */
-
-export const useSettings = () =>
-  useQuery({ queryKey: keys.settings, queryFn: () => call("settings_get") });
-
-export function useSaveSettings() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (config: Config) => call("settings_set", { config }),
-    onSuccess: (config) => {
-      qc.setQueryData(keys.settings, config);
-      // `hasConfig` du projet passe à vrai au premier enregistrement.
-      void qc.invalidateQueries({ queryKey: keys.project });
-      // L'autonomie des agents (rail, console) vient du fichier.
-      void qc.invalidateQueries({ queryKey: keys.agents });
-    },
-  });
-}
 
 /* ---------- Version de l'app et mise à jour automatique ---------- */
 

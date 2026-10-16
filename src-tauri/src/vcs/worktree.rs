@@ -9,12 +9,21 @@ use std::path::{Path, PathBuf};
 
 use secrecy::SecretString;
 
-use super::checkout::{git, git_out};
-use crate::{
-    agents::is_protected_branch,
-    domain::agent::DevFile,
-    error::{AppError, AppResult},
+use super::{
+    checkout::{git, git_out},
+    is_protected_branch,
 };
+use crate::error::{AppError, AppResult};
+
+/// Fichier touché dans un worktree (`git diff --numstat`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevFile {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+    /// Fichier créé par la tâche.
+    pub added: bool,
+}
 
 /// Identité des commits : l'utilisateur, avec son adresse noreply GitHub.
 #[derive(Debug, Clone)]

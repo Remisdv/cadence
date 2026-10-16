@@ -4,7 +4,7 @@
  * conditions de clôture. Sans paramètre, la version en cours.
  *
  * Les notes définitives sont générées par GitHub à la clôture (brouillon de release) ;
- * l'onglet « Déploiement » arrive avec l'agent déploiement.
+ * l'onglet « Déploiement » reviendra avec l'action « Préparer la release » du plugin.
  */
 import { useState, type ReactNode } from "react";
 import type { PrRow, VersionReport } from "@/lib/types";
@@ -39,9 +39,8 @@ import {
   releaseNotes,
   requiredPace,
   statusMeters,
-  withActiveAgents,
 } from "@/lib/domain/sprint";
-import { useAgentsOverview, useVersionDetail } from "@/lib/query/queries";
+import { useVersionDetail } from "@/lib/query/queries";
 import { useNavigation } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 
@@ -115,11 +114,10 @@ function Detail({
   onTab: (t: Tab) => void;
 }) {
   const navigate = useNavigation((s) => s.navigate);
-  const overview = useAgentsOverview().data ?? [];
   const { detail } = report;
   const v = detail.version;
   const shipped = v.state === "closed";
-  const issues = withActiveAgents(report.issues, overview);
+  const issues = report.issues;
   // Sans issue en cache (version ancienne), les compteurs du milestone font foi.
   const cached = issues.length > 0;
   const openCount = cached ? issues.filter((i) => i.status !== "done").length : v.openIssues;
@@ -165,12 +163,6 @@ function Detail({
           suffix: "issue / jour",
           tone: "amber",
         },
-    {
-      label: "Part écrite par agent",
-      value: formatPercent(prs.agentShare),
-      suffix: "des PR fusionnées",
-      tone: "purple",
-    },
   ];
 
   return (
@@ -243,7 +235,8 @@ function Detail({
                 {report.tag
                   ? `Le tag ${report.tag} a été posé à la clôture. `
                   : "Le tag de la version est posé à la clôture. "}
-                Builds, artefacts et tests de vérification arrivent avec l'agent déploiement.
+                Builds, artefacts et tests de vérification reviendront avec le plugin Gestion de
+                projet.
               </EmptyState>
             </Card>
           )}
@@ -460,7 +453,6 @@ function PullLine({ pr, onOpen }: { pr: PrRow; onOpen: () => void }) {
       <PrStateIcon state={pr.state} size={14} />
       <span className="w-9 shrink-0 mono text-tiny text-tx3">{pr.number}</span>
       <span className="min-w-0 grow truncate text-body-sm">{pr.title}</span>
-      {pr.agent && <Badge tone="purple">agent</Badge>}
       <Badge tone={meta.tone}>{meta.label}</Badge>
       <span className="w-[72px] shrink-0 text-right text-tiny text-tx3">
         {formatAgo(pr.updatedAt)}

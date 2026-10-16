@@ -20,12 +20,6 @@ export function useBackendEvents() {
         }
       }),
       subscribe("sync://rate-limit", setRateLimit),
-      // Toute requête d'agent (statuts, exécution, actions) suit l'état des exécutions.
-      // Le détail d'une issue montre aussi les questions de l'agent CTO et son activité.
-      subscribe("agent://state", () => {
-        void queryClient.invalidateQueries({ queryKey: keys.agents });
-        void queryClient.invalidateQueries({ queryKey: [...keys.issues, "detail"] });
-      }),
       subscribe("auth://changed", () => {
         void queryClient.invalidateQueries({ queryKey: keys.auth });
       }),

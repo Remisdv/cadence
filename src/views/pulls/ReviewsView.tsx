@@ -2,8 +2,8 @@
  * Revues à faire (maquette Reviews.dc.html) : à gauche les PR qui attendent votre revue et
  * celles qui attendent quelqu'un d'autre, à droite la PR choisie, son diff et ses fichiers.
  *
- * Lecture seule en 0.1.1 : commenter, demander des changements et approuver arrivent avec
- * l'écriture (0.1.2), le résumé par l'agent CTO avec l'agent (0.1.3).
+ * Lecture seule : commenter, demander des changements et approuver arrivent avec l'écriture ;
+ * le résumé reviendra comme action « Résumer » du plugin Gestion de projet.
  */
 import { useMemo, useState } from "react";
 import type { PrDetail, PrFile, PrRow, ReviewRow } from "@/lib/types";
@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { cn } from "@/lib/cn";
-import { agents } from "@/lib/domain/agents";
 import { formatAgo } from "@/lib/domain/format";
 import { prStateMeta } from "@/lib/domain/issues";
 import { isOpenPr, parsePatch, waitingFor } from "@/lib/domain/prs";
@@ -180,27 +179,18 @@ function ReviewCard({ row, active, onClick }: { row: ReviewRow; active: boolean;
       </div>
       <div className="mt-1.5 text-body leading-[1.45]">{pr.title}</div>
       <div className="mt-[9px] flex min-w-0 items-center gap-[9px] text-tiny text-tx3">
-        {pr.agent ? (
-          <>
-            <Icon name="bot" size={12} /> agent {pr.agent}
-            {pr.state === "draft" && " · brouillon"}
-          </>
+        <Icon name="user" size={12} />
+        {pr.author.isSelf ? "vous" : initialsOf(pr.author.name ?? pr.author.login)}
+        {" · "}
+        {pr.changesRequested > 0 ? (
+          <span className="text-amber">
+            {pr.changesRequested} changement{pr.changesRequested > 1 ? "s" : ""} demandé
+            {pr.changesRequested > 1 ? "s" : ""}
+          </span>
         ) : (
           <>
-            <Icon name="user" size={12} />
-            {pr.author.isSelf ? "vous" : initialsOf(pr.author.name ?? pr.author.login)}
-            {" · "}
-            {pr.changesRequested > 0 ? (
-              <span className="text-amber">
-                {pr.changesRequested} changement{pr.changesRequested > 1 ? "s" : ""} demandé
-                {pr.changesRequested > 1 ? "s" : ""}
-              </span>
-            ) : (
-              <>
-                <Icon name="branch" size={12} />
-                <span className="truncate mono">{pr.branch}</span>
-              </>
-            )}
+            <Icon name="branch" size={12} />
+            <span className="truncate mono">{pr.branch}</span>
           </>
         )}
       </div>
@@ -296,10 +286,6 @@ function PrReview({ detail }: { detail: PrDetail }) {
             ) : (
               <p className="mt-2.5 text-small text-tx3">Aucune description.</p>
             )}
-            <p className="mt-3 border-t border-line pt-[11px] text-caption text-tx3">
-              Le résumé et les points d'attention de l'{agents.cto.name.replace("Agent", "agent")}{" "}
-              arrivent avec la version 0.1.3.
-            </p>
           </Card>
 
           <Card className="p-3.5">

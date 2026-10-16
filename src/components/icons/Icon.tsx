@@ -177,6 +177,63 @@ const paths = {
       <path d="M3.5 9.8h17M8 3.2v3.4M16 3.2v3.4" />
     </>
   ),
+
+  // Cadence 2 (V2-Chat.dc.html, V2-Project-Issue.dc.html)
+  chat: (
+    <>
+      <path d="M4 5h16v11.5H9.5L4.5 20.5z" />
+      <path d="M8.5 9.6h7M8.5 12.8h4.5" />
+    </>
+  ),
+  board: (
+    <>
+      <rect x="3.5" y="4" width="17" height="16" rx="2.5" />
+      <path d="M9.3 4v16M14.8 4v16" />
+      <path d="M5.6 7.5h1.6M11.2 7.5h1.6M16.8 7.5h1.6M11.2 10.5h1.6" />
+    </>
+  ),
+  library: (
+    <>
+      <path d="M5 4.6A1.6 1.6 0 0 1 6.6 3H19v15H6.6A1.6 1.6 0 0 0 5 19.6z" />
+      <path d="M5 19.6A1.6 1.6 0 0 0 6.6 21.2H19v-3.2" />
+      <path d="M9 7.5h6" />
+    </>
+  ),
+  bookmark: <path d="M6.5 3.5h11v17L12 16.5l-5.5 4z" />,
+  database: (
+    <>
+      <ellipse cx="12" cy="6" rx="7.5" ry="2.7" />
+      <path d="M4.5 6v12c0 1.5 3.4 2.7 7.5 2.7s7.5-1.2 7.5-2.7V6" />
+      <path d="M4.5 12c0 1.5 3.4 2.7 7.5 2.7s7.5-1.2 7.5-2.7" />
+    </>
+  ),
+  pen: (
+    <>
+      <path d="M4.5 19.5 5.3 15.6 15.8 5.1a2.1 2.1 0 0 1 3 3L8.3 18.6z" />
+      <path d="m13.8 7.1 3 3" />
+    </>
+  ),
+  grid: <path d="M4 4h6.5v6.5H4zM13.5 4H20v6.5h-6.5zM4 13.5h6.5V20H4zM13.5 13.5H20V20h-6.5z" />,
+  wrench: (
+    <path d="M14.6 4.2a4.6 4.6 0 0 0-5.3 6.1L3.9 15.7a1.9 1.9 0 0 0 2.7 2.7l5.4-5.4a4.6 4.6 0 0 0 6.1-5.3l-2.8 2.8-2.6-.6-.6-2.6z" />
+  ),
+  bolt: <path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" />,
+  paperclip: (
+    <path d="M19.6 11.4 12 19a4.6 4.6 0 0 1-6.5-6.5l8-8a3 3 0 0 1 4.3 4.3l-7.9 7.9a1.5 1.5 0 0 1-2.1-2.1l7.2-7.2" />
+  ),
+  send: (
+    <>
+      <path d="M20.5 3.5 3.5 10.4l6.8 3.1 3.1 6.8z" />
+      <path d="m20.5 3.5-10.2 10" />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx="6" cy="12" r="1.3" {...dot} />
+      <circle cx="12" cy="12" r="1.3" {...dot} />
+      <circle cx="18" cy="12" r="1.3" {...dot} />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof paths;

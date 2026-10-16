@@ -2,7 +2,7 @@
 //!
 //! Le cache n'est jamais la vérité : une écriture part d'abord sur GitHub, puis met le
 //! cache à jour. Une table par type d'objet GitHub (etag, updated_at, JSON brut), plus
-//! `sync_state` (curseurs), `agent_runs` (journal) et `pending_actions` (file hors-ligne).
+//! `sync_state` (curseurs).
 //! Il sert l'app hors ligne et au lancement, avant la première réponse de GitHub.
 
 use std::{
@@ -20,17 +20,16 @@ use tokio::sync::Mutex;
 
 use crate::{
     api::github::{issues::RawIssue, pulls::RawPr, repos::Milestone},
-    domain::{
-        agent::{AgentKind, AgentRunDetail},
-        sync::SyncResource,
-    },
+    domain::sync::SyncResource,
     error::{AppError, AppResult},
 };
 
 /// Migrations embarquées, appliquées dans l'ordre à l'ouverture du cache.
 /// La position dans la liste est le numéro de schéma (`PRAGMA user_version`).
-pub const MIGRATIONS: &[(&str, &str)] =
-    &[("0001_init", include_str!("../../migrations/0001_init.sql"))];
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_init", include_str!("../../migrations/0001_init.sql")),
+    ("0002_drop_agents", include_str!("../../migrations/0002_drop_agents.sql")),
+];
 
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
@@ -227,51 +226,6 @@ impl RepoCache {
         Ok(())
     }
 
-    /* ---------- Journal des agents ---------- */
-
-    /// Enregistre une exécution (état, file, journal) dans `agent_runs`.
-    pub async fn save_run(&self, run: &AgentRunDetail) -> AppResult<()> {
-        let detail = serde_json::to_string(run).map_err(|e| AppError::Internal(e.to_string()))?;
-        let input = serde_json::json!({ "version": run.version, "issues": run.items.iter().map(|i| i.number).collect::<Vec<_>>() });
-        sqlx::query(
-            "INSERT OR REPLACE INTO agent_runs (id, agent, state, input, started_at, ended_at, actions)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&run.run)
-        .bind(agent_key(run.kind))
-        .bind(serde_json::to_value(run.state).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default())
-        .bind(input.to_string())
-        .bind(&run.started_at)
-        .bind(&run.ended_at)
-        .bind(detail)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn load_run(&self, id: &str) -> AppResult<Option<AgentRunDetail>> {
-        let row = sqlx::query("SELECT actions FROM agent_runs WHERE id = ?").bind(id).fetch_optional(&self.pool).await?;
-        row.map(|r| parse_raw(r.get("actions"))).transpose()
-    }
-
-    /// Dernière exécution d'un agent.
-    pub async fn latest_run(&self, kind: AgentKind) -> AppResult<Option<AgentRunDetail>> {
-        let row = sqlx::query("SELECT actions FROM agent_runs WHERE agent = ? ORDER BY started_at DESC LIMIT 1")
-            .bind(agent_key(kind))
-            .fetch_optional(&self.pool)
-            .await?;
-        row.map(|r| parse_raw(r.get("actions"))).transpose()
-    }
-
-    /// Exécutions récentes, tous agents confondus, de la plus récente à la plus ancienne.
-    pub async fn runs(&self, limit: u32) -> AppResult<Vec<AgentRunDetail>> {
-        let rows = sqlx::query("SELECT actions FROM agent_runs ORDER BY started_at DESC, id DESC LIMIT ?")
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
-        rows.iter().map(|r| parse_raw(r.get("actions"))).collect()
-    }
-
     /* ---------- Milestones ---------- */
 
     pub async fn milestones(&self) -> AppResult<Vec<Milestone>> {
@@ -334,15 +288,6 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
         tracing::info!(migration = name, "cache local migré");
     }
     Ok(())
-}
-
-fn agent_key(kind: AgentKind) -> &'static str {
-    match kind {
-        AgentKind::Cto => "cto",
-        AgentKind::Ceo => "ceo",
-        AgentKind::Dev => "dev",
-        AgentKind::Deploy => "deploy",
-    }
 }
 
 fn resource_key(resource: SyncResource) -> &'static str {
@@ -460,65 +405,6 @@ mod tests {
         assert_eq!(numbers, [3, 2]);
         assert_eq!(cache.pull(2).await.unwrap().unwrap().state, "MERGED");
         assert!(cache.pull(1).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn keeps_the_latest_agent_run() {
-        use crate::domain::agent::{Autonomy, RunState};
-        let cache = RepoCache::in_memory("me/app").await.unwrap();
-        let run = |id: &str, started: &str, state: RunState| AgentRunDetail {
-            run: id.into(),
-            kind: AgentKind::Cto,
-            state,
-            autonomy: Autonomy::ApplyAfterReview,
-            version: Some("0.1.2".into()),
-            model: None,
-            started_at: started.into(),
-            ended_at: None,
-            items: vec![],
-            log: vec![],
-            error: None,
-            tasks: vec![],
-            paused: false,
-            deploy: None,
-            proposals: vec![],
-        };
-        cache.save_run(&run("cto-1", "2026-10-14T10:00:00Z", RunState::Done)).await.unwrap();
-        cache.save_run(&run("cto-2", "2026-10-15T10:00:00Z", RunState::Running)).await.unwrap();
-        cache.save_run(&run("cto-2", "2026-10-15T10:00:00Z", RunState::Review)).await.unwrap();
-        let latest = cache.latest_run(AgentKind::Cto).await.unwrap().unwrap();
-        assert_eq!((latest.run.as_str(), latest.state), ("cto-2", RunState::Review));
-        assert!(cache.latest_run(AgentKind::Dev).await.unwrap().is_none());
-        assert_eq!(cache.load_run("cto-1").await.unwrap().unwrap().state, RunState::Done);
-    }
-
-    #[tokio::test]
-    async fn lists_recent_runs_of_every_agent() {
-        use crate::domain::agent::{Autonomy, RunState};
-        let cache = RepoCache::in_memory("me/app").await.unwrap();
-        let run = |id: &str, kind: AgentKind, started: &str| AgentRunDetail {
-            run: id.into(),
-            kind,
-            state: RunState::Done,
-            autonomy: Autonomy::ApplyAfterReview,
-            version: None,
-            model: None,
-            started_at: started.into(),
-            ended_at: None,
-            items: vec![],
-            log: vec![],
-            error: None,
-            tasks: vec![],
-            paused: false,
-            deploy: None,
-            proposals: vec![],
-        };
-        cache.save_run(&run("cto-1", AgentKind::Cto, "2026-10-13T10:00:00Z")).await.unwrap();
-        cache.save_run(&run("dev-1", AgentKind::Dev, "2026-10-15T09:00:00Z")).await.unwrap();
-        cache.save_run(&run("cto-2", AgentKind::Cto, "2026-10-14T10:00:00Z")).await.unwrap();
-        let ids = |runs: Vec<AgentRunDetail>| runs.into_iter().map(|r| r.run).collect::<Vec<_>>();
-        assert_eq!(ids(cache.runs(10).await.unwrap()), ["dev-1", "cto-2", "cto-1"]);
-        assert_eq!(ids(cache.runs(2).await.unwrap()), ["dev-1", "cto-2"]);
     }
 
     #[test]

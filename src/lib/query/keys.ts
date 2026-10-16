@@ -27,15 +27,6 @@ export const keys = {
   reviewsPending: () => ["reviews", "pending"] as const,
   prDetail: (number: number) => ["pull-requests", "detail", number] as const,
 
-  agents: ["agents"] as const,
-  agentsOverview: () => ["agents", "overview"] as const,
-  agentEngines: () => ["agents", "engines"] as const,
-  agentActions: (run: string) => ["agents", "actions", run] as const,
-  agentLatestRun: (kind: string) => ["agents", "run", kind] as const,
-  agentRunsList: (limit: number) => ["agents", "runs", limit] as const,
-
-  settings: ["settings"] as const,
-
   // Hors GitHub : version de l'app et mise à jour automatique.
   appVersion: () => ["app", "version"] as const,
   appUpdate: () => ["app", "update"] as const,

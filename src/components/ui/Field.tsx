@@ -12,7 +12,7 @@ import { Icon } from "@/components/icons/Icon";
 
 export interface LabelProps extends LabelHTMLAttributes<HTMLLabelElement> {
   required?: boolean;
-  /** Précision en ligne, ex. « facultative — l'agent CTO la complétera ». */
+  /** Précision en ligne, ex. « facultative ». */
   aside?: ReactNode;
 }
 

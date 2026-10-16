@@ -3,21 +3,18 @@ import type { DiffLine } from "@/components/domain/Diff";
 import type { PrRow, PrState } from "@/lib/types";
 
 export type PrStateFilter = "open" | "merged" | "closed" | "all";
-export type PrOriginFilter = "all" | "human" | "agent";
 
 export interface PrViewFilter {
   /** Titres de version ; `""` = sans version. Vide = toutes. */
   versions: string[];
   state: PrStateFilter;
   author: "all" | "me";
-  origin: PrOriginFilter;
 }
 
 export const defaultPrFilter: PrViewFilter = {
   versions: [],
   state: "open",
   author: "all",
-  origin: "all",
 };
 
 const statesFor: Record<PrStateFilter, PrState[]> = {
@@ -33,8 +30,7 @@ export function matchesPr(pr: PrRow, f: PrViewFilter): boolean {
   return (
     statesFor[f.state].includes(pr.state) &&
     (f.versions.length === 0 || f.versions.includes(pr.version ?? "")) &&
-    (f.author === "all" || pr.author.isSelf) &&
-    (f.origin === "all" || (f.origin === "agent") === (pr.agent !== null))
+    (f.author === "all" || pr.author.isSelf)
   );
 }
 

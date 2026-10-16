@@ -10,7 +10,6 @@ use tauri::async_runtime::JoinHandle;
 use tokio::sync::RwLock;
 
 use crate::{
-    agents::engine::AgentEngine,
     api::github,
     auth::{cli::CliTool, token_store::TokenStore},
     domain::{
@@ -43,8 +42,6 @@ pub struct AppState {
     pub cache: RwLock<Option<Arc<RepoCache>>>,
     /// Copies des dépôts lues par les agents (`<données>/repos/<owner>/<nom>`).
     pub checkout_dir: PathBuf,
-    /// Exécutions d'agents du dépôt ouvert.
-    pub agents: AgentEngine,
     /// `.cadence/config.toml` du dépôt ouvert, lu une fois puis gardé.
     pub config: RwLock<Option<LoadedConfig>>,
     /// Moyens de connexion GitHub détectés (gh, GCM), gardés pour la session.
@@ -63,7 +60,6 @@ impl AppState {
             settings: SettingsStore::load(config_dir),
             repos: RwLock::default(),
             checkout_dir: cache_dir.with_file_name("repos"),
-            agents: AgentEngine::default(),
             cache_dir,
             cache: RwLock::default(),
             config: RwLock::default(),
@@ -102,14 +98,12 @@ impl AppState {
 
     /// Oublie le dépôt ouvert ; les bases restent sur le disque pour le prochain lancement.
     pub async fn clear_project_data(&self) {
-        self.agents.clear();
         *self.cache.write().await = None;
         *self.config.write().await = None;
     }
 
     /// Déconnexion : supprime les bases de tous les dépôts (issues privées comprises).
     pub async fn delete_caches(&self) {
-        self.agents.clear();
         *self.config.write().await = None;
         if self.checkout_dir.exists()
             && let Err(err) = std::fs::remove_dir_all(&self.checkout_dir)

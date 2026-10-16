@@ -1,7 +1,6 @@
 /**
  * Nouvelle issue (maquette Issue-Create.dc.html) : titre et version obligatoires, créée sur
- * GitHub avec le milestone de la version, puis envoyée à l'agent CTO si demandé. L'agent
- * développeur arrive en 0.2.0.
+ * GitHub avec le milestone de la version.
  */
 import { useId, useState, type KeyboardEvent } from "react";
 import type { IssueType, Version } from "@/lib/types";
@@ -11,7 +10,6 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Callout } from "@/components/ui/Callout";
 import { Spinner } from "@/components/ui/Spinner";
-import { SwitchField } from "@/components/ui/Switch";
 import { Icon } from "@/components/icons/Icon";
 import { issueTypes } from "@/lib/domain/issues";
 import { compareVersions } from "@/lib/domain/versions";
@@ -19,7 +17,6 @@ import {
   useAuthStatus,
   useCreateIssue,
   useCurrentProject,
-  useSettings,
   useVersions,
 } from "@/lib/query/queries";
 
@@ -59,8 +56,6 @@ export function IssueCreateDialog({ onDone }: { onDone: () => void }) {
   const [labels, setLabels] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [assignToMe, setAssignToMe] = useState(true);
-  const sendDefault = useSettings().data?.issues.sendToCtoOnCreate ?? true;
-  const [sendToCto, setSendToCto] = useState<boolean | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
   const options = versionOptions(versions.data ?? [], project?.currentVersion ?? null);
@@ -92,7 +87,6 @@ export function IssueCreateDialog({ onDone }: { onDone: () => void }) {
         body: body.trim() || undefined,
         labels: draft.trim() ? [...labels, draft.trim()] : labels,
         assignee: assignToMe && me ? me : undefined,
-        sendToCto: sendToCto ?? sendDefault,
       },
       { onSuccess: onDone },
     );
@@ -146,13 +140,13 @@ export function IssueCreateDialog({ onDone }: { onDone: () => void }) {
           </Field>
         </div>
 
-        <Field label="Description" htmlFor={ids.body} aside="facultative — l'agent CTO la complétera">
+        <Field label="Description" htmlFor={ids.body} aside="facultative">
           <Textarea
             id={ids.body}
             rows={4}
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder="Deux lignes suffisent. L'agent CTO reprendra la main pour structurer, poser les questions manquantes et proposer des critères d'acceptation."
+            placeholder="Deux lignes suffisent : le contexte, ce qui est attendu, les critères d'acceptation."
           />
         </Field>
 
@@ -193,22 +187,6 @@ export function IssueCreateDialog({ onDone }: { onDone: () => void }) {
               <option value="none">personne</option>
             </Select>
           </Field>
-        </div>
-
-        <div className="flex flex-col gap-[11px] rounded-[10px] border border-line bg-p2 px-3.5 py-[13px]">
-          <SwitchField
-            checked={sendToCto ?? sendDefault}
-            onCheckedChange={setSendToCto}
-            label="Envoyer à l'agent CTO à la création"
-            hint="Il complétera la description et posera ses questions dans la foulée."
-          />
-          <SwitchField
-            checked={false}
-            onCheckedChange={() => {}}
-            disabled
-            label="Lancer l'agent développeur ensuite"
-            hint="Ne s'active qu'une fois la description validée (version 0.2.0)."
-          />
         </div>
 
         {create.isError && <Callout tone="danger">{create.error.message}</Callout>}

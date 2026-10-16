@@ -4,7 +4,6 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { Icon, type IconName } from "@/components/icons/Icon";
 import { Kbd } from "@/components/ui/Kbd";
 import { cn } from "@/lib/cn";
-import { agentOrder, agents } from "@/lib/domain/agents";
 import { hasModKey } from "@/lib/hooks/usePlatform";
 import { navigate, type View } from "@/stores/navigation";
 import { useUiStore, type GlobalDialog } from "@/stores/ui";
@@ -87,20 +86,6 @@ function buildCommands(
       icon: "review",
       run: go({ id: "reviews" }),
     },
-    {
-      id: "go-agents",
-      group: "Aller à",
-      label: "Console des agents",
-      icon: "bot",
-      run: go({ id: "agents" }),
-    },
-    ...agentOrder.map((kind) => ({
-      id: `go-agent-${kind}`,
-      group: "Agents",
-      label: agents[kind].name,
-      icon: "bot" as const,
-      run: go({ id: "agent", kind }),
-    })),
     {
       id: "go-settings",
       group: "Aller à",

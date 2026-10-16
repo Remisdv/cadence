@@ -1,5 +1,5 @@
 //! Préférences propres à la machine (`<config de l'app>/settings.json`) : chemins des CLI,
-//! agents désactivés, affectation des rôles. Distinct de `.cadence/config.toml`, qui est
+//! agents de code désactivés. Distinct de `.cadence/config.toml`, qui est
 //! versionné avec le dépôt. Aucun secret ici.
 
 use std::{
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     auth::cli::CliTool,
-    domain::{auth::AuthProvider, project::ProjectState, settings::AgentEngines},
+    domain::{auth::AuthProvider, project::ProjectState},
     error::AppResult,
 };
 
@@ -24,7 +24,6 @@ pub struct LocalSettings {
     pub codex_path: Option<String>,
     /// Agents de code écartés par l'utilisateur (« Déconnecter », « Ignorer »).
     pub disabled_tools: Vec<AuthProvider>,
-    pub agent_engines: AgentEngines,
     /// Dernier projet ouvert, rouvert au lancement suivant.
     pub last_project: Option<ProjectState>,
 }

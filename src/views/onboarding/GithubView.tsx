@@ -47,7 +47,7 @@ const permissions: { scope: string; description: string; required: boolean }[] =
   },
   {
     scope: "workflow",
-    description: "Déclencher et lire les runs GitHub Actions (agent déploiement)",
+    description: "Déclencher et lire les runs GitHub Actions",
     required: true,
   },
   { scope: "read:user", description: "Afficher votre avatar et votre nom", required: false },
@@ -68,11 +68,6 @@ export default function GithubView() {
   const [patOpen, setPatOpen] = useState(false);
   const [mode, setMode] = useState<"browser" | "code">("browser");
 
-  // Précharge l'étape suivante : pas d'écran de chargement au clic sur « Continuer ».
-  useEffect(() => {
-    void import("./AgentsView");
-  }, []);
-
   return (
     <OnboardingLayout
       step={0}
@@ -88,7 +83,7 @@ export default function GithubView() {
           ) : connected && github ? (
             <ConnectedCard
               github={github}
-              onContinue={() => navigate({ id: "onboarding-agents" })}
+              onContinue={() => navigate({ id: "sprint" })}
             />
           ) : mode === "browser" && auth.data ? (
             <BrowserSignInCard
@@ -132,9 +127,8 @@ export default function GithubView() {
             ))}
           </div>
           <Callout tone="info" className="mt-5">
-            Cadence n'écrit jamais sur GitHub sans votre confirmation : par défaut, chaque action
-            d'agent attend votre <span className="text-tx">validation</span>. Vous pourrez
-            l'assouplir agent par agent dans les réglages.
+            Le jeton reste dans le trousseau du système : l'interface de Cadence ne le voit
+            jamais, et chaque écriture sur GitHub passe par le cœur de l'application.
           </Callout>
         </div>
       </div>

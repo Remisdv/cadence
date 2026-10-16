@@ -10,6 +10,11 @@ use crate::domain::issue::IssueType;
 
 const MAX_SLUG_LEN: usize = 40;
 
+/// Garde-fou : rien ne pousse sur la branche par défaut.
+pub fn is_protected_branch(branch: &str, default_branch: &str) -> bool {
+    branch == default_branch || branch == "main" || branch == "master"
+}
+
 /// Nom de branche conventionné : `<type>/<num>-<slug>`, ex. `feat/142-github-device-flow`.
 pub fn branch_name(issue_type: IssueType, number: u32, title: &str) -> String {
     format!("{}/{}-{}", issue_type.slug(), number, slugify(title))
@@ -63,6 +68,13 @@ mod tests {
             branch_name(IssueType::Fix, 156, "Message d'erreur lisible quand le quota API est atteint"),
             "fix/156-message-d-erreur-lisible-quand-le-quota"
         );
+    }
+
+    #[test]
+    fn default_branch_is_protected() {
+        assert!(is_protected_branch("main", "main"));
+        assert!(is_protected_branch("develop", "develop"));
+        assert!(!is_protected_branch("feat/142-device-flow", "main"));
     }
 
     #[test]

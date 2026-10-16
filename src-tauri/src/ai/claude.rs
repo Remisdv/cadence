@@ -1,5 +1,8 @@
 //! Session Claude Code en headless : `claude -p --output-format stream-json`.
 //!
+//! Reprise de l'ancien moteur d'agents, en attente de l'adaptateur Claude Code (plan
+//! Cadence 2, § 4.2) qui normalisera ces lignes en `AiEvent`.
+//!
 //! Consignes et prompt passent par l'entrée standard (jamais en argument : un wrapper `.cmd`
 //! sous Windows casserait les retours à la ligne), les outils sont restreints à
 //! la lecture du dépôt (garde-fou « portée limitée au dépôt »), la durée est plafonnée.
@@ -13,10 +16,19 @@ use tokio::{
     sync::watch,
 };
 
-use crate::{
-    error::{AppError, AppResult},
-    events::AgentEventKind,
-};
+use crate::error::{AppError, AppResult};
+
+/// Nature d'une ligne de console (couleur de la ligne dans le terminal du chat).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsoleKind {
+    System,
+    Read,
+    Write,
+    Message,
+    Success,
+    Question,
+    Error,
+}
 
 /// Outils autorisés : lire, chercher, lister. Rien qui écrive ni n'exécute.
 pub const READ_ONLY_TOOLS: &str = "Read,Grep,Glob";
@@ -62,7 +74,7 @@ pub struct SessionOutcome {
 pub async fn run(
     opts: SessionOptions<'_>,
     mut stop: watch::Receiver<bool>,
-    mut on_line: impl FnMut(AgentEventKind, String),
+    mut on_line: impl FnMut(ConsoleKind, String),
 ) -> AppResult<SessionOutcome> {
     let mut cmd = crate::auth::cli::command(opts.cli);
     cmd.args(["-p", "--output-format", "stream-json", "--verbose"])
@@ -196,11 +208,11 @@ fn assistant_text(event: &Value) -> Option<String> {
 
 /// Traduit un événement stream-json en lignes de console (`read  src/x.rs`, texte de
 /// l'agent…). Le bloc JSON final de l'agent n'est pas affiché : l'écran le montre en clair.
-pub fn console_lines(event: &Value) -> Vec<(AgentEventKind, String)> {
+pub fn console_lines(event: &Value) -> Vec<(ConsoleKind, String)> {
     match event.get("type").and_then(Value::as_str) {
         Some("system") if event["subtype"] == "init" => {
             let model = event["model"].as_str().unwrap_or("modèle par défaut");
-            vec![(AgentEventKind::System, format!("› session démarrée ({model})"))]
+            vec![(ConsoleKind::System, format!("› session démarrée ({model})"))]
         }
         Some("assistant") => event["message"]["content"]
             .as_array()
@@ -214,7 +226,7 @@ pub fn console_lines(event: &Value) -> Vec<(AgentEventKind, String)> {
                         .lines()
                         .map(str::trim_end)
                         .filter(|l| !l.trim().is_empty())
-                        .map(|l| (AgentEventKind::Message, l.to_string()))
+                        .map(|l| (ConsoleKind::Message, l.to_string()))
                         .collect::<Vec<_>>()
                 }
                 Some("tool_use") => vec![tool_line(block)],
@@ -225,20 +237,20 @@ pub fn console_lines(event: &Value) -> Vec<(AgentEventKind, String)> {
     }
 }
 
-fn tool_line(block: &Value) -> (AgentEventKind, String) {
+fn tool_line(block: &Value) -> (ConsoleKind, String) {
     let input = &block["input"];
     let path = || short_path(input["file_path"].as_str().unwrap_or("?"));
     match block["name"].as_str().unwrap_or_default() {
-        "Read" => (AgentEventKind::Read, format!("read  {}", path())),
-        "Grep" => (AgentEventKind::Read, format!("grep  \"{}\"", input["pattern"].as_str().unwrap_or("?"))),
-        "Glob" => (AgentEventKind::Read, format!("glob  {}", input["pattern"].as_str().unwrap_or("?"))),
-        "Write" => (AgentEventKind::Write, format!("write {}", path())),
-        "Edit" | "MultiEdit" => (AgentEventKind::Write, format!("edit  {}", path())),
+        "Read" => (ConsoleKind::Read, format!("read  {}", path())),
+        "Grep" => (ConsoleKind::Read, format!("grep  \"{}\"", input["pattern"].as_str().unwrap_or("?"))),
+        "Glob" => (ConsoleKind::Read, format!("glob  {}", input["pattern"].as_str().unwrap_or("?"))),
+        "Write" => (ConsoleKind::Write, format!("write {}", path())),
+        "Edit" | "MultiEdit" => (ConsoleKind::Write, format!("edit  {}", path())),
         "Bash" => {
             let command = input["command"].as_str().unwrap_or("?").lines().next().unwrap_or("?");
-            (AgentEventKind::Read, format!("bash  {command}"))
+            (ConsoleKind::Read, format!("bash  {command}"))
         }
-        other => (AgentEventKind::System, format!("outil {other}")),
+        other => (ConsoleKind::System, format!("outil {other}")),
     }
 }
 
@@ -264,7 +276,7 @@ mod tests {
     #[test]
     fn translates_stream_events_into_console_lines() {
         let init = json!({"type": "system", "subtype": "init", "model": "claude-opus", "session_id": "s1"});
-        assert_eq!(console_lines(&init), [(AgentEventKind::System, "› session démarrée (claude-opus)".into())]);
+        assert_eq!(console_lines(&init), [(ConsoleKind::System, "› session démarrée (claude-opus)".into())]);
 
         let tools = json!({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Read", "input": {"file_path": "C:\\Users\\me\\AppData\\cadence\\repos\\me\\app\\src\\api\\client.rs"}},
@@ -272,13 +284,13 @@ mod tests {
         ]}});
         assert_eq!(
             console_lines(&tools),
-            [(AgentEventKind::Read, "read  src/api/client.rs".into()), (AgentEventKind::Read, "grep  \"ratelimit\"".into())]
+            [(ConsoleKind::Read, "read  src/api/client.rs".into()), (ConsoleKind::Read, "grep  \"ratelimit\"".into())]
         );
 
         let text = json!({"type": "assistant", "message": {"content": [
             {"type": "text", "text": "Le client ne distingue pas les 403.\n\n```json\n{\"body\": \"…\"}\n```"}
         ]}});
-        assert_eq!(console_lines(&text), [(AgentEventKind::Message, "Le client ne distingue pas les 403.".into())]);
+        assert_eq!(console_lines(&text), [(ConsoleKind::Message, "Le client ne distingue pas les 403.".into())]);
         assert!(console_lines(&json!({"type": "user"})).is_empty());
     }
 

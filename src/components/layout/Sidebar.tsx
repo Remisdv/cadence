@@ -1,17 +1,10 @@
 import type { ReactNode } from "react";
-import type { AgentActivity, AgentOverview } from "@/lib/types";
 import { Icon, type IconName } from "@/components/icons/Icon";
 import { Avatar, initialsOf } from "@/components/ui/Avatar";
-import { ProgressBar } from "@/components/ui/ProgressBar";
 import { SectionLabel } from "@/components/ui/SectionLabel";
-import { StatusDot, type DotTone } from "@/components/ui/StatusDot";
-import { AgentBadge } from "@/components/domain/AgentBadge";
+import { StatusDot } from "@/components/ui/StatusDot";
 import { cn } from "@/lib/cn";
-import { agentOrder, agents } from "@/lib/domain/agents";
-import { runLine, runProgress, runningAgents } from "@/lib/domain/agentConsole";
-import { useElapsedSeconds } from "@/lib/hooks/useElapsedSeconds";
 import {
-  useAgentsOverview,
   useAuthStatus,
   useCurrentVersion,
   useIssues,
@@ -27,8 +20,6 @@ function navKey(view: View): string {
   switch (view.id) {
     case "issue":
       return "issues";
-    case "agent":
-      return `agent-${view.kind}`;
     default:
       return view.id;
   }
@@ -44,12 +35,10 @@ export function Sidebar() {
   const issues = useIssues(version ? { version } : {}).data;
   const prs = usePullRequests({ state: ["draft", "open"] }).data;
   const reviews = usePendingReviews().data;
-  const overview = useAgentsOverview().data ?? [];
   const auth = useAuthStatus().data;
 
   const openIssues = issues?.filter((i) => i.status !== "done").length;
   const reviewsForYou = reviews?.filter((r) => r.audience === "you").length;
-  const running = runningAgents(overview);
 
   const item = (key: string, target: View, icon: IconName, label: string, count?: number) => (
     <NavItem
@@ -88,27 +77,9 @@ export function Sidebar() {
           )}
           {item("reviews", { id: "reviews" }, "review", "Revues à faire", reviewsForYou)}
         </NavGroup>
-
-        <NavGroup label="Agents">
-          {item("agents", { id: "agents" }, "bot", "Console agents")}
-          <div className="mt-0.5 ml-[9px] flex flex-col gap-0.5 border-l border-line pl-1.5">
-            {agentOrder.map((kind) => (
-              <AgentNavItem
-                key={kind}
-                agent={overview.find((a) => a.kind === kind)}
-                kind={kind}
-                active={active === `agent-${kind}`}
-                onClick={() => navigate({ id: "agent", kind })}
-              />
-            ))}
-          </div>
-        </NavGroup>
       </div>
 
       <div className="flex flex-col gap-2">
-        {running.map((agent) => (
-          <RunningAgentCard key={agent.kind} agent={agent} />
-        ))}
         <NavItem
           icon="settings"
           label="Réglages"
@@ -162,62 +133,6 @@ export function NavItem({ icon, label, count, active, onClick }: NavItemProps) {
       </span>
       <span className="grow">{label}</span>
       {count !== undefined && <span className="mono text-tiny text-tx3">{count}</span>}
-    </button>
-  );
-}
-
-const activityDot: Record<AgentActivity, DotTone> = {
-  idle: "neutral",
-  waiting: "amber",
-  running: "green",
-};
-
-function AgentNavItem({
-  kind,
-  agent,
-  active,
-  onClick,
-}: {
-  kind: AgentOverview["kind"];
-  agent?: AgentOverview;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        "flex h-[29px] w-full items-center gap-[9px] rounded-control pr-[9px] pl-2.5 text-left text-body-sm transition-colors",
-        active ? "bg-p3 text-tx" : "text-tx2 hover:bg-p2 hover:text-tx",
-      )}
-    >
-      <AgentBadge agent={kind} size={17} />
-      <span className="grow">{agents[kind].short}</span>
-      <StatusDot tone={activityDot[agent?.activity ?? "idle"]} />
-    </button>
-  );
-}
-
-function RunningAgentCard({ agent }: { agent: AgentOverview }) {
-  const run = agent.currentRun!;
-  const elapsed = useElapsedSeconds(run.startedAt);
-  const progress = runProgress(agent.kind, run)?.percent ?? 0;
-  const navigate = useNavigation((s) => s.navigate);
-
-  return (
-    <button
-      type="button"
-      onClick={() => navigate({ id: "agent", kind: agent.kind })}
-      className="rounded-field border border-green-line bg-green-d px-2.5 py-[9px] text-left"
-    >
-      <div className="flex items-center gap-[7px] text-caption font-medium text-green">
-        <StatusDot tone="green" pulse />
-        {agents[agent.kind].name} en cours
-      </div>
-      <div className="mt-1 mono text-micro text-tx2">{runLine(agent.kind, run, elapsed)}</div>
-      <ProgressBar className="mt-[7px]" value={progress} tone="green" track="green" height={3} />
     </button>
   );
 }

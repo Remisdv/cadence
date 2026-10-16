@@ -4,8 +4,4 @@ export type CloseReport = { closed: string, opened: string, movedIssues: number,
 /**
  * Brouillon de release avec les notes générées, si demandé et créé.
  */
-releaseUrl: string | null, 
-/**
- * Exécution de l'agent déploiement déclenchée, le cas échéant.
- */
-deployRun: string | null, };
+releaseUrl: string | null, };

@@ -45,11 +45,9 @@ export type { IssueType } from "./bindings/IssueType";
 export type { IssueStatus } from "./bindings/IssueStatus";
 export type { IssueFlag } from "./bindings/IssueFlag";
 export type { IssueRow } from "./bindings/IssueRow";
-export type { CtoQuestion } from "./bindings/CtoQuestion";
 export type { IssueDetail } from "./bindings/IssueDetail";
 export type { IssueFilter } from "./bindings/IssueFilter";
 export type { IssueCreateInput } from "./bindings/IssueCreateInput";
-export type { CtoAnswer } from "./bindings/CtoAnswer";
 
 // Pull requests
 export type { PrState } from "./bindings/PrState";
@@ -61,47 +59,11 @@ export type { PrDetail } from "./bindings/PrDetail";
 export type { PrFilter } from "./bindings/PrFilter";
 export type { ReviewAudience } from "./bindings/ReviewAudience";
 export type { ReviewRow } from "./bindings/ReviewRow";
-export type { AgentRunDetail } from "./bindings/AgentRunDetail";
-export type { AgentRunEntry } from "./bindings/AgentRunEntry";
-export type { AgentLogLine } from "./bindings/AgentLogLine";
-export type { CtoItem } from "./bindings/CtoItem";
-export type { CtoItemState } from "./bindings/CtoItemState";
-export type { DevTask } from "./bindings/DevTask";
-export type { DevTaskState } from "./bindings/DevTaskState";
-export type { DevFile } from "./bindings/DevFile";
-export type { DeployState } from "./bindings/DeployState";
-export type { DeployStage } from "./bindings/DeployStage";
-export type { DeployStageState } from "./bindings/DeployStageState";
-export type { DeployTest } from "./bindings/DeployTest";
-export type { DeployTestStatus } from "./bindings/DeployTestStatus";
-export type { DeployDecision } from "./bindings/DeployDecision";
-export type { DeployArtifact } from "./bindings/DeployArtifact";
-export type { CeoProposal } from "./bindings/CeoProposal";
-export type { CeoProposalState } from "./bindings/CeoProposalState";
-
-// Agents
-export type { AgentKind } from "./bindings/AgentKind";
-export type { Autonomy } from "./bindings/Autonomy";
-export type { RunState } from "./bindings/RunState";
-export type { AgentActivity } from "./bindings/AgentActivity";
-export type { RunSummary } from "./bindings/RunSummary";
-export type { AgentOverview } from "./bindings/AgentOverview";
-export type { AgentInput } from "./bindings/AgentInput";
-export type { AgentControl } from "./bindings/AgentControl";
-export type { AgentAction } from "./bindings/AgentAction";
-export type { ProposedAction } from "./bindings/ProposedAction";
-export type { ApplyFailure } from "./bindings/ApplyFailure";
-export type { ApplyReport } from "./bindings/ApplyReport";
 
 // Réglages
 export type { ProjectConfig } from "./bindings/ProjectConfig";
 export type { VersioningConfig } from "./bindings/VersioningConfig";
 export type { IssuesConfig } from "./bindings/IssuesConfig";
-export type { AgentEngine } from "./bindings/AgentEngine";
-export type { EngineChoice } from "./bindings/EngineChoice";
-export type { AgentEngines } from "./bindings/AgentEngines";
-export type { AgentConfig } from "./bindings/AgentConfig";
-export type { AgentsConfig } from "./bindings/AgentsConfig";
 export type { Config } from "./bindings/Config";
 
 // Sync
@@ -111,7 +73,4 @@ export type { RateLimitMode } from "./bindings/RateLimitMode";
 // Événements
 export type { SyncUpdated } from "./bindings/SyncUpdated";
 export type { RateLimitInfo } from "./bindings/RateLimitInfo";
-export type { AgentEvent } from "./bindings/AgentEvent";
-export type { AgentEventKind } from "./bindings/AgentEventKind";
-export type { AgentStateEvent } from "./bindings/AgentStateEvent";
 export type { AuthChanged } from "./bindings/AuthChanged";

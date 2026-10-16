@@ -3,11 +3,8 @@
  * Elles servent au mode mock et à la galerie de composants.
  */
 import type {
-  AgentEngines,
-  AgentOverview,
   AuthStatus,
   CliAgentInfo,
-  Config,
   GithubAuth,
   GithubSources,
   IssueDetail,
@@ -94,13 +91,6 @@ export const authDisconnected: AuthStatus = {
   githubSources,
   claudeCode: claudeDetected,
   codex: cliNotFound,
-};
-
-export const defaultEngines: AgentEngines = {
-  cto: { engine: "claude-code", model: "opus" },
-  ceo: { engine: "claude-code", model: "sonnet" },
-  dev: { engine: "claude-code", model: "opus" },
-  deploy: { engine: "claude-code", model: "sonnet" },
 };
 
 export const repos: Repo[] = [
@@ -255,7 +245,6 @@ const row = (r: Partial<IssueRow> & Pick<IssueRow, "number" | "title" | "status"
   labels: [],
   assignee: null,
   estimate: null,
-  activeAgent: null,
   linkedPr: null,
   flags: [],
   updatedAt: "2026-09-16T10:00:00Z",
@@ -277,7 +266,7 @@ export const issues: IssueRow[] = [
     status: "todo",
     issueType: "fix",
     labels: ["area/api"],
-    flags: ["incomplete-description", "cto-questions"],
+    flags: ["incomplete-description"],
     assignee: me,
   }),
   row({
@@ -290,7 +279,6 @@ export const issues: IssueRow[] = [
     number: 142,
     title: "Device flow OAuth GitHub + stockage trousseau",
     status: "doing",
-    activeAgent: "dev",
     linkedPr: 88,
     estimate: "M",
   }),
@@ -371,7 +359,6 @@ export function issueDetail(number: number): IssueDetail {
     htmlUrl: `https://github.com/cadence-app/desktop/issues/${base.number}`,
     author: me,
     createdAt: "2026-09-15T09:30:00Z",
-    questions: [],
   };
 }
 
@@ -381,7 +368,6 @@ const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toI
 const pr = (p: Partial<PrRow> & Pick<PrRow, "number" | "title" | "branch">): PrRow => ({
   base: "main",
   author: me,
-  agent: null,
   state: "open",
   ci: "success",
   ciPassed: 4,
@@ -406,7 +392,6 @@ export const pullRequests: PrRow[] = [
     number: 88,
     title: "feat(auth) : device flow GitHub + stockage trousseau",
     branch: "feat/142-github-device-flow",
-    agent: "dev",
     state: "draft",
     ci: "pending",
     ciPassed: 1,
@@ -547,81 +532,6 @@ export function prDetailFor(number: number): PrDetail | undefined {
     files,
   };
 }
-
-export const config: Config = {
-  project: { repo: "cadence-app/desktop", tagPrefix: "v" },
-  versioning: { scheme: "semver", confirmMajorBump: true, sprintDays: 14 },
-  issues: {
-    requireMilestone: true,
-    sendToCtoOnCreate: true,
-    template: "contexte-attendu-criteres",
-  },
-  agents: {
-    cto: {
-      engine: "claude-code",
-      model: "opus",
-      autonomy: "apply-after-review",
-      maxSessionMinutes: 30,
-    },
-    ceo: { engine: "claude-code", model: "sonnet", autonomy: "propose", maxSessionMinutes: 30 },
-    dev: {
-      engine: "claude-code",
-      model: "opus",
-      autonomy: "apply-after-review",
-      maxSessionMinutes: 30,
-    },
-    deploy: {
-      engine: "claude-code",
-      model: "sonnet",
-      autonomy: "apply-after-review",
-      maxSessionMinutes: 30,
-    },
-    worktreeRoot: "~/.cadence/wt",
-  },
-};
-
-export const agentsOverview: AgentOverview[] = [
-  {
-    kind: "cto",
-    autonomy: "apply-after-review",
-    activity: "idle",
-    pendingActions: 0,
-    currentRun: null,
-    lastRunAt: "2026-09-17T07:00:00Z",
-  },
-  {
-    kind: "ceo",
-    autonomy: "propose",
-    activity: "waiting",
-    pendingActions: 5,
-    currentRun: null,
-    lastRunAt: "2026-09-17T09:00:00Z",
-  },
-  {
-    kind: "dev",
-    autonomy: "apply-after-review",
-    activity: "running",
-    pendingActions: 0,
-    // Démarré il y a 4 min 12 s, pour que le minuteur du rail affiche une durée réaliste.
-    currentRun: {
-      run: "run-dev-142",
-      state: "running",
-      issue: 142,
-      step: 3,
-      steps: 6,
-      startedAt: new Date(Date.now() - 252_000).toISOString(),
-    },
-    lastRunAt: "2026-09-17T09:55:48Z",
-  },
-  {
-    kind: "deploy",
-    autonomy: "apply-after-review",
-    activity: "idle",
-    pendingActions: 0,
-    currentRun: null,
-    lastRunAt: "2026-09-16T18:24:00Z",
-  },
-];
 
 /** Comptes sous lesquels créer un dépôt (mock). */
 export const repoOwners: RepoOwner[] = [

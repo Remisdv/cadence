@@ -4,7 +4,7 @@
 //! Le webview ne fait que rendre et appeler des commandes : il n'a ni jeton,
 //! ni accès direct à l'API GitHub.
 
-pub mod agents;
+pub mod ai;
 pub mod api;
 pub mod auth;
 pub mod commands;
@@ -67,26 +67,9 @@ pub fn run() {
             commands::issues::issues_list,
             commands::issues::issue_get,
             commands::issues::issue_create,
-            commands::issues::issue_answer_cto,
             commands::prs::prs_list,
             commands::prs::reviews_pending,
             commands::prs::pr_detail,
-            commands::agents::agent_engines_get,
-            commands::agents::agent_engines_set,
-            commands::agents::agents_overview,
-            commands::agents::agent_start,
-            commands::agents::agent_control,
-            commands::agents::agent_actions,
-            commands::agents::agent_apply,
-            commands::agents::agent_latest_run,
-            commands::agents::agent_run_get,
-            commands::agents::agent_reject,
-            commands::agents::agent_edit_body,
-            commands::agents::agent_runs_list,
-            commands::agents::agent_edit_notes,
-            commands::agents::agent_edit_proposal,
-            commands::settings::settings_get,
-            commands::settings::settings_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -188,7 +188,6 @@ pub fn to_row(raw: &RawIssue, me: Option<&str>) -> IssueRow {
             is_self: me == Some(u.login.as_str()),
         }),
         estimate: names.iter().find_map(|n| n.strip_prefix("estimate/")).map(str::to_string),
-        active_agent: None,
         linked_pr: None,
         flags: [
             (empty_body && !closed).then_some(IssueFlag::IncompleteDescription),

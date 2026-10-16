@@ -28,12 +28,6 @@ export const registry: Registry = {
     layout: "onboarding",
     component: lazy(() => import("./onboarding/GithubView")),
   },
-  "onboarding-agents": {
-    title: "Brancher vos agents de code",
-    mockup: "Onboarding-Agents.dc.html",
-    layout: "onboarding",
-    component: lazy(() => import("./onboarding/AgentsView")),
-  },
 
   // 2 · Travail quotidien — sprint et issues
   sprint: {
@@ -75,24 +69,12 @@ export const registry: Registry = {
     component: lazy(() => import("./roadmap/RoadmapView")),
   },
 
-  // 4 · Versions et pilotage des agents
+  // 4 · Versions
   version: {
     title: "Détail d'une version",
     mockup: "Version-Detail.dc.html",
     layout: "app",
     component: lazy(() => import("./versions/VersionView")),
-  },
-  agents: {
-    title: "Console des agents",
-    mockup: "Agents-Hub.dc.html",
-    layout: "app",
-    component: lazy(() => import("./agents/AgentsConsoleView")),
-  },
-  agent: {
-    title: "Agent",
-    mockup: "Agent-CTO.dc.html · Agent-CEO · Agent-Dev · Agent-Deploy",
-    layout: "app",
-    component: lazy(() => import("./agents/AgentView")),
   },
 
   // 5 · Réglages

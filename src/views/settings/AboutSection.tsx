@@ -166,8 +166,7 @@ function UpdateCard({ update }: { update: AvailableUpdate }) {
       {install.isPending && <DownloadProgress progress={install.progress} />}
       {install.isSuccess && (
         <Callout tone="success" className="mt-3">
-          Mise à jour installée : elle prendra effet au redémarrage. Les agents en cours reprendront
-          leur file au lancement suivant.
+          Mise à jour installée : elle prendra effet au redémarrage.
         </Callout>
       )}
       {install.isError && (

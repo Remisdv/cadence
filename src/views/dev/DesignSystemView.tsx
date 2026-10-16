@@ -22,9 +22,6 @@ import { Spinner } from "@/components/ui/Spinner";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { Switch, SwitchField } from "@/components/ui/Switch";
 import { ActivityItem, Em } from "@/components/domain/ActivityItem";
-import { AgentBadge } from "@/components/domain/AgentBadge";
-import { AgentStatusCard, RunLogRow } from "@/components/domain/AgentConsole";
-import { AgentQuestion } from "@/components/domain/AgentQuestion";
 import { TypeBadge, VersionBadge } from "@/components/domain/Badges";
 import { Burndown } from "@/components/domain/Burndown";
 import { DiffViewer, TextDiff } from "@/components/domain/Diff";
@@ -52,9 +49,8 @@ import {
 import { SessionConsole } from "@/components/domain/SessionConsole";
 import { MeterList, StatCard, StatStrip } from "@/components/domain/Stats";
 import { OnboardingSteps, PipelineStages, StepTimeline } from "@/components/domain/Steps";
-import { agentOrder, devSteps } from "@/lib/domain/agents";
 import { issueTypes, statusOrder } from "@/lib/domain/issues";
-import { currentVersion, issueDetail, issues } from "@/lib/ipc/mock/fixtures";
+import { currentVersion, issues } from "@/lib/ipc/mock/fixtures";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -99,9 +95,7 @@ export default function DesignSystemView() {
   const [next, setNext] = useState("0.1.3");
   const [carry, setCarry] = useState("move");
   const [tab, setTab] = useState("scope");
-  const [answer, setAnswer] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const question = issueDetail(156).questions[0]!;
 
   return (
     <Page
@@ -262,21 +256,12 @@ export default function DesignSystemView() {
           </Row>
         </Section>
 
-        <Section title="Avatars et agents">
+        <Section title="Avatars">
           <Row>
             <Avatar initials="RL" size={19} />
             <Avatar initials="RL" size={24} />
             <Avatar initials="MB" size={21} tone="neutral" />
             <Avatar initials="CD" size={26} tone="neutral" />
-            {agentOrder.map((a) => (
-              <AgentBadge key={a} agent={a} size={17} />
-            ))}
-            {agentOrder.map((a) => (
-              <AgentBadge key={a} agent={a} size={22} />
-            ))}
-            {agentOrder.map((a) => (
-              <AgentBadge key={a} agent={a} size={32} />
-            ))}
           </Row>
         </Section>
 
@@ -309,7 +294,7 @@ export default function DesignSystemView() {
             <Field
               label="Description"
               htmlFor="ds-desc"
-              aside="facultative — l'agent CTO la complétera"
+              aside="facultative"
               className="col-span-2"
             >
               <Textarea id="ds-desc" rows={3} placeholder="Deux lignes suffisent." />
@@ -317,8 +302,8 @@ export default function DesignSystemView() {
             <SwitchField
               checked={switchOn}
               onCheckedChange={setSwitchOn}
-              label="Envoyer à l'agent CTO à la création"
-              hint="Il complétera la description et posera ses questions dans la foulée."
+              label="Générer les notes de version"
+              hint="Un brouillon de release est créé sur GitHub à la clôture."
             />
             <Row>
               <Switch checked={false} onCheckedChange={() => {}} aria-label="Exemple éteint" />
@@ -380,7 +365,7 @@ export default function DesignSystemView() {
           <div className="flex gap-3">
             <StatCard label="Portée" value="18" hint="issues · 11 fermées" />
             <StatCard label="Avancement" value="61 %" hint="+3 aujourd'hui" tone="clay" />
-            <StatCard label="PR ouvertes" value="4" hint="1 écrite par un agent" tone="green" />
+            <StatCard label="PR ouvertes" value="4" hint="2 fusionnées" tone="green" />
             <StatCard label="Revues à faire" value="3" hint="la plus ancienne : 2 j" tone="amber" />
             <StatCard label="Rythme" value="2,4" hint="issues fermées / jour" tone="blue" />
           </div>
@@ -421,14 +406,14 @@ export default function DesignSystemView() {
               />
             </Card>
             <Card className="p-[15px]">
-              <CardHeader title="Activité des agents" actions={<a href="#console">Console</a>} />
+              <CardHeader title="Activité" />
               <div className="mt-1.5">
-                <ActivityItem agent="dev" time="il y a 4 min">
+                <ActivityItem badge={<Avatar initials="RL" size={21} />} time="il y a 4 min">
                   Branche <Em mono>feat/142-github-device-flow</Em> créée, PR #88 ouverte en
                   brouillon.
                 </ActivityItem>
-                <ActivityItem agent="ceo" time="il y a 1 h">
-                  <Em>5 issues proposées</Em> pour la version 0.2.0.
+                <ActivityItem badge={<Avatar initials="MB" size={21} tone="neutral" />} time="il y a 1 h">
+                  <Em>5 issues créées</Em> pour la version 0.2.0.
                 </ActivityItem>
               </div>
             </Card>
@@ -461,13 +446,13 @@ export default function DesignSystemView() {
           <div className="grid grid-cols-3 gap-3">
             <Card className="p-6 bg-aside">
               <OnboardingSteps
-                steps={["Compte GitHub", "Agents de code", "Projet et mapping"]}
+                steps={["Bienvenue", "IA de code", "Plugins", "Configuration"]}
                 current={1}
               />
             </Card>
             <Card className="p-4">
               <StepTimeline
-                steps={devSteps.map((title, i) => ({
+                steps={["Analyse", "Branche et PR", "Implémentation", "Tests"].map((title, i) => ({
                   title,
                   state: i < 2 ? "done" : i === 2 ? "current" : "pending",
                   detail: i === 0 ? "18 fichiers lus · 3 modules identifiés" : undefined,
@@ -507,7 +492,7 @@ export default function DesignSystemView() {
           />
         </Section>
 
-        <Section title="Console d'agent et diff">
+        <Section title="Console de session et diff">
           <div className="grid grid-cols-[320px_1fr] gap-3">
             <Card className="h-[300px] overflow-hidden">
               <SessionConsole
@@ -572,50 +557,6 @@ export default function DesignSystemView() {
           />
         </Section>
 
-        <Section title="Console des agents">
-          <div className="flex gap-3">
-            <AgentStatusCard
-              agent="ceo"
-              autonomy="Propose seulement"
-              status={{ label: "5 à valider", tone: "amber", dot: true }}
-              description="Lit la roadmap et les versions livrées, puis dérive les issues probables des paliers à venir."
-              note="5 issues proposées pour 0.2.0"
-              footer="Dernier passage : il y a 1 h · cible 0.2.0"
-              highlight="amber"
-              onOpen={() => {}}
-            />
-            <AgentStatusCard
-              agent="dev"
-              autonomy="Applique après validation"
-              status={{ label: "#142 · 04:12", tone: "green", dot: true }}
-              description="Crée la branche et la PR en brouillon, puis implémente dans un worktree isolé."
-              note="PR #88 ouverte en brouillon"
-              footer="Étape 3/6 : implémentation"
-              highlight="green"
-              onOpen={() => {}}
-            />
-            <AgentStatusCard
-              agent="deploy"
-              autonomy="Applique après validation"
-              status={{ label: "inactif", tone: "neutral" }}
-              description="Publie la version, rédige la documentation et rejoue les tests d'acceptation."
-              footer="Dernier passage : hier · v0.1.1"
-              onOpen={() => {}}
-            />
-          </div>
-          <Card className="overflow-hidden">
-            <RunLogRow agent="dev" time="11:24" status={{ label: "en cours", tone: "blue" }} onClick={() => {}}>
-              Tâche #142 · étape 3/6 · PR #88
-            </RunLogRow>
-            <RunLogRow agent="ceo" time="10:31" status={{ label: "à valider", tone: "amber" }}>
-              Passage sur la version 0.2.0 · 5 à valider
-            </RunLogRow>
-            <RunLogRow agent="cto" time="hier" status={{ label: "appliqué", tone: "green" }}>
-              Passage sur la version 0.1.2 · 18/18 traitées · 12 appliquées
-            </RunLogRow>
-          </Card>
-        </Section>
-
         <Section title="Panneaux">
           <div className="grid grid-cols-2 gap-3">
             <TitledCard
@@ -666,33 +607,17 @@ export default function DesignSystemView() {
                 control={<span className="mono text-small text-clay">type/*</span>}
               />
               <SettingRow title="Version obligatoire" control={<Badge>verrouillé</Badge>} />
-              <Note>2 questions sans réponse sur #156</Note>
-              <Note tone="purple">
-                L'agent CEO reste en « Proposer » : il ne crée jamais d'issue seul.
-              </Note>
+              <Note>2 PR sans relecteur sur 0.1.2</Note>
+              <Note tone="purple">Les plugins s'installent depuis le catalogue public.</Note>
             </Card>
           </div>
           <Callout tone="info">
-            Cadence n'écrit jamais sur GitHub sans confirmation tant que l'autonomie des agents
-            reste sur <span className="text-tx">Proposer</span>.
+            L'IA travaille dans un dossier neutre de Cadence, jamais dans un de vos dépôts.
           </Callout>
           <Callout tone="warning">
             Deux PR de cette version sont encore ouvertes (<span className="mono">#84</span>,{" "}
             <span className="mono">#88</span>).
           </Callout>
-          <Card className="max-w-[420px] bg-p2 p-3.5">
-            <div className="flex items-center gap-2">
-              <AgentBadge agent="cto" size={22} />
-              <span className="grow text-body-sm font-semibold">Agent CTO</span>
-              <Badge tone="amber">2 questions</Badge>
-            </div>
-            <AgentQuestion
-              question={question}
-              value={answer}
-              onChange={setAnswer}
-              suggestion="Oui, avec l'heure exacte"
-            />
-          </Card>
         </Section>
       </div>
 
