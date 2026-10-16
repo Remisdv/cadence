@@ -113,6 +113,7 @@ mod tests {
             log: vec![],
             error: None,
             paused: false,
+            deploy: None,
         }
     }
 
