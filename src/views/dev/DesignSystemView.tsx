@@ -21,7 +21,19 @@ import { SectionLabel } from "@/components/ui/SectionLabel";
 import { Spinner } from "@/components/ui/Spinner";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { Switch, SwitchField } from "@/components/ui/Switch";
+import { RailButton, RailCategory } from "@/components/layout/AppRail";
+import {
+  ContextBarHint,
+  ContextBarItem,
+  ContextBarSection,
+  ContextBarSubItem,
+  ContextBarSubItems,
+  ConversationItem,
+} from "@/components/layout/ContextBar";
 import { ActivityItem, Em } from "@/components/domain/ActivityItem";
+import { NeutralTile, PluginTile } from "@/components/domain/PluginTile";
+import { SettingsForm } from "@/components/domain/SettingsForm";
+import { mockPlugins, mockSettingsSchema } from "@/lib/ipc/mock/plugins";
 import { TypeBadge, VersionBadge } from "@/components/domain/Badges";
 import { Burndown } from "@/components/domain/Burndown";
 import { DiffViewer, TextDiff } from "@/components/domain/Diff";
@@ -132,6 +144,101 @@ export default function DesignSystemView() {
             <p className="mono text-tiny text-tx3">Mono 11 — #156 · feat/142-github-device-flow</p>
             <SectionLabel>Section label 10.5</SectionLabel>
           </Card>
+        </Section>
+
+        <Section title="Coque Cadence 2 : rail, barre contextuelle, tuiles">
+          <div className="flex gap-3">
+            <Card className="flex w-14 flex-col items-center gap-1 py-3">
+              <RailButton label="Chat" detail="Chat global · tous les plugins" active>
+                <Icon name="chat" size={19} />
+              </RailButton>
+              <RailCategory label="Projet" />
+              <RailButton label="Gestion de projet" detail="Projet" dot="purple">
+                <PluginTile color="blue" icon="board" />
+              </RailButton>
+              <RailCategory label="Études" />
+              <RailButton label="Bibliographie" detail="Études · à configurer" dot="amber">
+                <PluginTile color="purple" icon="bookmark" />
+              </RailButton>
+              <RailButton label="Catalogue de plugins">
+                <Icon name="grid" size={18} />
+              </RailButton>
+            </Card>
+            <Card className="flex w-[220px] flex-col gap-4 px-2.5 py-3">
+              <ContextBarSection title="Pilotage">
+                <ContextBarItem icon="sprint" label="Sprint en cours" />
+                <ContextBarItem icon="issue" label="Issues" count={18} active />
+                <ContextBarItem icon="review" label="Revues à faire" count={3} countTone="clay" />
+              </ContextBarSection>
+              <ContextBarSection title="Plugins">
+                <ContextBarItem icon="grid" label="Plugins activés" />
+                <ContextBarSubItems>
+                  <ContextBarSubItem
+                    leading={<PluginTile color="blue" icon="board" size={14} />}
+                    label="Gestion de projet"
+                  />
+                  <ContextBarSubItem
+                    leading={<PluginTile color="green" icon="library" size={14} />}
+                    label="Documents"
+                    active
+                  />
+                </ContextBarSubItems>
+              </ContextBarSection>
+              <ContextBarSection title="Conversations">
+                <ConversationItem
+                  title="Ma semaine, tous projets"
+                  time="11:20"
+                  active
+                  context={
+                    <>
+                      <NeutralTile icon="chat" size={13} />
+                      <span className="truncate">Global · tous les plugins</span>
+                    </>
+                  }
+                />
+                <ConversationItem
+                  title="Préparer le sprint 0.1.3"
+                  time="10:42"
+                  context={
+                    <>
+                      <PluginTile color="blue" icon="board" size={13} />
+                      <span className="truncate">Gestion de projet · desktop</span>
+                    </>
+                  }
+                />
+              </ContextBarSection>
+              <ContextBarHint>
+                Les conversations ouvertes depuis un plugin apparaissent aussi ici.
+              </ContextBarHint>
+            </Card>
+            <div className="flex min-w-0 grow flex-col gap-3">
+              <Card className="flex flex-wrap items-center gap-2.5 p-4">
+                {mockPlugins.map((p) => (
+                  <PluginTile key={p.id} color={p.color} icon={p.railIcon} />
+                ))}
+                {mockPlugins.map((p) => (
+                  <PluginTile key={p.id} color={p.color} icon={p.railIcon} size={22} />
+                ))}
+                {mockPlugins.map((p) => (
+                  <PluginTile key={p.id} color={p.color} icon={p.railIcon} size={18} />
+                ))}
+                <NeutralTile icon="chat" />
+                <NeutralTile icon="settings" />
+              </Card>
+              <Card className="p-4">
+                <SettingsForm
+                  settings={{
+                    plugin: "gestion-projet",
+                    schema: mockSettingsSchema["gestion-projet"]!,
+                    value: { sprintDays: 14, tagPrefix: "v", confirmMajorBump: true },
+                    errors: [],
+                  }}
+                  errors={[{ field: "sprintDays", message: "Au plus 60." }]}
+                  onSave={() => {}}
+                />
+              </Card>
+            </div>
+          </div>
         </Section>
 
         <Section title={`Icônes (${iconNames.length})`}>

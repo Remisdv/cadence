@@ -157,7 +157,11 @@ export const mockSettingsSchema: Record<string, PluginSettingsView["schema"]> = 
         default: 14,
       },
       tagPrefix: { type: "string", title: "Préfixe des tags", maxLength: 10, default: "v" },
-      confirmMajorBump: { type: "boolean", title: "Confirmer un saut de version majeure", default: true },
+      confirmMajorBump: {
+        type: "boolean",
+        title: "Confirmer un saut de version majeure",
+        default: true,
+      },
     },
   },
 };

@@ -4,12 +4,7 @@
  */
 import type { IconName } from "@/components/icons/Icon";
 import { iconNames } from "@/components/icons/Icon";
-import type {
-  InstalledPluginView,
-  PluginCategory,
-  PluginColor,
-  PluginViewInfo,
-} from "@/lib/types";
+import type { InstalledPluginView, PluginCategory, PluginColor, PluginViewInfo } from "@/lib/types";
 
 /** Liste fixe du manifeste (`category`), dans l'ordre du rail. */
 export const pluginCategories: Record<PluginCategory, { label: string }> = {
@@ -52,7 +47,9 @@ export function railGroups(plugins: InstalledPluginView[]): RailGroup[] {
     .map((category) => ({
       category,
       label: pluginCategories[category].label,
-      plugins: plugins.filter((p) => p.category === category && p.enabled && p.status !== "invalid"),
+      plugins: plugins.filter(
+        (p) => p.category === category && p.enabled && p.status !== "invalid",
+      ),
     }))
     .filter((g) => g.plugins.length > 0);
 }
@@ -77,9 +74,7 @@ export function viewSections(views: PluginViewInfo[]): ViewSection[] {
 
 /** Vue ouverte par un clic sur la tuile : l'accueil déclaré, sinon la première vue visible. */
 export function homeView(plugin: InstalledPluginView): string | null {
-  return (
-    plugin.views.find((v) => v.home)?.id ?? plugin.views.find((v) => !v.hidden)?.id ?? null
-  );
+  return plugin.views.find((v) => v.home)?.id ?? plugin.views.find((v) => !v.hidden)?.id ?? null;
 }
 
 /**
@@ -103,4 +98,83 @@ export function moveInRail(
   const j = order.indexOf(target.id);
   [order[i], order[j]] = [order[j]!, order[i]!];
   return order;
+}
+
+/* ---------- Réglages d'un plugin : champs tirés de son JSON Schema ---------- */
+
+export type SettingKind = "integer" | "number" | "string" | "multiline" | "boolean" | "enum";
+
+export interface SettingField {
+  key: string;
+  title: string;
+  description: string | null;
+  kind: SettingKind;
+  options: string[];
+  required: boolean;
+  min: number | null;
+  max: number | null;
+}
+
+type SchemaProperty = {
+  type?: string;
+  title?: string;
+  description?: string;
+  enum?: unknown[];
+  format?: string;
+  minimum?: number;
+  maximum?: number;
+  "x-cadence-order"?: number;
+};
+
+/**
+ * Champs du formulaire de réglages (sous-ensemble du plan § 3.6) : entiers et nombres,
+ * textes (`format: "multiline"`), booléens, listes de choix. Les types hors sous-ensemble
+ * (listes, objets) ne sont pas rendus ; l'ordre suit `x-cadence-order`, puis le schéma.
+ */
+export function schemaFields(schema: Record<string, unknown> | null): SettingField[] {
+  const props = (schema?.properties ?? {}) as Record<string, SchemaProperty>;
+  const required = new Set((schema?.required ?? []) as string[]);
+  return Object.entries(props)
+    .map(([key, p], index) => ({ key, p, index }))
+    .sort(
+      (a, b) =>
+        (a.p["x-cadence-order"] ?? Infinity) - (b.p["x-cadence-order"] ?? Infinity) ||
+        a.index - b.index,
+    )
+    .flatMap(({ key, p }): SettingField[] => {
+      const kind: SettingKind | null = p.enum
+        ? "enum"
+        : p.type === "integer" || p.type === "number" || p.type === "boolean"
+          ? p.type
+          : p.type === "string"
+            ? p.format === "multiline"
+              ? "multiline"
+              : "string"
+            : null;
+      if (!kind) return [];
+      return [
+        {
+          key,
+          title: p.title ?? key,
+          description: p.description ?? null,
+          kind,
+          options: (p.enum ?? []).map(String),
+          required: required.has(key),
+          min: p.minimum ?? null,
+          max: p.maximum ?? null,
+        },
+      ];
+    });
+}
+
+/** Valeur saisie → valeur JSON du réglage (`undefined` : champ vidé, réglage retiré). */
+export function parseSettingInput(field: SettingField, raw: string | boolean): unknown {
+  if (field.kind === "boolean") return Boolean(raw);
+  const text = String(raw);
+  if (field.kind === "integer" || field.kind === "number") {
+    if (text.trim() === "") return undefined;
+    const n = Number(text.replace(",", "."));
+    return Number.isNaN(n) ? text : n;
+  }
+  return text;
 }

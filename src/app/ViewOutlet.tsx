@@ -1,21 +1,31 @@
 import { Suspense, type ComponentType } from "react";
-import { Sidebar } from "@/components/layout/Sidebar";
+import { AppRail } from "@/components/layout/AppRail";
 import { EmptyState, LoadingState } from "@/components/layout/EmptyState";
 import { Page } from "@/components/layout/Page";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { TooltipProvider } from "@/components/ui/Tooltip";
 import { useCurrentProject } from "@/lib/query/queries";
 import { useNavigation, type View, type ViewId } from "@/stores/navigation";
-import { useUiStore } from "@/stores/ui";
 import { registry } from "@/views/registry";
 
-/** Écrans utilisables sans dépôt choisi. */
-const projectFree: ViewId[] = ["settings", "design-system"];
+/** Écrans de Cadence 1 qui lisent le dépôt ouvert (futur plugin gestion-projet). */
+const projectViews: ViewId[] = [
+  "sprint",
+  "issues",
+  "issue",
+  "pull-requests",
+  "reviews",
+  "roadmap",
+  "version",
+];
 
-/** Rend la vue courante dans son cadre (rail latéral pour l'app, plein écran pour l'onboarding). */
+/**
+ * Rend la vue courante dans son cadre : coque de Cadence 2 (rail 56px, puis la barre
+ * contextuelle et le contenu posés par l'écran), ou plein écran pour l'onboarding.
+ */
 export function ViewOutlet() {
   const view = useNavigation((s) => s.view);
-  const project = useCurrentProject();
   const def = registry[view.id];
   const Component = def.component as ComponentType<{ view: View }>;
 
@@ -27,39 +37,57 @@ export function ViewOutlet() {
     );
   }
 
-  const needsProject = !projectFree.includes(view.id) && project.isSuccess && !project.data;
-
   return (
-    <div className="flex h-full">
-      <Sidebar />
-      {needsProject ? (
-        <NoProject title={def.title} />
-      ) : (
-        <Suspense fallback={<LoadingState />}>
-          {/* La clé remonte l'écran quand ses paramètres changent (ex. une autre issue). */}
-          <Component key={JSON.stringify(view)} view={view} />
-        </Suspense>
-      )}
-    </div>
+    <TooltipProvider delayDuration={250}>
+      <div className="flex h-full">
+        <AppRail />
+        {projectViews.includes(view.id) ? (
+          <ProjectView view={view} Component={Component} title={def.title} />
+        ) : (
+          <Suspense fallback={<LoadingState />}>
+            {/* La clé remonte l'écran quand ses paramètres changent (ex. une autre vue). */}
+            <Component key={JSON.stringify(view)} view={view} />
+          </Suspense>
+        )}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function ProjectView({
+  view,
+  Component,
+  title,
+}: {
+  view: View;
+  Component: ComponentType<{ view: View }>;
+  title: string;
+}) {
+  const project = useCurrentProject();
+  if (project.isSuccess && !project.data) return <NoProject title={title} />;
+  return (
+    <Suspense fallback={<LoadingState />}>
+      <Component key={JSON.stringify(view)} view={view} />
+    </Suspense>
   );
 }
 
 function NoProject({ title }: { title: string }) {
-  const openPicker = useUiStore((s) => s.setProjectPickerOpen);
+  const navigate = useNavigation((s) => s.navigate);
   return (
     <Page title={title} search={false}>
       <Card className="h-full">
         <EmptyState
           icon="folder"
-          title="Choisissez un dépôt"
+          title="Aucun dépôt ouvert"
           action={
-            <Button variant="primary" icon="folder" onClick={() => openPicker(true)}>
-              Choisir un dépôt
+            <Button variant="primary" icon="grid" onClick={() => navigate({ id: "catalog" })}>
+              Ouvrir le catalogue
             </Button>
           }
         >
-          Cadence travaille sur un dépôt à la fois, n'importe lequel de vos dépôts GitHub. Il se
-          choisit dans la barre latérale et reste ouvert au prochain lancement.
+          Les écrans de gestion de projet de Cadence 1 deviennent le plugin Gestion de projet, qui
+          choisira ses dépôts avec le service Dépôts.
         </EmptyState>
       </Card>
     </Page>

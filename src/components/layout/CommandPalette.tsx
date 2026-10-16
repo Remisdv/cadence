@@ -4,7 +4,10 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { Icon, type IconName } from "@/components/icons/Icon";
 import { Kbd } from "@/components/ui/Kbd";
 import { cn } from "@/lib/cn";
+import { homeView, kitIcon } from "@/lib/domain/plugins";
 import { hasModKey } from "@/lib/hooks/usePlatform";
+import { usePlugins } from "@/lib/query/queries";
+import type { InstalledPluginView } from "@/lib/types";
 import { navigate, type View } from "@/stores/navigation";
 import { useUiStore, type GlobalDialog } from "@/stores/ui";
 
@@ -18,73 +21,41 @@ interface PaletteCommand {
 }
 
 function buildCommands(
+  plugins: InstalledPluginView[],
   openDialog: (d: Exclude<GlobalDialog, null>) => void,
-  openPicker: () => void,
 ): PaletteCommand[] {
   const go = (view: View) => () => navigate(view);
   const commands: PaletteCommand[] = [
+    { id: "go-chat", group: "Aller à", label: "Chat", icon: "chat", run: go({ id: "chat" }) },
+    ...plugins
+      .filter((p) => p.enabled && p.status !== "invalid")
+      .flatMap((p) => {
+        const home = homeView(p);
+        return home
+          ? [
+              {
+                id: `go-plugin-${p.id}`,
+                group: "Plugins",
+                label: p.name,
+                icon: kitIcon(p.railIcon),
+                run: go({ id: "plugin", plugin: p.id, view: home }),
+              },
+            ]
+          : [];
+      }),
     {
-      id: "switch-repo",
-      group: "Actions",
-      label: "Changer de dépôt…",
-      icon: "folder",
-      run: openPicker,
-    },
-    {
-      id: "new-issue",
-      group: "Actions",
-      label: "Nouvelle issue",
-      icon: "plus",
-      run: () => openDialog("issue-create"),
-    },
-    {
-      id: "close-version",
-      group: "Actions",
-      label: "Clôturer la version en cours",
-      icon: "tag",
-      run: () => openDialog("version-close"),
-    },
-    {
-      id: "go-sprint",
+      id: "go-catalog",
       group: "Aller à",
-      label: "Sprint en cours",
-      icon: "sprint",
-      run: go({ id: "sprint" }),
+      label: "Catalogue de plugins",
+      icon: "grid",
+      run: go({ id: "catalog" }),
     },
     {
-      id: "go-roadmap",
+      id: "go-plugins-settings",
       group: "Aller à",
-      label: "Roadmap",
-      icon: "roadmap",
-      run: go({ id: "roadmap" }),
-    },
-    {
-      id: "go-versions",
-      group: "Aller à",
-      label: "Versions",
-      icon: "tag",
-      run: go({ id: "version" }),
-    },
-    {
-      id: "go-issues",
-      group: "Aller à",
-      label: "Issues",
-      icon: "issue",
-      run: go({ id: "issues" }),
-    },
-    {
-      id: "go-prs",
-      group: "Aller à",
-      label: "Pull requests",
-      icon: "pullRequest",
-      run: go({ id: "pull-requests" }),
-    },
-    {
-      id: "go-reviews",
-      group: "Aller à",
-      label: "Revues à faire",
-      icon: "review",
-      run: go({ id: "reviews" }),
+      label: "Plugins activés",
+      icon: "grid",
+      run: go({ id: "settings", section: "plugins" }),
     },
     {
       id: "go-settings",
@@ -103,10 +74,46 @@ function buildCommands(
         icon: "layers",
         run: go({ id: "design-system" }),
       },
+      // Écrans de Cadence 1, gardés jusqu'au plugin gestion-projet.
       {
-        id: "dev-onboarding",
-        group: "Développement",
-        label: "Revoir l'onboarding",
+        id: "v1-sprint",
+        group: "Cadence 1",
+        label: "Sprint en cours",
+        icon: "sprint",
+        run: go({ id: "sprint" }),
+      },
+      {
+        id: "v1-issues",
+        group: "Cadence 1",
+        label: "Issues",
+        icon: "issue",
+        run: go({ id: "issues" }),
+      },
+      {
+        id: "v1-prs",
+        group: "Cadence 1",
+        label: "Pull requests",
+        icon: "pullRequest",
+        run: go({ id: "pull-requests" }),
+      },
+      {
+        id: "v1-roadmap",
+        group: "Cadence 1",
+        label: "Roadmap",
+        icon: "roadmap",
+        run: go({ id: "roadmap" }),
+      },
+      {
+        id: "v1-new-issue",
+        group: "Cadence 1",
+        label: "Nouvelle issue",
+        icon: "plus",
+        run: () => openDialog("issue-create"),
+      },
+      {
+        id: "v1-onboarding",
+        group: "Cadence 1",
+        label: "Connexion GitHub",
         icon: "github",
         run: go({ id: "onboarding-github" }),
       },
@@ -132,9 +139,8 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setOpen]);
 
-  const setPickerOpen = useUiStore((s) => s.setProjectPickerOpen);
-  // Laisse la palette se fermer avant d'ouvrir le sélecteur (focus).
-  const commands = buildCommands(openDialog, () => setTimeout(() => setPickerOpen(true), 0));
+  const plugins = usePlugins().data ?? [];
+  const commands = buildCommands(plugins, openDialog);
   const groups = [...new Set(commands.map((c) => c.group))];
 
   const run = (command: PaletteCommand) => {

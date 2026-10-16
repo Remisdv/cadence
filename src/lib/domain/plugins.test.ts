@@ -34,7 +34,10 @@ describe("viewSections", () => {
 describe("homeView", () => {
   it("prend la vue d'accueil, sinon la première vue visible", () => {
     expect(homeView(byId("gestion-projet"))).toBe("sprint");
-    const noHome = { ...byId("documents"), views: byId("documents").views.map((v) => ({ ...v, home: false })) };
+    const noHome = {
+      ...byId("documents"),
+      views: byId("documents").views.map((v) => ({ ...v, home: false })),
+    };
     expect(homeView(noHome)).toBe("bibliotheque");
     expect(homeView({ ...byId("journal"), views: [] })).toBeNull();
   });
@@ -67,11 +70,48 @@ describe("validateMockSettings", () => {
   it("applique le même sous-ensemble de schéma que le cœur", () => {
     const schema = mockSettingsSchema["gestion-projet"]!;
     expect(validateMockSettings(schema, { sprintDays: 7, tagPrefix: "v" })).toEqual([]);
-    expect(validateMockSettings(schema, { sprintDays: 99, autre: 1 }).map((e) => e.field)).toEqual(
-      ["autre", "sprintDays"],
-    );
+    expect(validateMockSettings(schema, { sprintDays: 99, autre: 1 }).map((e) => e.field)).toEqual([
+      "autre",
+      "sprintDays",
+    ]);
     expect(validateMockSettings(schema, {})).toEqual([
       { field: "sprintDays", message: "Réglage obligatoire." },
     ]);
+  });
+});
+
+describe("schemaFields", () => {
+  it("rend les types du sous-ensemble, dans l'ordre demandé", async () => {
+    const { schemaFields, parseSettingInput } = await import("./plugins");
+    const fields = schemaFields({
+      type: "object",
+      required: ["sprintDays"],
+      properties: {
+        notes: { type: "string", format: "multiline", "x-cadence-order": 3 },
+        sprintDays: {
+          type: "integer",
+          title: "Durée",
+          minimum: 1,
+          maximum: 60,
+          "x-cadence-order": 1,
+        },
+        scheme: { type: "string", enum: ["semver", "calver"] },
+        auto: { type: "boolean" },
+        labels: { type: "array", items: { type: "string" } },
+      },
+    });
+    expect(fields.map((f) => [f.key, f.kind])).toEqual([
+      ["sprintDays", "integer"],
+      ["notes", "multiline"],
+      ["scheme", "enum"],
+      ["auto", "boolean"],
+    ]);
+    expect(fields[0]).toMatchObject({ title: "Durée", required: true, min: 1, max: 60 });
+    expect(fields[2]!.options).toEqual(["semver", "calver"]);
+    expect(schemaFields(null)).toEqual([]);
+    expect(parseSettingInput(fields[0]!, "7")).toBe(7);
+    expect(parseSettingInput(fields[0]!, "")).toBeUndefined();
+    expect(parseSettingInput(fields[0]!, "deux")).toBe("deux");
+    expect(parseSettingInput(fields[3]!, true)).toBe(true);
   });
 });

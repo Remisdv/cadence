@@ -4,24 +4,24 @@
  */
 import { create } from "zustand";
 
-export type SettingsSection =
-  "accounts" | "machine" | "appearance" | "shortcuts" | "about";
+/** Sections des réglages (V2-Settings.dc.html) ; `plugin` ouvre les réglages d'un plugin. */
+export type SettingsSection = "general" | "ai" | "repos" | "plugins" | "plugin" | "about";
 
 export type View =
-  // 1 · Connexion et configuration
+  // Cadence 2 : coque (rail, barre contextuelle, contenu)
+  | { id: "chat"; session?: string }
+  | { id: "catalog"; plugin?: string }
+  | { id: "plugin"; plugin: string; view: string; params?: Record<string, string> }
+  | { id: "settings"; section?: SettingsSection; plugin?: string }
+  // Cadence 1, écrans de gestion de projet (futur plugin gestion-projet)
   | { id: "onboarding-github" }
-  // 2 · Travail quotidien
   | { id: "sprint" }
   | { id: "issues" }
   | { id: "issue"; number: number }
-  // 3 · Code, revues et planification
   | { id: "pull-requests" }
   | { id: "reviews"; pr?: number }
   | { id: "roadmap" }
-  // 4 · Versions
   | { id: "version"; version?: string }
-  // 5 · Réglages
-  | { id: "settings"; section?: SettingsSection }
   // Outils de dev
   | { id: "design-system" };
 
@@ -39,7 +39,7 @@ interface NavigationState {
 const MAX_HISTORY = 50;
 
 export const useNavigation = create<NavigationState>((set) => ({
-  view: { id: "sprint" },
+  view: { id: "chat" },
   history: [],
   navigate: (view) => set((s) => ({ view, history: [...s.history, s.view].slice(-MAX_HISTORY) })),
   replace: (view) => set({ view }),
@@ -50,5 +50,5 @@ export const useNavigation = create<NavigationState>((set) => ({
     }),
 }));
 
-/** Raccourci hors composant : `navigate({ id: "issue", number: 156 })`. */
+/** Raccourci hors composant : `navigate({ id: "plugin", plugin: "documents", view: "bibliotheque" })`. */
 export const navigate = (view: View) => useNavigation.getState().navigate(view);

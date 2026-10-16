@@ -1,12 +1,18 @@
 # Cadence
 
-Cockpit de projet logiciel adossé à GitHub : un sprint est une version, une version est un milestone,
-et les agents proposent pendant que vous disposez. Application de bureau Tauri 2.
+Application de bureau Tauri 2. **Cadence 2 (0.3.0, branche `cadence-2`)** : un hôte entre les IA
+de code (Claude Code, Codex CLI, OpenCode) et des plugins installés depuis le catalogue public
+`RemiSDV/cadence-plugins` ; la gestion de projet GitHub de Cadence 1 (tag `v0.2-final`) devient le
+plugin `gestion-projet`, les agents deviennent des boutons liés à des skills.
 
-- Maquettes : canvas « Cadence — Écrans de l'app » (19 écrans)
-- Plan technique : doc « Cadence — Plan technique d'implémentation »
-- **Documentation utilisateur et mainteneur : [`docs/`](docs/README.md)** (installation, premiers
-  pas, agents, référence de `.cadence/config.toml`, dépannage, processus de release)
+- Maquettes : canvas « Cadence — Écrans de l'app » (page « Cadence 2 » : `V2-*.dc.html`)
+- Plan technique : doc « Cadence 2 — Plan technique (hôte IA + plugins) », révision 1.1
+- **Documentation utilisateur et mainteneur : [`docs/`](docs/README.md)** (encore celle de la 0.2)
+
+Socle en place : coque à trois colonnes (rail 56px groupé par catégorie, barre contextuelle
+220px, contenu), réglages de la machine v2 (`settings.json`, migré depuis la v1), registre des
+plugins installés (activation globale, ordre du rail, réglages et secrets globaux), trousseau
+générique. Les écrans GitHub de Cadence 1 restent compilés jusqu'au plugin `gestion-projet`.
 
 ## Démarrer
 
@@ -70,11 +76,14 @@ d'autorisation intercepté soit utilisable. Le jeton obtenu est rangé dans le t
 
 En mode navigateur, l'URL pilote le scénario mocké :
 
-- `?scenario=onboarding` : compte GitHub non connecté ; `?scenario=no-project` : aucun dépôt choisi (sélecteur ouvert) ;
+- par défaut : cinq plugins factices dans le rail (Gestion de projet, Documents, Bibliographie,
+  Explorateur SQL, Journal de bord) et un Minuteur désactivé ; `?scenario=empty` : aucun plugin ;
+- `?scenario=onboarding` : onboarding à faire, compte GitHub non connecté ; `?scenario=no-project` : aucun dépôt choisi ;
 - `&flow=denied|expired|config` : issue du device flow simulé (par défaut, autorisé après 6 s) ;
 - `&cli=fail` : session de test de Claude Code en échec ;
 - `&update=available|fail` : mise à jour de l'app simulée (Réglages › À propos) ;
-- `?view=<id>` force un écran (`?view=design-system`, `?view=issue&number=156`, `?view=agent&kind=dev`).
+- `?view=<id>` force un écran (`?view=settings&section=plugins`, `?view=catalog`,
+  `?view=plugin&plugin=documents&page=flashcards`, `?view=design-system`, `?view=issue&number=156`).
 
 La **galerie de composants** (`?view=design-system`, ou `Ctrl+K` → « Galerie de composants ») montre
 toutes les briques du design system avec les données des maquettes.
@@ -89,8 +98,8 @@ cadence/
 │  ├─ components/
 │  │  ├─ icons/                # les 34 icônes des maquettes (Icon name="…")
 │  │  ├─ ui/                   # primitives du design system (Button, Badge, Field, Dialog…)
-│  │  ├─ domain/               # briques métier (IssueCard, AgentBadge, StepTimeline, DiffViewer…)
-│  │  └─ layout/               # Sidebar, Page/TopBar, Rail, OnboardingLayout, CommandPalette
+│  │  ├─ domain/               # briques métier (PluginTile, SettingsForm, IssueCard, DiffViewer…)
+│  │  └─ layout/               # AppRail, ContextBar/PluginBar/ChatBar, Page/TopBar, CommandPalette
 │  ├─ stores/                  # Zustand : navigation (vue courante), état d'interface
 │  ├─ lib/
 │  │  ├─ bindings/             # GÉNÉRÉ par ts-rs — ne pas éditer
@@ -105,7 +114,10 @@ cadence/
    │  ├─ domain/               # types du contrat (exportés en TS)
    │  ├─ api/github/           # client GitHub, régimes de quota
    │  ├─ auth/                 # device flow, trousseau, détection des CLI d'agents
-   │  ├─ agents/               # runner, cycle de vie, garde-fous
+   │  ├─ app_settings/         # settings.json v2 (IA, plugins de dev…) et migration v1 → v2
+   │  ├─ plugins/              # plugin.toml, registre installed.json, réglages globaux
+   │  ├─ secrets.rs            # trousseau générique (plugin/<id>/<secret>)
+   │  ├─ ai/                   # IA de code (lecture stream-json de Claude Code)
    │  ├─ store/  sync/  vcs/   # cache SQLite, moteur de sync, git/worktrees
    │  ├─ events.rs             # événements back → front
    │  └─ error.rs              # AppError → { kind, message }

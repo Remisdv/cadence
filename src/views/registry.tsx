@@ -1,7 +1,9 @@
 /**
  * Registre des écrans : une entrée par vue du canvas « Cadence — Écrans de l'app ».
  *
- * `layout` décide du cadre : `app` = rail latéral + écran, `onboarding` = plein écran.
+ * `layout` décide du cadre : `app` = rail de Cadence 2 + écran (l'écran pose lui-même sa barre
+ * contextuelle : conversations, barre du plugin, sections des réglages), `onboarding` = plein
+ * écran.
  * Les vues sont chargées à la demande (`lazy`) pour garder un démarrage rapide ; un écran pas
  * encore fait passe par `placeholder()` (`./Placeholder`).
  */
@@ -21,7 +23,33 @@ export interface ViewDef<K extends ViewId> {
 type Registry = { [K in ViewId]: ViewDef<K> };
 
 export const registry: Registry = {
-  // 1 · Connexion et configuration
+  // Cadence 2 : coque
+  chat: {
+    title: "Chat",
+    mockup: "V2-Chat.dc.html",
+    layout: "app",
+    component: lazy(() => import("./chat/ChatView")),
+  },
+  plugin: {
+    title: "Vue d'un plugin",
+    mockup: "V2-Project-Issue.dc.html (barre du plugin)",
+    layout: "app",
+    component: lazy(() => import("./plugin/PluginView")),
+  },
+  catalog: {
+    title: "Catalogue de plugins",
+    mockup: "V2-Catalog.dc.html",
+    layout: "app",
+    component: lazy(() => import("./catalog/CatalogView")),
+  },
+  settings: {
+    title: "Réglages",
+    mockup: "V2-Settings.dc.html",
+    layout: "app",
+    component: lazy(() => import("./settings/SettingsView")),
+  },
+
+  // Cadence 1 : écrans de gestion de projet, compilés jusqu'au plugin gestion-projet
   "onboarding-github": {
     title: "Connecter votre compte GitHub",
     mockup: "Onboarding-Welcome.dc.html",
@@ -77,14 +105,6 @@ export const registry: Registry = {
     component: lazy(() => import("./versions/VersionView")),
   },
 
-  // 5 · Réglages
-  settings: {
-    title: "Réglages",
-    mockup: "Settings.dc.html",
-    layout: "app",
-    component: lazy(() => import("./settings/SettingsView")),
-  },
-
   // Outils de dev
   "design-system": {
     title: "Galerie de composants",
@@ -95,3 +115,11 @@ export const registry: Registry = {
 };
 
 export const isViewId = (id: string): id is ViewId => id in registry;
+
+/** Précharge les écrans de la coque, pour que le premier clic du rail n'attende pas. */
+export function preloadShellViews() {
+  void import("./chat/ChatView");
+  void import("./plugin/PluginView");
+  void import("./catalog/CatalogView");
+  void import("./settings/SettingsView");
+}
