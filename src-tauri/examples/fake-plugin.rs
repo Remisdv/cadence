@@ -1,0 +1,145 @@
+//! `fake-plugin` : serveur MCP stdio de test pour l'hôte des plugins (plan § 11).
+//!
+//! Construit par `cargo test` (les exemples sont compilés avec les tests) et lancé par
+//! `tests/plugin_host.rs`. Outils :
+//! - `echo` : renvoie ses arguments (`structuredContent`) ;
+//! - `slow` : attend `ms` millisecondes ;
+//! - `crash` : quitte le processus (code 3) ;
+//! - `ui_only` : marqué `_meta["cadence/visibility"] = "ui"` ;
+//! - `env` : variables `CADENCE_*` reçues, dossier courant, fuite éventuelle de jetons d'IA ;
+//! - `grow` : ajoute l'outil `extra` et envoie `notifications/tools/list_changed` ;
+//! - `fail` : répond par une erreur MCP.
+//!
+//! Arguments : `--crash-on-start` (quitte avant `initialize`), `--hang-on-start` (ne répond
+//! jamais). Écrit « fake-plugin prêt » sur stderr au démarrage.
+
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
+
+use rmcp::{
+    ErrorData, RoleServer, ServerHandler, ServiceExt,
+    model::{
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, JsonObject, ListToolsResult, MetaObject,
+        PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    },
+    service::RequestContext,
+};
+use serde_json::{Value, json};
+
+#[derive(Clone, Default)]
+struct Fake {
+    grown: Arc<AtomicBool>,
+}
+
+fn schema(properties: Value) -> Arc<JsonObject> {
+    let Value::Object(map) = json!({ "type": "object", "properties": properties }) else { unreachable!() };
+    Arc::new(map)
+}
+
+fn tool(name: &'static str, description: &'static str, properties: Value) -> Tool {
+    Tool::new(name, description, schema(properties))
+}
+
+fn ok(value: Value) -> CallToolResponse {
+    let mut result = CallToolResult::success(vec![ContentBlock::text(value.to_string())]);
+    result.structured_content = Some(value);
+    result.into()
+}
+
+impl ServerHandler for Fake {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_tool_list_changed().build())
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
+        let mut ui_only = tool("ui_only", "Outil réservé à l'interface du plugin.", json!({}));
+        let Value::Object(meta) = json!({ "cadence/visibility": "ui" }) else { unreachable!() };
+        ui_only.meta = Some(MetaObject(meta));
+        let mut tools = vec![
+            tool("echo", "Renvoie ses arguments.", json!({ "text": { "type": "string" } })),
+            tool("slow", "Attend `ms` millisecondes.", json!({ "ms": { "type": "integer" } })),
+            tool("crash", "Arrête le serveur.", json!({})),
+            ui_only,
+            tool("env", "Variables d'environnement reçues.", json!({})),
+            tool("grow", "Ajoute l'outil `extra`.", json!({})),
+            tool("fail", "Répond par une erreur.", json!({})),
+        ];
+        if self.grown.load(Ordering::SeqCst) {
+            tools.push(tool("extra", "Ajouté par `grow`.", json!({})));
+        }
+        Ok(ListToolsResult::with_all_items(tools))
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let args = request.arguments.clone().unwrap_or_default();
+        match request.name.as_ref() {
+            "echo" => Ok(ok(json!({ "echo": args }))),
+            "slow" => {
+                let ms = args.get("ms").and_then(Value::as_u64).unwrap_or(100);
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+                Ok(ok(json!({ "slept": ms })))
+            }
+            "crash" => {
+                eprintln!("fake-plugin : arrêt demandé");
+                std::process::exit(3);
+            }
+            "ui_only" | "extra" => Ok(ok(json!({ "ok": true }))),
+            "env" => {
+                let var = |name: &str| std::env::var(name).ok();
+                Ok(ok(json!({
+                    "CADENCE_API": var("CADENCE_API"),
+                    "CADENCE_VERSION": var("CADENCE_VERSION"),
+                    "CADENCE_DATA_DIR": var("CADENCE_DATA_DIR"),
+                    "CADENCE_SETTINGS": var("CADENCE_SETTINGS"),
+                    "CADENCE_LOG": var("CADENCE_LOG"),
+                    "CADENCE_SECRET_TOKEN": var("CADENCE_SECRET_TOKEN"),
+                    "FAKE_PLUGIN_LEAK": var("FAKE_PLUGIN_LEAK"),
+                    "cwd": std::env::current_dir().ok().map(|d| d.to_string_lossy().into_owned()),
+                })))
+            }
+            "grow" => {
+                self.grown.store(true, Ordering::SeqCst);
+                let _ = context.peer.notify_tool_list_changed().await;
+                Ok(ok(json!({ "grown": true })))
+            }
+            "fail" => Err(ErrorData::invalid_params("échec demandé", None)),
+            other => Err(ErrorData::invalid_params(format!("outil inconnu : {other}"), None)),
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    eprintln!("fake-plugin prêt");
+    if args.iter().any(|a| a == "--crash-on-start") {
+        eprintln!("fake-plugin : plantage au démarrage");
+        std::process::exit(2);
+    }
+    if args.iter().any(|a| a == "--hang-on-start") {
+        loop {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        }
+    }
+    let service = match Fake::default().serve(rmcp::transport::stdio()).await {
+        Ok(service) => service,
+        Err(err) => {
+            eprintln!("fake-plugin : initialize impossible ({err})");
+            std::process::exit(1);
+        }
+    };
+    let _ = service.waiting().await;
+}
