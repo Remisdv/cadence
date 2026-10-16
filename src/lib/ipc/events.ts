@@ -3,9 +3,11 @@
  */
 import type {
   AuthChanged,
+  OpenViewRequest,
   PluginInstallEvent,
   PluginStateEvent,
   RateLimitInfo,
+  RunReport,
   SyncUpdated,
 } from "@/lib/types";
 import { isMockIpc } from "./transport";
@@ -17,6 +19,10 @@ export interface Events {
   "auth://changed": AuthChanged;
   "plugin://state": PluginStateEvent;
   "plugin://install": PluginInstallEvent;
+  /** Une IA demande d'ouvrir une vue de plugin (`cadence__open_view`). */
+  "ui://open-view": OpenViewRequest;
+  /** Progression ou résultat d'une exécution de fond (`cadence__run_report`). */
+  "run://report": RunReport;
 }
 
 export type EventName = keyof Events;

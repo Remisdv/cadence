@@ -40,8 +40,11 @@ url = "2.5.8"
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio"] }
 toml = "1.1.8"
 zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-# Client MCP des serveurs de plugin (stdio) ; processus en job object (Windows) ou groupe (Unix).
-rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-async-rw"] }
+# MCP : client des serveurs de plugin (stdio) et passerelle des IA (streamable HTTP, axum).
+rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-async-rw", "server", "transport-streamable-http-server"] }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1"] }
+http = "1.5.0"
+# Processus des serveurs de plugin : job object (Windows) ou groupe (Unix).
 process-wrap = { version = "10.0.1", default-features = false, features = ["tokio1", "kill-on-drop", "job-object", "creation-flags", "process-group"] }
 
 
@@ -51,7 +54,8 @@ windows = { version = "0.62.2", features = ["Win32_System_Threading"] }
 
 [dev-dependencies]
 # Serveur MCP du binaire de test `fake-plugin` (examples/fake-plugin.rs).
-rmcp = { version = "3.5.1", default-features = false, features = ["server", "transport-io"] }
+# Client HTTP des tests de la passerelle (tests/gateway.rs).
+rmcp = { version = "3.5.1", default-features = false, features = ["server", "transport-io", "transport-streamable-http-client-reqwest"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

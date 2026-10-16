@@ -20,6 +20,10 @@ pub const AUTH_CHANGED: &str = "auth://changed";
 pub const PLUGIN_STATE: &str = "plugin://state";
 /// `PluginInstallEvent` : progression d'une installation.
 pub const PLUGIN_INSTALL: &str = "plugin://install";
+/// `OpenViewRequest` : une IA demande d'ouvrir une vue de plugin (`cadence__open_view`).
+pub const UI_OPEN_VIEW: &str = "ui://open-view";
+/// `RunReport` : progression ou résultat d'une exécution de fond (`cadence__run_report`).
+pub const RUN_REPORT: &str = "run://report";
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

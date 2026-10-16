@@ -17,6 +17,7 @@ pub mod commands;
 pub mod domain;
 pub mod error;
 pub mod events;
+pub mod gateway;
 pub mod plugins;
 pub mod project_config;
 pub mod secrets;
@@ -58,8 +59,25 @@ pub fn run() {
             let handle = app.handle().clone();
             let plugin_events: plugins::host::StateSink =
                 Arc::new(move |event| events::emit(&handle, events::PLUGIN_STATE, event));
-            let state = state::AppState::new(paths, &version, secrets, tokens, plugin_events);
+            let mut state = state::AppState::new(paths, &version, secrets, tokens, plugin_events);
             tauri::async_runtime::spawn(plugins::host::run_idle_reaper(Arc::downgrade(&state.plugin_host)));
+
+            // Passerelle MCP des IA, sur un port libre de 127.0.0.1.
+            let handle = app.handle().clone();
+            let gateway_events: gateway::server::GatewayEventSink = Arc::new(move |event| match event {
+                gateway::core_tools::GatewayEvent::OpenView(request) => events::emit(&handle, events::UI_OPEN_VIEW, request),
+                gateway::core_tools::GatewayEvent::RunReport(report) => events::emit(&handle, events::RUN_REPORT, report),
+            });
+            let context = gateway::server::GatewayContext::new(
+                &version,
+                state.plugin_host.clone(),
+                gateway::registry_lister(state.plugins.clone()),
+                gateway_events,
+            );
+            match tauri::async_runtime::block_on(gateway::server::Gateway::start(context, 0)) {
+                Ok(gateway) => state.gateway = Some(gateway),
+                Err(err) => tracing::error!(%err, "passerelle MCP impossible à démarrer"),
+            }
             app.manage(state);
             Ok(())
         })
@@ -110,8 +128,11 @@ pub fn run() {
         .run(|app, event| {
             // Fermeture : les serveurs de plugin s'arrêtent proprement (stdin fermé, grâce, kill).
             if let RunEvent::Exit = event {
-                let host = app.state::<state::AppState>().plugin_host.clone();
-                tauri::async_runtime::block_on(host.stop_all());
+                let state = app.state::<state::AppState>();
+                if let Some(gateway) = &state.gateway {
+                    gateway.shutdown();
+                }
+                tauri::async_runtime::block_on(state.plugin_host.stop_all());
             }
         });
 }

@@ -19,6 +19,7 @@ use crate::{
     },
     app_settings::AppSettingsStore,
     error::{AppError, AppResult},
+    gateway::server::Gateway,
     plugins::{
         env::{self, HostPaths},
         host::{HostConfig, PluginHost, StateSink},
@@ -62,6 +63,8 @@ pub struct AppState {
     pub plugin_settings: Arc<PluginSettingsStore>,
     /// Serveurs MCP des plugins, un processus par plugin.
     pub plugin_host: Arc<PluginHost>,
+    /// Passerelle MCP des IA ; `None` si elle n'a pas pu démarrer.
+    pub gateway: Option<Gateway>,
     /// Dépôts accessibles au jeton, lus une fois puis filtrés localement.
     pub repos: RwLock<Option<Vec<Repo>>>,
     /// Dossier des bases SQLite, une par dépôt.
@@ -105,6 +108,7 @@ impl AppState {
             plugins,
             plugin_settings,
             plugin_host,
+            gateway: None,
             repos: RwLock::default(),
             checkout_dir: cache_dir.with_file_name("repos"),
             cache_dir,
