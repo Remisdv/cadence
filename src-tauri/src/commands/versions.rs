@@ -28,7 +28,7 @@ pub async fn versions_list(state: State<'_, AppState>) -> AppResult<Vec<Version>
     if let Some(p) = project.as_mut().filter(|p| p.current_version != current) {
         p.current_version = current;
         let saved = p.clone();
-        state.settings.update(|s| s.last_project = Some(saved))?;
+        state.settings.update(|s| s.legacy.last_project = Some(saved))?;
     }
     Ok(versions)
 }
@@ -201,7 +201,7 @@ pub async fn version_close(
     if let Some(p) = project_slot.as_mut() {
         p.current_version = Some(plan.next.clone());
         let saved = p.clone();
-        state.settings.update(|s| s.last_project = Some(saved))?;
+        state.settings.update(|s| s.legacy.last_project = Some(saved))?;
     }
 
     Ok(CloseReport {

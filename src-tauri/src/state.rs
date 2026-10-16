@@ -1,7 +1,7 @@
 //! État partagé, injecté dans les commandes par `tauri::State<AppState>`.
 
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -17,10 +17,22 @@ use crate::{
         project::{ProjectState, Repo},
         settings::Config,
     },
+    app_settings::AppSettingsStore,
     error::{AppError, AppResult},
-    local_settings::SettingsStore,
+    plugins::{registry::PluginRegistry, settings::PluginSettingsStore},
+    secrets::SecretStore,
     store::RepoCache,
 };
+
+/// Dossiers de l'app, résolus au démarrage par Tauri.
+pub struct AppPaths {
+    /// `settings.json`, réglages des plugins (`plugins/<id>.json`).
+    pub config_dir: PathBuf,
+    /// Plugins installés (`plugins/`), leurs données (`plugins-data/`).
+    pub data_dir: PathBuf,
+    /// Caches SQLite de Cadence 1, un par dépôt.
+    pub cache_dir: PathBuf,
+}
 
 pub struct AppState {
     /// Projet ouvert ; `None` tant que l'onboarding n'est pas terminé.
@@ -33,7 +45,14 @@ pub struct AppState {
     pub sign_in: Mutex<Option<JoinHandle<()>>>,
     /// Détection des agents de code, gardée pour la session.
     pub cli: RwLock<CliCache>,
-    pub settings: SettingsStore,
+    /// Préférences de la machine (`settings.json` v2).
+    pub settings: AppSettingsStore,
+    /// Trousseau du système (secrets des plugins, jeton GitHub).
+    pub secrets: Arc<dyn SecretStore>,
+    /// Plugins installés, activation et ordre du rail.
+    pub plugins: PluginRegistry,
+    /// Réglages globaux des plugins.
+    pub plugin_settings: PluginSettingsStore,
     /// Dépôts accessibles au jeton, lus une fois puis filtrés localement.
     pub repos: RwLock<Option<Vec<Repo>>>,
     /// Dossier des bases SQLite, une par dépôt.
@@ -49,7 +68,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config_dir: &Path, cache_dir: PathBuf, tokens: Arc<dyn TokenStore>) -> Self {
+    pub fn new(
+        paths: AppPaths,
+        app_version: &str,
+        secrets: Arc<dyn SecretStore>,
+        tokens: Arc<dyn TokenStore>,
+    ) -> Self {
+        let AppPaths { config_dir, data_dir, cache_dir } = paths;
         Self {
             project: RwLock::default(),
             http: github::http_client(),
@@ -57,7 +82,10 @@ impl AppState {
             github: RwLock::default(),
             sign_in: Mutex::default(),
             cli: RwLock::default(),
-            settings: SettingsStore::load(config_dir),
+            settings: AppSettingsStore::load(&config_dir),
+            secrets,
+            plugins: PluginRegistry::load(data_dir.join("plugins"), app_version),
+            plugin_settings: PluginSettingsStore::new(config_dir.join("plugins")),
             repos: RwLock::default(),
             checkout_dir: cache_dir.with_file_name("repos"),
             cache_dir,

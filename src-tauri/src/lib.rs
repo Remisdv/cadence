@@ -3,16 +3,23 @@
 //! Tout ce qui touche au réseau, au disque, aux secrets et aux processus vit ici.
 //! Le webview ne fait que rendre et appeler des commandes : il n'a ni jeton,
 //! ni accès direct à l'API GitHub.
+//!
+//! Cadence 2 (0.3.0) : hôte entre les IA de code et des plugins. Socle en place :
+//! `app_settings` (préférences v2), `secrets` (trousseau générique), `plugins` (registre,
+//! réglages globaux). Le code GitHub de Cadence 1 reste compilé jusqu'à son départ dans le
+//! plugin `gestion-projet`.
 
 pub mod ai;
 pub mod api;
+pub mod app_settings;
 pub mod auth;
 pub mod commands;
 pub mod domain;
 pub mod error;
 pub mod events;
-pub mod local_settings;
+pub mod plugins;
 pub mod project_config;
+pub mod secrets;
 pub mod state;
 pub mod store;
 pub mod sync;
@@ -39,13 +46,29 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let config_dir = app.path().app_config_dir()?;
-            let cache_dir = app.path().app_local_data_dir()?.join("cache");
-            let tokens = Arc::new(auth::token_store::KeyringStore::github());
-            app.manage(state::AppState::new(&config_dir, cache_dir, tokens));
+            let paths = state::AppPaths {
+                config_dir: app.path().app_config_dir()?,
+                data_dir: app.path().app_data_dir()?,
+                cache_dir: app.path().app_local_data_dir()?.join("cache"),
+            };
+            let version = app.package_info().version.to_string();
+            let secrets: Arc<dyn secrets::SecretStore> = Arc::new(secrets::KeyringSecrets);
+            let tokens = Arc::new(auth::token_store::SecretEntry::github(secrets.clone()));
+            app.manage(state::AppState::new(paths, &version, secrets, tokens));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::app::app_status,
+            commands::app::app_settings_get,
+            commands::app::app_settings_set,
+            commands::plugins::plugins_installed,
+            commands::plugins::plugins_set_enabled,
+            commands::plugins::plugins_reorder,
+            commands::plugins::plugin_settings_get,
+            commands::plugins::plugin_settings_set,
+            commands::plugins::plugin_secret_set,
+            commands::plugins::plugin_secret_has,
+            commands::plugins::plugin_secret_delete,
             commands::auth::auth_start_device_flow,
             commands::auth::auth_start_web_flow,
             commands::auth::auth_use_gh_cli,
