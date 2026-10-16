@@ -8,6 +8,7 @@
 import type {
   AppSettings,
   InstalledPluginView,
+  PluginProcessView,
   PluginSettingsView,
   PluginViewInfo,
 } from "@/lib/types";
@@ -128,6 +129,70 @@ export const mockPlugins: InstalledPluginView[] = [
     views: [view("minuteur", "Minuteur", "clock", null, { home: true })],
   }),
 ];
+
+/** Plugin installé depuis une archive ou un dossier de dev (mode mock). */
+export const mockInstalledPlugin = (
+  id: string,
+  version: string,
+  source: InstalledPluginView["source"],
+): InstalledPluginView =>
+  plugin({
+    id,
+    name: id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, " "),
+    version,
+    category: "outils",
+    color: "clay",
+    railIcon: "layers",
+    source,
+    description: "Plugin installé depuis un fichier local.",
+    views: [view("accueil", "Accueil", "layers", null, { home: true })],
+  });
+
+/** Serveurs MCP factices : Gestion de projet et Documents tournent, le Journal est arrêté. */
+export function mockProcesses(crashed: boolean): PluginProcessView[] {
+  const log = (id: string) =>
+    `C:/Users/moi/AppData/Roaming/app.cadence.desktop/logs/plugins/${id}.log`;
+  return [
+    crashed
+      ? {
+          plugin: "gestion-projet",
+          state: "failed",
+          pid: null,
+          restarts: 3,
+          tools: 0,
+          message:
+            "le serveur s'est arrêté (code 101). 4 arrêts en 5 min : redémarrage automatique abandonné.",
+          logPath: log("gestion-projet"),
+        }
+      : {
+          plugin: "gestion-projet",
+          state: "ready",
+          pid: 4812,
+          restarts: 0,
+          tools: 24,
+          message: null,
+          logPath: log("gestion-projet"),
+        },
+    {
+      plugin: "documents",
+      state: "ready",
+      pid: 5120,
+      restarts: 0,
+      tools: 11,
+      message: null,
+      logPath: log("documents"),
+    },
+    {
+      plugin: "journal",
+      state: "stopped",
+      pid: null,
+      restarts: 0,
+      tools: 0,
+      message: null,
+      logPath: null,
+    },
+  ];
+}
 
 export const mockAppSettings: AppSettings = {
   version: 2,

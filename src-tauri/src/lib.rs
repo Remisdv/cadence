@@ -27,7 +27,7 @@ pub mod vcs;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Manager, RunEvent};
 use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -50,11 +50,17 @@ pub fn run() {
                 config_dir: app.path().app_config_dir()?,
                 data_dir: app.path().app_data_dir()?,
                 cache_dir: app.path().app_local_data_dir()?.join("cache"),
+                log_dir: app.path().app_log_dir()?,
             };
             let version = app.package_info().version.to_string();
             let secrets: Arc<dyn secrets::SecretStore> = Arc::new(secrets::KeyringSecrets);
             let tokens = Arc::new(auth::token_store::SecretEntry::github(secrets.clone()));
-            app.manage(state::AppState::new(paths, &version, secrets, tokens));
+            let handle = app.handle().clone();
+            let plugin_events: plugins::host::StateSink =
+                Arc::new(move |event| events::emit(&handle, events::PLUGIN_STATE, event));
+            let state = state::AppState::new(paths, &version, secrets, tokens, plugin_events);
+            tauri::async_runtime::spawn(plugins::host::run_idle_reaper(Arc::downgrade(&state.plugin_host)));
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -69,6 +75,11 @@ pub fn run() {
             commands::plugins::plugin_secret_set,
             commands::plugins::plugin_secret_has,
             commands::plugins::plugin_secret_delete,
+            commands::plugins::plugin_install_zip,
+            commands::plugins::plugin_install_dev,
+            commands::plugins::plugin_uninstall,
+            commands::plugins::plugin_status,
+            commands::plugins::plugin_restart,
             commands::auth::auth_start_device_flow,
             commands::auth::auth_start_web_flow,
             commands::auth::auth_use_gh_cli,
@@ -94,6 +105,13 @@ pub fn run() {
             commands::prs::reviews_pending,
             commands::prs::pr_detail,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Fermeture : les serveurs de plugin s'arrêtent proprement (stdin fermé, grâce, kill).
+            if let RunEvent::Exit = event {
+                let host = app.state::<state::AppState>().plugin_host.clone();
+                tauri::async_runtime::block_on(host.stop_all());
+            }
+        });
 }

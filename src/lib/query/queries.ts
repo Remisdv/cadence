@@ -116,6 +116,49 @@ export function useSetPluginSecret(plugin: string, secret: string) {
   });
 }
 
+/** Installe une archive zip locale (ou un dossier de dev), puis relit le rail et les préférences. */
+export function useInstallPlugin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      source: { kind: "zip"; path: string; sha256?: string } | { kind: "dev"; path: string },
+    ) =>
+      source.kind === "zip"
+        ? call("plugin_install_zip", { path: source.path, sha256: source.sha256 ?? null })
+        : call("plugin_install_dev", { path: source.path }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.plugins });
+      void qc.invalidateQueries({ queryKey: keys.appSettings() });
+    },
+  });
+}
+
+/** Désinstalle un plugin ; ses secrets ne sont supprimés que si `deleteSecrets`. */
+export function useUninstallPlugin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, deleteSecrets }: { id: string; deleteSecrets: boolean }) =>
+      call("plugin_uninstall", { id, deleteSecrets }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.plugins });
+      void qc.invalidateQueries({ queryKey: keys.appSettings() });
+    },
+  });
+}
+
+/** État des serveurs MCP des plugins (rafraîchi par `plugin://state`). */
+export const usePluginStatus = () =>
+  useQuery({ queryKey: keys.pluginStatus(), queryFn: () => call("plugin_status") });
+
+/** Relance le serveur d'un plugin, même après un échec. */
+export function useRestartPlugin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (plugin: string) => call("plugin_restart", { plugin }),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.pluginStatus() }),
+  });
+}
+
 /* ---------- GitHub (Cadence 1, futur plugin gestion-projet) ---------- */
 
 /* ---------- Auth & projet ---------- */

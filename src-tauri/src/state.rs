@@ -19,7 +19,12 @@ use crate::{
     },
     app_settings::AppSettingsStore,
     error::{AppError, AppResult},
-    plugins::{registry::PluginRegistry, settings::PluginSettingsStore},
+    plugins::{
+        env::{self, HostPaths},
+        host::{HostConfig, PluginHost, StateSink},
+        registry::PluginRegistry,
+        settings::PluginSettingsStore,
+    },
     secrets::SecretStore,
     store::RepoCache,
 };
@@ -32,6 +37,8 @@ pub struct AppPaths {
     pub data_dir: PathBuf,
     /// Caches SQLite de Cadence 1, un par dépôt.
     pub cache_dir: PathBuf,
+    /// Journaux (`plugins/<id>.log` des serveurs de plugin).
+    pub log_dir: PathBuf,
 }
 
 pub struct AppState {
@@ -50,9 +57,11 @@ pub struct AppState {
     /// Trousseau du système (secrets des plugins, jeton GitHub).
     pub secrets: Arc<dyn SecretStore>,
     /// Plugins installés, activation et ordre du rail.
-    pub plugins: PluginRegistry,
+    pub plugins: Arc<PluginRegistry>,
     /// Réglages globaux des plugins.
-    pub plugin_settings: PluginSettingsStore,
+    pub plugin_settings: Arc<PluginSettingsStore>,
+    /// Serveurs MCP des plugins, un processus par plugin.
+    pub plugin_host: Arc<PluginHost>,
     /// Dépôts accessibles au jeton, lus une fois puis filtrés localement.
     pub repos: RwLock<Option<Vec<Repo>>>,
     /// Dossier des bases SQLite, une par dépôt.
@@ -73,8 +82,17 @@ impl AppState {
         app_version: &str,
         secrets: Arc<dyn SecretStore>,
         tokens: Arc<dyn TokenStore>,
+        plugin_events: StateSink,
     ) -> Self {
-        let AppPaths { config_dir, data_dir, cache_dir } = paths;
+        let AppPaths { config_dir, data_dir, cache_dir, log_dir } = paths;
+        let plugins = Arc::new(PluginRegistry::load(data_dir.join("plugins"), app_version));
+        let plugin_settings = Arc::new(PluginSettingsStore::new(config_dir.join("plugins")));
+        let host_paths = HostPaths { data_root: data_dir.join("plugins-data"), log_dir: log_dir.join("plugins") };
+        let resolve = {
+            let (plugins, plugin_settings, secrets) = (plugins.clone(), plugin_settings.clone(), secrets.clone());
+            Arc::new(move |plugin: &str| env::launch_spec(&plugins, &plugin_settings, secrets.as_ref(), &host_paths, plugin))
+        };
+        let plugin_host = Arc::new(PluginHost::new(HostConfig::new(app_version), resolve, plugin_events));
         Self {
             project: RwLock::default(),
             http: github::http_client(),
@@ -84,8 +102,9 @@ impl AppState {
             cli: RwLock::default(),
             settings: AppSettingsStore::load(&config_dir),
             secrets,
-            plugins: PluginRegistry::load(data_dir.join("plugins"), app_version),
-            plugin_settings: PluginSettingsStore::new(config_dir.join("plugins")),
+            plugins,
+            plugin_settings,
+            plugin_host,
             repos: RwLock::default(),
             checkout_dir: cache_dir.with_file_name("repos"),
             cache_dir,

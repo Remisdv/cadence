@@ -1,13 +1,22 @@
-//! Plugins installés : liste du rail, activation, ordre, réglages et secrets globaux.
+//! Plugins installés : liste du rail, activation, ordre, réglages et secrets globaux,
+//! installation (archive locale, dossier de dev), désinstallation, serveurs MCP.
+//!
+//! Un changement d'activation, de secret ou de réglage arrête le serveur du plugin : il
+//! redémarre au prochain appel avec son nouvel environnement.
+
+use std::path::{Path, PathBuf};
 
 use secrecy::ExposeSecret;
 use serde_json::Value;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::{
     error::{AppError, AppResult},
+    events,
     plugins::{
-        registry::InstalledPluginView,
+        install::{self, InstallPhase, PluginInstallEvent},
+        process::PluginProcessView,
+        registry::{InstalledPluginView, PluginSource},
         settings::{self, PluginSettingsView},
     },
     secrets,
@@ -33,10 +42,14 @@ pub fn plugins_installed(state: State<'_, AppState>) -> Vec<InstalledPluginView>
     state.plugins.views(|plugin, secret| has_secret(&state, plugin, secret))
 }
 
-/// Active ou désactive un plugin pour toute l'app (il reste installé).
+/// Active ou désactive un plugin pour toute l'app (il reste installé). Désactivé, son
+/// serveur est arrêté et ne redémarre plus.
 #[tauri::command]
-pub fn plugins_set_enabled(state: State<'_, AppState>, id: String, enabled: bool) -> AppResult<InstalledPluginView> {
+pub async fn plugins_set_enabled(state: State<'_, AppState>, id: String, enabled: bool) -> AppResult<InstalledPluginView> {
     state.plugins.set_enabled(&id, enabled)?;
+    if !enabled {
+        state.plugin_host.stop(&id).await;
+    }
     view(&state, &id)
 }
 
@@ -51,13 +64,7 @@ pub fn plugins_reorder(state: State<'_, AppState>, order: Vec<String>) -> AppRes
 fn schema_of(state: &AppState, plugin: &str) -> AppResult<Option<Value>> {
     let manifest = state.plugins.manifest(plugin)?;
     let Some(relative) = manifest.settings_schema.as_deref() else { return Ok(None) };
-    let entry = state
-        .plugins
-        .snapshot()
-        .plugins
-        .get(plugin)
-        .cloned()
-        .ok_or_else(|| AppError::Validation(format!("Le plugin « {plugin} » n'est pas installé.")))?;
+    let entry = state.plugins.entry(plugin)?;
     settings::read_schema(&state.plugins.plugin_dir(plugin, &entry), relative).map(Some)
 }
 
@@ -69,9 +76,14 @@ pub fn plugin_settings_get(state: State<'_, AppState>, plugin: String) -> AppRes
 
 /// Enregistre les réglages s'ils respectent le schéma ; sinon renvoie les erreurs par champ.
 #[tauri::command]
-pub fn plugin_settings_set(state: State<'_, AppState>, plugin: String, value: Value) -> AppResult<PluginSettingsView> {
+pub async fn plugin_settings_set(state: State<'_, AppState>, plugin: String, value: Value) -> AppResult<PluginSettingsView> {
     let schema = schema_of(&state, &plugin)?;
-    state.plugin_settings.write(&plugin, schema, value)
+    let view = state.plugin_settings.write(&plugin, schema, value)?;
+    if view.errors.is_empty() {
+        // `CADENCE_SETTINGS` n'est lu qu'au démarrage (la notification `cadence/settings` viendra).
+        state.plugin_host.stop(&plugin).await;
+    }
+    Ok(view)
 }
 
 /// Le secret doit être déclaré par le manifeste du plugin installé.
@@ -86,13 +98,15 @@ fn declared_account(state: &AppState, plugin: &str, secret: &str) -> AppResult<S
 
 /// Écrit un secret au trousseau. Écriture seule : aucune commande ne le relit pour le front.
 #[tauri::command]
-pub fn plugin_secret_set(state: State<'_, AppState>, plugin: String, secret: String, value: String) -> AppResult<()> {
+pub async fn plugin_secret_set(state: State<'_, AppState>, plugin: String, secret: String, value: String) -> AppResult<()> {
     let account = declared_account(&state, &plugin, &secret)?;
     let value = secrecy::SecretString::from(value);
     if value.expose_secret().trim().is_empty() {
         return Err(AppError::Validation("Le secret est vide.".into()));
     }
-    state.secrets.set(&account, value.expose_secret().trim())
+    state.secrets.set(&account, value.expose_secret().trim())?;
+    state.plugin_host.stop(&plugin).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -103,7 +117,93 @@ pub fn plugin_secret_has(state: State<'_, AppState>, plugin: String, secret: Str
 
 /// Supprime un secret ; il n'a pas besoin d'être encore déclaré (plugin mis à jour).
 #[tauri::command]
-pub fn plugin_secret_delete(state: State<'_, AppState>, plugin: String, secret: String) -> AppResult<()> {
+pub async fn plugin_secret_delete(state: State<'_, AppState>, plugin: String, secret: String) -> AppResult<()> {
     let account = secrets::plugin_account(&plugin, &secret)?;
-    state.secrets.delete(&account)
+    state.secrets.delete(&account)?;
+    state.plugin_host.stop(&plugin).await;
+    Ok(())
+}
+
+fn interrupted(err: tauri::Error) -> AppError {
+    AppError::Internal(format!("installation interrompue ({err})"))
+}
+
+/// Installe (ou met à jour) un plugin depuis une archive zip locale. `sha256` : empreinte
+/// attendue, facultative ; un fichier `<archive>.sha256` voisin est vérifié aussi.
+/// Progression par `plugin://install`.
+#[tauri::command]
+pub async fn plugin_install_zip(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    sha256: Option<String>,
+) -> AppResult<InstalledPluginView> {
+    let registry = state.plugins.clone();
+    let progress = app.clone();
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        install::prepare_zip(&registry, Path::new(&path), sha256.as_deref(), &mut |event| {
+            events::emit(&progress, events::PLUGIN_INSTALL, event)
+        })
+    })
+    .await
+    .map_err(interrupted)??;
+
+    // Windows refuse de remplacer l'exécutable d'un serveur en cours d'exécution.
+    let id = prepared.id.clone();
+    state.plugin_host.stop(&id).await;
+    let registry = state.plugins.clone();
+    tauri::async_runtime::spawn_blocking(move || prepared.commit(&registry)).await.map_err(interrupted)??;
+    let done = PluginInstallEvent { id: id.clone(), received: 0, total: 0, phase: InstallPhase::Done };
+    events::emit(&app, events::PLUGIN_INSTALL, done);
+    view(&state, &id)
+}
+
+/// Inscrit un dossier local non zippé comme plugin de développement et le retient dans
+/// les préférences (`devPlugins`).
+#[tauri::command]
+pub async fn plugin_install_dev(state: State<'_, AppState>, path: String) -> AppResult<InstalledPluginView> {
+    let id = install::install_dev(&state.plugins, Path::new(&path))?;
+    state.plugin_host.stop(&id).await;
+    let dir = state.plugins.plugin_dir(&id, &state.plugins.entry(&id)?).to_string_lossy().into_owned();
+    state.settings.update(|s| {
+        if !s.dev_plugins.contains(&dir) {
+            s.dev_plugins.push(dir);
+        }
+    })?;
+    view(&state, &id)
+}
+
+/// Désinstalle un plugin : serveur arrêté, fichiers supprimés (jamais le dossier d'un plugin
+/// de dev), secrets supprimés si demandé. Réglages et données restent.
+#[tauri::command]
+pub async fn plugin_uninstall(state: State<'_, AppState>, id: String, delete_secrets: bool) -> AppResult<()> {
+    let entry = state.plugins.entry(&id)?;
+    state.plugin_host.stop(&id).await;
+    install::uninstall(&state.plugins, &id, delete_secrets.then_some(state.secrets.as_ref()))?;
+    if entry.source == PluginSource::Dev {
+        let dir = state.plugins.plugin_dir(&id, &entry);
+        state.settings.update(|s| s.dev_plugins.retain(|d| PathBuf::from(d) != dir))?;
+    }
+    Ok(())
+}
+
+/// État des serveurs des plugins installés qui en déclarent un, dans l'ordre du rail.
+#[tauri::command]
+pub fn plugin_status(state: State<'_, AppState>) -> Vec<PluginProcessView> {
+    state
+        .plugins
+        .ordered_ids()
+        .into_iter()
+        .filter(|id| state.plugins.manifest(id).is_ok_and(|m| m.server.is_some()))
+        .map(|id| state.plugin_host.status(&id))
+        .collect()
+}
+
+/// Relance le serveur d'un plugin activé, même après un échec, et attend qu'il soit prêt.
+#[tauri::command]
+pub async fn plugin_restart(state: State<'_, AppState>, plugin: String) -> AppResult<()> {
+    if !state.plugins.entry(&plugin)?.enabled {
+        return Err(AppError::Validation(format!("Le plugin « {plugin} » est désactivé.")));
+    }
+    state.plugin_host.restart(&plugin).await
 }

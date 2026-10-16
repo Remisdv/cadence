@@ -12,6 +12,7 @@ export const keys = {
   pluginsInstalled: () => ["plugins", "installed"] as const,
   pluginSettings: (plugin: string) => ["plugins", "settings", plugin] as const,
   pluginSecret: (plugin: string, secret: string) => ["plugins", "secret", plugin, secret] as const,
+  pluginStatus: () => ["plugins", "status"] as const,
 
   auth: ["auth"] as const,
   project: ["project"] as const,

@@ -23,6 +23,12 @@ export function useBackendEvents() {
       subscribe("auth://changed", () => {
         void queryClient.invalidateQueries({ queryKey: keys.auth });
       }),
+      subscribe("plugin://state", () => {
+        void queryClient.invalidateQueries({ queryKey: keys.pluginStatus() });
+      }),
+      subscribe("plugin://install", ({ phase }) => {
+        if (phase === "done") void queryClient.invalidateQueries({ queryKey: keys.plugins });
+      }),
     ];
     return () => offs.forEach((off) => off());
   }, [queryClient, setRateLimit]);

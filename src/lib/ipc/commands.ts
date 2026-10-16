@@ -21,6 +21,7 @@ import type {
   PrFilter,
   PrDetail,
   PrRow,
+  PluginProcessView,
   PluginSettingsView,
   ProjectState,
   Repo,
@@ -55,6 +56,17 @@ export interface Commands {
   plugin_secret_set: { args: { plugin: string; secret: string; value: string }; result: null };
   plugin_secret_has: { args: { plugin: string; secret: string }; result: boolean };
   plugin_secret_delete: { args: { plugin: string; secret: string }; result: null };
+  /** Archive zip locale ; progression par `plugin://install`. */
+  plugin_install_zip: {
+    args: { path: string; sha256: string | null };
+    result: InstalledPluginView;
+  };
+  /** Dossier local non zippé (mode développement), retenu dans `devPlugins`. */
+  plugin_install_dev: { args: { path: string }; result: InstalledPluginView };
+  plugin_uninstall: { args: { id: string; deleteSecrets: boolean }; result: null };
+  /** Serveurs MCP des plugins installés qui en déclarent un ; changements par `plugin://state`. */
+  plugin_status: { args: NoArgs; result: PluginProcessView[] };
+  plugin_restart: { args: { plugin: string }; result: null };
   // Auth
   auth_start_device_flow: { args: NoArgs; result: DeviceFlowStart };
   auth_start_web_flow: { args: NoArgs; result: WebFlowStart };

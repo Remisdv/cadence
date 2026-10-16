@@ -6,7 +6,8 @@
  * - `?scenario=app` (défaut) : connecté, projet ouvert, plugins factices installés ;
  * - `?scenario=onboarding` : onboarding à faire, compte GitHub non connecté ;
  * - `?scenario=no-project` : connecté, aucun projet choisi ;
- * - `?scenario=empty` : aucun plugin installé.
+ * - `?scenario=empty` : aucun plugin installé ;
+ * - `?scenario=plugin-crash` : le serveur de Gestion de projet est en échec.
  *
  * Issue de la connexion GitHub simulée (navigateur ou code) : `&flow=ok` (défaut, autorisée
  * après quelques secondes), `denied`, `expired`, `config` (client ID / secret absent). Session de test de Claude Code : `&cli=ok` (défaut) ou `fail`.
@@ -16,6 +17,9 @@ import type {
   CliAgentInfo,
   InstalledPluginView,
   IssueRow,
+  PluginInstallEvent,
+  PluginProcessView,
+  PluginStateEvent,
   ProjectState,
 } from "@/lib/types";
 import type { CommandArgs, CommandName, CommandResult } from "../commands";
@@ -25,7 +29,9 @@ import * as data from "./fixtures";
 import { versionReport } from "./versions";
 import {
   mockAppSettings,
+  mockInstalledPlugin,
   mockPlugins,
+  mockProcesses,
   mockSettingsSchema,
   validateMockSettings,
   withMockDefaults,
@@ -49,6 +55,7 @@ const state = {
   plugins: scenario === "empty" ? [] : structuredClone(mockPlugins),
   pluginSettings: {} as Record<string, Record<string, unknown>>,
   secrets: new Set<string>(),
+  processes: mockProcesses(scenario === "plugin-crash"),
 };
 let flowTimer: number | undefined;
 
@@ -93,6 +100,38 @@ function refreshStatus(plugin: InstalledPluginView) {
   plugin.status = missing ? "needs-setup" : "ok";
 }
 
+function emitState(process: PluginProcessView) {
+  mockBus.emit<PluginStateEvent>("plugin://state", {
+    plugin: process.plugin,
+    state: process.state,
+    message: process.message,
+  });
+}
+
+/** Le serveur d'un plugin s'arrête (désactivation, secret ou réglage changé, désinstallation). */
+function stopProcess(plugin: string) {
+  const process = state.processes.find((p) => p.plugin === plugin);
+  if (!process || process.state === "stopped") return;
+  Object.assign(process, { state: "stopped", pid: null, tools: 0, message: null });
+  emitState(process);
+}
+
+/** Dernier segment d'un chemin Windows ou Unix. */
+const baseName = (path: string) =>
+  path
+    .replace(/[\\/]+$/, "")
+    .split(/[\\/]/)
+    .pop() ?? "";
+
+function addPlugin(command: string, plugin: InstalledPluginView) {
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(plugin.id))
+    fail(command, `« ${plugin.id} » n'est pas un identifiant de plugin.`);
+  const previous = state.plugins.find((p) => p.id === plugin.id);
+  if (previous) return Object.assign(previous, { ...plugin, enabled: previous.enabled });
+  state.plugins.push(plugin);
+  return plugin;
+}
+
 const handlers: Handlers = {
   app_status: () => ({ onboarded: state.settings.onboarded, version: "0.3.0-dev" }),
   app_settings_get: () => state.settings,
@@ -132,7 +171,10 @@ const handlers: Handlers = {
   plugins_reorder: ({ order }) => {
     const ids = state.plugins.map((p) => p.id).sort();
     if (new Set(order).size !== order.length || [...order].sort().join() !== ids.join())
-      fail("plugins_reorder", "L'ordre du rail doit citer chaque plugin installé exactement une fois.");
+      fail(
+        "plugins_reorder",
+        "L'ordre du rail doit citer chaque plugin installé exactement une fois.",
+      );
     const categories = ["projet", "etudes", "code", "donnees", "outils"];
     state.plugins = order
       .map((id) => state.plugins.find((p) => p.id === id)!)
@@ -169,6 +211,79 @@ const handlers: Handlers = {
     state.secrets.delete(`plugin/${plugin}/${secret}`);
     const found = state.plugins.find((p) => p.id === plugin);
     if (found) refreshStatus(found);
+    stopProcess(plugin);
+    return null;
+  },
+  plugin_install_zip: async ({ path }) => {
+    if (!path.toLowerCase().endsWith(".zip")) fail("plugin_install_zip", "Archive zip invalide.");
+    // `journal-0.2.0.zip` → plugin `journal`, version 0.2.0.
+    const [, id = "", version = "0.1.0"] =
+      /^(.*?)(?:-(\d+\.\d+\.\d+))?\.zip$/i.exec(baseName(path)) ?? [];
+    const total = 4_200_000;
+    for (const [phase, received] of [
+      ["verifying", total],
+      ["extracting", total / 2],
+      ["extracting", total],
+    ] as const) {
+      mockBus.emit<PluginInstallEvent>("plugin://install", { id, received, total, phase });
+      await delay(200);
+    }
+    stopProcess(id);
+    const plugin = addPlugin("plugin_install_zip", mockInstalledPlugin(id, version, "file"));
+    mockBus.emit<PluginInstallEvent>("plugin://install", {
+      id,
+      received: 0,
+      total: 0,
+      phase: "done",
+    });
+    return plugin;
+  },
+  plugin_install_dev: ({ path }) => {
+    const plugin = addPlugin(
+      "plugin_install_dev",
+      mockInstalledPlugin(baseName(path), "0.1.0", "dev"),
+    );
+    if (!state.settings.devPlugins.includes(path)) state.settings.devPlugins.push(path);
+    stopProcess(plugin.id);
+    return plugin;
+  },
+  plugin_uninstall: ({ id, deleteSecrets }) => {
+    const plugin = installed("plugin_uninstall", id);
+    stopProcess(id);
+    state.plugins = state.plugins.filter((p) => p.id !== id);
+    state.processes = state.processes.filter((p) => p.plugin !== id);
+    if (deleteSecrets) plugin.secrets.forEach((s) => state.secrets.delete(`plugin/${id}/${s.id}`));
+    if (plugin.source === "dev")
+      state.settings.devPlugins = state.settings.devPlugins.filter((d) => baseName(d) !== id);
+    return null;
+  },
+  plugin_status: () =>
+    state.processes.filter((p) => state.plugins.some((plugin) => plugin.id === p.plugin)),
+  plugin_restart: async ({ plugin }) => {
+    if (!installed("plugin_restart", plugin).enabled)
+      fail("plugin_restart", `Le plugin « ${plugin} » est désactivé.`);
+    let process = state.processes.find((p) => p.plugin === plugin);
+    if (!process) {
+      process = {
+        plugin,
+        state: "stopped",
+        pid: null,
+        restarts: 0,
+        tools: 0,
+        message: null,
+        logPath: null,
+      };
+      state.processes.push(process);
+    }
+    Object.assign(process, { state: "starting", message: null, pid: null });
+    emitState(process);
+    await delay(600);
+    Object.assign(process, {
+      state: "ready",
+      pid: 4000 + Math.floor(Math.random() * 1000),
+      tools: 12,
+    });
+    emitState(process);
     return null;
   },
 
@@ -335,7 +450,8 @@ const handlers: Handlers = {
   version_current: () => data.currentVersion,
   version_detail: ({ title }) => {
     const report = versionReport(title ?? state.project?.currentVersion ?? null);
-    if (!report) fail("version_detail", `La version ${title ?? ""} n'est pas un milestone du dépôt.`);
+    if (!report)
+      fail("version_detail", `La version ${title ?? ""} n'est pas un milestone du dépôt.`);
     return report;
   },
   version_close: ({ input }) => {

@@ -1,7 +1,13 @@
 /**
  * Événements back → front. Les noms doivent refléter `src-tauri/src/events.rs`.
  */
-import type { AuthChanged, RateLimitInfo, SyncUpdated } from "@/lib/types";
+import type {
+  AuthChanged,
+  PluginInstallEvent,
+  PluginStateEvent,
+  RateLimitInfo,
+  SyncUpdated,
+} from "@/lib/types";
 import { isMockIpc } from "./transport";
 import { mockBus } from "./mock/bus";
 
@@ -9,6 +15,8 @@ export interface Events {
   "sync://updated": SyncUpdated;
   "sync://rate-limit": RateLimitInfo;
   "auth://changed": AuthChanged;
+  "plugin://state": PluginStateEvent;
+  "plugin://install": PluginInstallEvent;
 }
 
 export type EventName = keyof Events;

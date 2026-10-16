@@ -31,6 +31,11 @@ export type { InstalledPluginView } from "./bindings/InstalledPluginView";
 export type { ActionMode } from "./bindings/ActionMode";
 export type { PluginActionInfo } from "./bindings/PluginActionInfo";
 export type { PluginSetupStep } from "./bindings/PluginSetupStep";
+export type { ProcessState } from "./bindings/ProcessState";
+export type { PluginStateEvent } from "./bindings/PluginStateEvent";
+export type { PluginProcessView } from "./bindings/PluginProcessView";
+export type { InstallPhase } from "./bindings/InstallPhase";
+export type { PluginInstallEvent } from "./bindings/PluginInstallEvent";
 export type { SettingsFieldError } from "./bindings/SettingsFieldError";
 export type { PluginSettingsView } from "./bindings/PluginSettingsView";
 

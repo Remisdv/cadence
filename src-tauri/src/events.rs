@@ -16,6 +16,10 @@ use crate::domain::{
 pub const SYNC_UPDATED: &str = "sync://updated";
 pub const SYNC_RATE_LIMIT: &str = "sync://rate-limit";
 pub const AUTH_CHANGED: &str = "auth://changed";
+/// `PluginStateEvent` : état du serveur d'un plugin.
+pub const PLUGIN_STATE: &str = "plugin://state";
+/// `PluginInstallEvent` : progression d'une installation.
+pub const PLUGIN_INSTALL: &str = "plugin://install";
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

@@ -162,6 +162,9 @@ pub fn launch_spec(
     plugin: &str,
 ) -> AppResult<LaunchSpec> {
     let entry = registry.entry(plugin)?;
+    if !entry.enabled {
+        return Err(AppError::Validation(format!("Le plugin « {plugin} » est désactivé.")));
+    }
     let dir = registry.plugin_dir(plugin, &entry);
     let m = manifest::load(&dir, registry.app_version())?;
     let server = m
