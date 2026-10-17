@@ -60,6 +60,18 @@ pub fn covering(path: &Path, dirs: &[PathBuf]) -> Option<PathBuf> {
     dirs.iter().find(|dir| normalize(dir).is_some_and(|dir| starts_with(&path, &dir))).cloned()
 }
 
+/// Dossier Git commun d'un worktree (`<clone>/.git`), où vivent ses branches et son index :
+/// `git commit` y écrit. Lu dans le fichier `.git` du worktree (`gitdir: …`) puis `commondir`.
+pub fn git_common_dir(worktree: &Path) -> Option<PathBuf> {
+    let link = std::fs::read_to_string(worktree.join(".git")).ok()?;
+    let gitdir = PathBuf::from(link.trim().strip_prefix("gitdir:")?.trim());
+    let gitdir = if gitdir.is_absolute() { gitdir } else { worktree.join(gitdir) };
+    let common = std::fs::read_to_string(gitdir.join("commondir")).ok()?;
+    let common = PathBuf::from(common.trim());
+    let common = if common.is_absolute() { common } else { gitdir.join(common) };
+    normalize(&common)
+}
+
 /// Chemin visé par un outil de fichiers de Claude Code ; `None` pour les autres outils (shell
 /// compris) et pour un outil sans chemin explicite.
 pub fn claude_tool_path(tool: &str, input: &Value) -> Option<PathBuf> {
@@ -109,6 +121,20 @@ mod tests {
             let upper = PathBuf::from(root().to_string_lossy().to_uppercase().replace('\\', "/")).join("a.txt");
             assert_eq!(covering(&upper, &dirs), Some(root()), "casse et séparateurs de Windows");
         }
+    }
+
+    #[test]
+    fn finds_the_common_git_dir_of_a_worktree() {
+        let root = crate::app_settings::temp_dir("grants-common-dir");
+        let wt = root.join("wt");
+        let gitdir = root.join("clone").join(".git").join("worktrees").join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
+        std::fs::write(gitdir.join("commondir"), "../..\n").unwrap();
+        assert_eq!(git_common_dir(&wt), Some(root.join("clone").join(".git")));
+        assert_eq!(git_common_dir(&root.join("clone")), None, "pas un worktree");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

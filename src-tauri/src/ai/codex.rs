@@ -40,6 +40,7 @@ use super::{
         CodexItem, CodexStream, PendingCodex, approval_reply, notification, question_reply, request, text_input,
     },
     events::{AiErrorKind, AiEvent, ApprovalDecision},
+    grants,
     process::{Tail, TreeChild},
     session::AiLaunch,
     staging::{self, SessionFiles},
@@ -62,12 +63,12 @@ struct Shared {
     killed: AtomicBool,
 }
 
-/// Politique d'approbation et bac à sable d'un profil.
-pub fn policy(permissions: Permissions, mode: SessionMode) -> (&'static str, &'static str) {
-    match (permissions, mode) {
-        (Permissions::Full, _) => ("never", "danger-full-access"),
-        (_, SessionMode::Background) => ("never", "workspace-write"),
-        (_, SessionMode::Chat) => ("on-request", "workspace-write"),
+/// Politique d'approbation et bac à sable d'un profil. En fond, les demandes sont tranchées
+/// d'office par Cadence : une modification dans un worktree accordé passe, le reste est refusé.
+pub fn policy(permissions: Permissions, _mode: SessionMode) -> (&'static str, &'static str) {
+    match permissions {
+        Permissions::Full => ("never", "danger-full-access"),
+        _ => ("on-request", "workspace-write"),
     }
 }
 
@@ -108,12 +109,37 @@ impl CodexSession {
 
         let reader = {
             let (shared, stdin, events) = (shared.clone(), stdin.clone(), events.clone());
+            let (granted, background) = (launch.granted.clone(), launch.mode == SessionMode::Background);
             tokio::spawn(async move {
                 let mut stream = CodexStream::default();
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    for item in stream.push_line(&line) {
+                    let items = stream.push_line(&line);
+                    // Réponses d'office : modification dans un worktree accordé, ou refus en fond
+                    // (personne pour répondre). Leur carte d'approbation n'est pas montrée.
+                    let dirs = granted.as_ref().map(|g| g()).unwrap_or_default();
+                    let mut answered = Vec::new();
+                    for item in &items {
+                        let CodexItem::Approval(pending) = item else { continue };
+                        if !pending.questions.is_empty() {
+                            continue;
+                        }
+                        let covered = !pending.paths.is_empty()
+                            && pending.paths.iter().all(|p| grants::covering(std::path::Path::new(p), &dirs).is_some());
+                        let decision = match (covered, background) {
+                            (true, _) => ApprovalDecision::Allow,
+                            (false, true) => ApprovalDecision::Deny,
+                            (false, false) => continue,
+                        };
+                        answered.push(pending.request.clone());
+                        if let Err(err) = write_line(&stdin, &approval_reply(pending, decision)).await {
+                            tracing::warn!(%err, "réponse d'office non transmise à Codex");
+                        }
+                    }
+                    for item in items {
                         match item {
+                            CodexItem::Approval(pending) if answered.contains(&pending.request) => {}
+                            CodexItem::Event(AiEvent::ApprovalRequested { request, .. }) if answered.contains(&request) => {}
                             CodexItem::Response { id, result } => {
                                 if let Some(waiter) = shared.pending.lock().unwrap().remove(&id) {
                                     let _ = waiter.send(result);
@@ -363,7 +389,7 @@ mod tests {
     #[test]
     fn maps_profiles_to_codex_policies() {
         assert_eq!(policy(Permissions::Ask, SessionMode::Chat), ("on-request", "workspace-write"));
-        assert_eq!(policy(Permissions::Ask, SessionMode::Background), ("never", "workspace-write"));
+        assert_eq!(policy(Permissions::Ask, SessionMode::Background), ("on-request", "workspace-write"), "tranché d'office");
         assert_eq!(policy(Permissions::Full, SessionMode::Chat), ("never", "danger-full-access"));
     }
 }

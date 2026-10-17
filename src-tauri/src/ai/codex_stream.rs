@@ -29,6 +29,8 @@ pub struct PendingCodex {
     pub request: String,
     /// Questions de `item/tool/requestUserInput` (vide pour une approbation).
     pub questions: Vec<String>,
+    /// Fichiers d'une demande `item/fileChange/requestApproval` (vide sinon).
+    pub paths: Vec<String>,
 }
 
 /// Réponse JSON-RPC à une question : la même réponse pour chaque question posée.
@@ -68,6 +70,8 @@ pub fn text_input(text: &str) -> Value {
 pub struct CodexStream {
     usage: Option<(u32, u32)>,
     error_sent: bool,
+    /// Fichiers de chaque modification en cours (`item/started` de type `fileChange`).
+    file_changes: std::collections::HashMap<String, Vec<String>>,
 }
 
 fn str_of<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -132,7 +136,16 @@ impl CodexStream {
         };
         let approval = |kind: ApprovalKind, title: String| {
             vec![
-                CodexItem::Approval(PendingCodex { id: id.clone(), request: request.clone(), questions: Vec::new() }),
+                CodexItem::Approval(PendingCodex {
+                    id: id.clone(),
+                    request: request.clone(),
+                    questions: Vec::new(),
+                    paths: if kind == ApprovalKind::FileChange {
+                        str_of(params, "itemId").and_then(|item| self.file_changes.get(item)).cloned().unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    },
+                }),
                 CodexItem::Event(AiEvent::ApprovalRequested { request: request.clone(), kind, title, detail: params.clone() }),
             ]
         };
@@ -163,7 +176,7 @@ impl CodexStream {
                     .map(|o| o.iter().filter_map(|o| str_of(o, "label").map(str::to_string)).collect())
                     .unwrap_or_default();
                 vec![
-                    CodexItem::Approval(PendingCodex { id: id.clone(), request: request.clone(), questions: ids }),
+                    CodexItem::Approval(PendingCodex { id: id.clone(), request: request.clone(), questions: ids, paths: Vec::new() }),
                     CodexItem::Event(AiEvent::Question { request: request.clone(), text, options }),
                 ]
             }
@@ -187,8 +200,27 @@ impl CodexStream {
                 }
                 _ => Vec::new(),
             },
-            "item/started" => params.get("item").map(started).unwrap_or_default(),
-            "item/completed" => params.get("item").map(completed).unwrap_or_default(),
+            "item/started" => {
+                let item = params.get("item").unwrap_or(&Value::Null);
+                if str_of(item, "type") == Some("fileChange")
+                    && let Some(id) = str_of(item, "id")
+                {
+                    let paths = item
+                        .get("changes")
+                        .and_then(Value::as_array)
+                        .map(|c| c.iter().filter_map(|c| str_of(c, "path").map(str::to_string)).collect())
+                        .unwrap_or_default();
+                    self.file_changes.insert(id.to_string(), paths);
+                }
+                started(item)
+            }
+            "item/completed" => {
+                let item = params.get("item").unwrap_or(&Value::Null);
+                if let Some(id) = str_of(item, "id") {
+                    self.file_changes.remove(id);
+                }
+                completed(item)
+            }
             "turn/plan/updated" => {
                 let items = params
                     .get("plan")
@@ -438,6 +470,16 @@ mod tests {
         assert!(matches!(&question[1], CodexItem::Event(AiEvent::Question { text, options, .. })
             if text == "En quelle langue ?" && options.len() == 2));
         assert_eq!(question_reply(pending, "Français")["result"]["answers"]["q1"]["answers"][0], "Français");
+
+        // Modification de fichiers : ses chemins (annoncés par `item/started`) suivent la demande.
+        stream.push_line(
+            r#"{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"t","turnId":"u","item":{"type":"fileChange","id":"fc1","status":"inProgress","changes":[{"path":"/wt/a.rs","kind":{"type":"update"},"diff":""}]}}}"#,
+        );
+        let change = stream.push_line(
+            r#"{"jsonrpc":"2.0","id":9,"method":"item/fileChange/requestApproval","params":{"threadId":"t","turnId":"u","itemId":"fc1","reason":null}}"#,
+        );
+        let CodexItem::Approval(pending) = &change[0] else { panic!("{change:?}") };
+        assert_eq!(pending.paths, ["/wt/a.rs"]);
 
         let other = stream.push_line(r#"{"jsonrpc":"2.0","id":"x","method":"attestation/generate","params":{}}"#);
         assert!(matches!(&other[0], CodexItem::Reply(v) if v["error"]["code"] == -32601));

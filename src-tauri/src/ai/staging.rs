@@ -166,8 +166,17 @@ pub fn codex_config(gateway_url: Option<&str>, add_dirs: &[PathBuf]) -> serde_js
         None => json!({}),
     };
     if !add_dirs.is_empty() {
-        // Racines inscriptibles du bac à sable `workspace-write`, en plus du dossier neutre.
-        let roots: Vec<String> = add_dirs.iter().map(|d| d.display().to_string()).collect();
+        // Racines inscriptibles du bac à sable `workspace-write`, en plus du dossier neutre :
+        // les worktrees, et le dossier Git de leur clone (branches, index : `git commit`).
+        let mut roots: Vec<String> = Vec::new();
+        for dir in add_dirs {
+            for root in std::iter::once(dir.clone()).chain(super::grants::git_common_dir(dir)) {
+                let root = root.display().to_string();
+                if !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+        }
         config["sandbox_workspace_write"] = json!({ "writable_roots": roots });
     }
     config

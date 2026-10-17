@@ -284,6 +284,90 @@ async fn ai_smoke_opencode_chat_calls_a_tool_then_resumes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+fn git(cwd: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(["-c", "user.name=Cadence", "-c", "user.email=cadence@example.invalid", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("git introuvable");
+    assert!(out.status.success(), "git {args:?} : {}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// Service Dépôts sur un dépôt « GitHub » local `me/app` dont le README porte `marqueur`.
+fn local_repos(dir: &std::path::Path, marqueur: &str) -> Arc<cadence_lib::repos::RepoService> {
+    let bare = dir.join("remotes").join("me").join("app.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "--bare", "-q", "-b", "main"]);
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    std::fs::write(work.join("README.md"), format!("{marqueur}\n")).unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-q", "-m", "init"]);
+    git(&work, &["push", "-q", &bare.to_string_lossy(), "main"]);
+    let settings = Arc::new(cadence_lib::app_settings::AppSettingsStore::load(&dir.join("config")));
+    settings
+        .update(|s| {
+            s.tracked_repos.insert("gestion-projet".into(), vec!["me/app".into()]);
+        })
+        .unwrap();
+    let base = format!("{}{}", dir.join("remotes").display(), std::path::MAIN_SEPARATOR);
+    let secrets = Arc::new(cadence_lib::secrets::MemorySecrets::default());
+    Arc::new(cadence_lib::repos::RepoService::new(dir.join("repos"), settings, secrets).with_remote_base(base))
+}
+
+/// Un tour : l'IA demande le worktree (`cadence__repo_checkout`) puis lit un fichier dedans,
+/// dans le même tour, sans carte d'approbation (accès accordé d'office).
+async fn reads_a_granted_worktree(ai: cadence_lib::app_settings::AiId, cli: PathBuf, checkout_tool: &str, dir: &std::path::Path) {
+    let (host, gateway) = fake_gateway(dir).await;
+    gateway.context().set_repos(local_repos(dir, "marqueur-tamanoir"));
+    let chat = chat_for(dir, &gateway, cli).await;
+    let input = ChatSendInput {
+        session: None,
+        text: format!(
+            "Appelle l'outil {checkout_tool} avec repo=\"me/app\" et task=\"smoke\". Puis lis le fichier README.md \
+             du dossier `path` renvoyé avec ton outil de lecture de fichiers (pas de shell), et réponds uniquement par \
+             son contenu."
+        ),
+        ai: Some(ai),
+    };
+    let id = chat.send(input).await.unwrap().session;
+    assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle, "{:?}", chat.detail(&id).await.unwrap().events);
+    let detail = chat.detail(&id).await.unwrap();
+    let events: Vec<AiEvent> = detail.events.into_iter().map(|e| e.event).collect();
+    assert!(!events.iter().any(|e| matches!(e, AiEvent::ApprovalRequested { .. })), "aucune carte d'approbation : {events:?}");
+    assert!(texts(&events).contains("marqueur-tamanoir"), "fichier du worktree lu : {events:?}");
+    assert_eq!(detail.worktrees.len(), 1);
+    chat.shutdown().await;
+    host.stop_all().await;
+    gateway.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "lance OpenCode (modèle gratuit d'OpenCode Zen, réseau)"]
+async fn ai_smoke_opencode_reads_a_granted_worktree_in_the_same_turn() {
+    let cli = smoke_cli("CADENCE_SMOKE_OPENCODE", "opencode");
+    let dir = std::env::temp_dir().join(format!("cadence-ai-opencode-wt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for var in ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
+        // SAFETY : test isolé, variables posées avant tout lancement de processus.
+        unsafe { std::env::set_var(var, dir.join("xdg").join(var.to_lowercase())) };
+    }
+    reads_a_granted_worktree(cadence_lib::app_settings::AiId::Opencode, cli, "cadence_cadence__repo_checkout", &dir).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "lance Claude Code (abonnement de l'utilisateur)"]
+async fn ai_smoke_claude_reads_a_granted_worktree_in_the_same_turn() {
+    let cli = smoke_cli("CADENCE_SMOKE_CLAUDE", "claude");
+    let dir = std::env::temp_dir().join(format!("cadence-ai-claude-wt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    reads_a_granted_worktree(cadence_lib::app_settings::AiId::ClaudeCode, cli, "mcp__cadence__cadence__repo_checkout", &dir).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Codex connecté (compte ChatGPT ou clé) : un tour qui appelle l'outil du plugin.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "lance Codex CLI (abonnement de l'utilisateur)"]
