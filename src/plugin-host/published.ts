@@ -104,9 +104,20 @@ const TOOL_NAME = /^[a-z0-9_]{1,40}$/;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 
 /** Dépôt suivi tel que le SDK publié le décrit. */
-function repoInfo(fullName: string) {
+export function repoInfo(fullName: string, localPath: string | null = null) {
   const [owner, name] = fullName.split("/") as [string, string];
-  return { fullName, owner, name, url: `https://github.com/${fullName}`, localPath: null };
+  return { fullName, owner, name, url: `https://github.com/${fullName}`, localPath };
+}
+
+/** Dépôts suivis avec leur clone local (`localPath`), s'il existe déjà. */
+async function repoInfos(api: HostApi, repos: string[]) {
+  const paths = await api.reposLocalPaths().catch(() => ({}) as Record<string, string>);
+  return repos.map((repo) => repoInfo(repo, paths[repo.toLowerCase()] ?? null));
+}
+
+/** Charge de l'événement `repos` du SDK publié (pas de sélecteur encore : « Tous les dépôts »). */
+export async function reposChange(api: HostApi, repos: string[]) {
+  return { repos: await repoInfos(api, repos), selection: { kind: "all" as const } };
 }
 
 type Handler = (params: Record<string, unknown>) => unknown;
@@ -189,25 +200,30 @@ export function publishedHandlers(
       return null;
     },
     "secrets.has": (params) => api.secretHas(text(params, "id")),
-    "repos.list": async () => (await api.reposList()).map(repoInfo),
+    "repos.list": async () => repoInfos(api, await api.reposList()),
     "repos.selection": () => ({ kind: "all" }),
     "repos.follow": async (params) => {
       const repo = text(params, "repo");
       if (!REPO.test(repo))
         throw new BridgeError("invalid_params", `Dépôt invalide : « ${repo} ».`);
-      return (await api.reposSet((list) => (list.includes(repo) ? list : [...list, repo]))).map(
-        repoInfo,
+      return repoInfos(
+        api,
+        await api.reposSet((list) => (list.includes(repo) ? list : [...list, repo])),
       );
     },
     "repos.unfollow": async (params) => {
       const repo = text(params, "repo");
-      return (await api.reposSet((list) => list.filter((r) => r !== repo))).map(repoInfo);
+      return repoInfos(api, await api.reposSet((list) => list.filter((r) => r !== repo)));
     },
-    "repos.checkout": () => {
-      throw new BridgeError(
-        "unavailable",
-        "Le clone des dépôts arrive avec la prochaine version de Cadence.",
-      );
+    "repos.checkout": async (params) => {
+      const repo = text(params, "repo");
+      if (!REPO.test(repo))
+        throw new BridgeError("invalid_params", `Dépôt invalide : « ${repo} ».`);
+      const tracked = await api.reposList();
+      if (!tracked.some((r) => r.toLowerCase() === repo.toLowerCase()))
+        throw new BridgeError("not_found", `Le plugin ne suit pas le dépôt ${repo}.`);
+      const task = typeof params.task === "string" && params.task.trim() ? params.task : null;
+      return { path: await api.reposCheckout(repo, task) };
     },
     "tools.status": (params) => api.toolStatus(text(params, "tool"), false),
     "tools.ensure": (params) => api.toolStatus(text(params, "tool"), true),

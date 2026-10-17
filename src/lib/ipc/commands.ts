@@ -36,6 +36,8 @@ import type {
   PluginSettingsView,
   ProjectState,
   Repo,
+  RepoCheckout,
+  RepoCloneView,
   RepoCreateInput,
   RepoOwner,
   ReviewRow,
@@ -103,6 +105,16 @@ export interface Commands {
     args: { plugin: string; tool: string; args: Record<string, unknown> | null };
     result: PluginToolResult;
   };
+  // Service Dépôts GitHub
+  /** Copie locale de chaque dépôt suivi (clonée, désignée ou pas encore clonée). */
+  repos_status: { args: NoArgs; result: RepoCloneView[] };
+  /** Pont de l'iframe (`repos.checkout`) : clone au besoin, worktree de la tâche. */
+  repos_checkout: {
+    args: { plugin: string; repo: string; task: string | null };
+    result: RepoCheckout;
+  };
+  /** « Désigner un clone existant… » ; `path` nul = revenir au clone de Cadence. */
+  repos_link: { args: { repo: string; path: string | null }; result: RepoCloneView };
   // Chat du cœur (réponses par `chat://event` et `chat://state`)
   chat_sessions: { args: NoArgs; result: ChatSessionRow[] };
   chat_session_get: { args: { id: string }; result: ChatSessionDetail };

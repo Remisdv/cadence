@@ -28,6 +28,7 @@ use crate::{
         registry::PluginRegistry,
         settings::PluginSettingsStore,
     },
+    repos::RepoService,
     secrets::SecretStore,
     store::RepoCache,
     tools::ToolService,
@@ -76,6 +77,8 @@ pub struct AppState {
     pub gateway: Option<Gateway>,
     /// Chat du cœur ; `None` si son historique n'a pas pu s'ouvrir.
     pub chat: Option<Arc<ChatService>>,
+    /// Service Dépôts : clones et worktrees des dépôts suivis (`<config>/repos`).
+    pub repo_service: Arc<RepoService>,
     /// Dépôts accessibles au jeton, lus une fois puis filtrés localement.
     pub repos: RwLock<Option<Vec<Repo>>>,
     /// Dossier des bases SQLite, une par dépôt.
@@ -124,6 +127,7 @@ impl AppState {
         let plugin_host = Arc::new(
             PluginHost::new(HostConfig::new(app_version), resolve, plugin_events).with_plugin_events(plugin_notifications),
         );
+        let repo_service = Arc::new(RepoService::new(config_dir.join("repos"), settings.clone(), secrets.clone()));
         Self {
             project: RwLock::default(),
             http: github::http_client(),
@@ -146,6 +150,7 @@ impl AppState {
             catalog: Catalog::new(cache_dir.with_file_name("catalog")),
             gateway: None,
             chat: None,
+            repo_service,
             repos: RwLock::default(),
             checkout_dir: cache_dir.with_file_name("repos"),
             cache_dir,

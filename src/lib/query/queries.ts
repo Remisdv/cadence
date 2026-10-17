@@ -42,8 +42,27 @@ export function useSaveAppSettings() {
     onSuccess: (settings) => {
       qc.setQueryData(keys.appSettings(), settings);
       void qc.invalidateQueries({ queryKey: keys.appStatus() });
+      void qc.invalidateQueries({ queryKey: keys.reposStatus() });
       // IA par défaut, IA ignorées, outils écartés : les demandeurs changent.
       void qc.invalidateQueries({ queryKey: keys.toolsReport() });
+    },
+  });
+}
+
+/* ---------- Service Dépôts GitHub ---------- */
+
+/** Copie locale de chaque dépôt suivi : clonée par Cadence, désignée, ou pas encore clonée. */
+export const useReposStatus = () =>
+  useQuery({ queryKey: keys.reposStatus(), queryFn: () => call("repos_status") });
+
+/** « Désigner un clone existant… » (`path` nul : revenir au clone de Cadence). */
+export function useLinkRepoClone() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { repo: string; path: string | null }) => call("repos_link", input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.reposStatus() });
+      void qc.invalidateQueries({ queryKey: keys.appSettings() });
     },
   });
 }

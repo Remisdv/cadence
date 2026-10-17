@@ -33,6 +33,9 @@ use crate::{
     secrets::SecretStore,
 };
 
+/// Notification au serveur d'un plugin `services = ["repos"]` : `{ "repos": ["owner/name", …] }`.
+pub const REPOS_NOTIFICATION: &str = "notifications/cadence/repos";
+
 /// Dossier des worktrees, à côté des clones (un owner GitHub ne commence jamais par un point).
 const WORKTREES: &str = ".worktrees";
 
@@ -134,6 +137,16 @@ impl RepoService {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Le dépôt est suivi par `plugin` (par au moins un plugin si `None`).
+    pub fn is_tracked(&self, repo: &str, plugin: Option<&str>) -> bool {
+        is_tracked(&self.settings.get(), repo, plugin)
+    }
+
+    /// Dépôts suivis par au moins un plugin.
+    pub fn tracked(&self) -> Vec<String> {
+        self.settings.get().tracked_repos.into_values().flatten().collect()
     }
 
     fn clone_dir(&self, key: &str) -> PathBuf {

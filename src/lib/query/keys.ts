@@ -14,6 +14,8 @@ export const keys = {
   pluginSecret: (plugin: string, secret: string) => ["plugins", "secret", plugin, secret] as const,
   pluginStatus: () => ["plugins", "status"] as const,
   catalog: () => ["plugins", "catalog"] as const,
+  /** Copies locales des dépôts suivis (service Dépôts). */
+  reposStatus: () => ["app", "repos"] as const,
   tools: ["tools"] as const,
   toolsReport: () => ["tools", "report"] as const,
   /** Journal de la dernière installation ou connexion d'un outil (`tool://install`). */

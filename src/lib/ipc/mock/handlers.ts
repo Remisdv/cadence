@@ -22,6 +22,8 @@ import type {
   PluginProcessView,
   PluginStateEvent,
   ProjectState,
+  RepoCloneView,
+  ReposChanged,
 } from "@/lib/types";
 import type { CommandArgs, CommandName, CommandResult } from "../commands";
 import { CommandError } from "../errors";
@@ -64,6 +66,10 @@ const scenario = params.get("scenario") ?? "app";
 const flow = params.get("flow") ?? "ok";
 const cliOutcome = params.get("cli") ?? "ok";
 
+/** Emplacement des clones simulé (`AppDirs.repos`). */
+const REPOS_DIR = String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\repos`;
+const winPath = (...parts: string[]) => parts.join("\\");
+
 const state = {
   github: scenario === "onboarding" ? data.githubDisconnected : data.githubConnected,
   claudeCode: scenario === "onboarding" ? data.claudeDetected : data.claudeConnected,
@@ -79,6 +85,13 @@ const state = {
   processes: mockProcesses(scenario === "plugin-crash"),
   chats: mockChats(scenario !== "app"),
   counter: 0,
+  /** Copies locales simulées du service Dépôts (`owner/nom` en minuscules). */
+  clones: {
+    "cadence-app/desktop": {
+      path: winPath(REPOS_DIR, "cadence-app", "desktop"),
+      worktrees: ["issue-142"],
+    },
+  } as Record<string, { path: string; worktrees: string[]; linked?: boolean }>,
   catalogFetchedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
 };
 let flowTimer: number | undefined;
@@ -219,7 +232,7 @@ const handlers: Handlers = {
       plugins: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins`,
       pluginsData: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins-data`,
       sessions: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\sessions`,
-      repos: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\repos`,
+      repos: REPOS_DIR,
     },
   }),
   app_settings_get: () => state.settings,
@@ -256,7 +269,57 @@ const handlers: Handlers = {
     if (patch.ignoredTools !== undefined)
       next.ignoredTools = [...new Set(patch.ignoredTools)].sort();
     state.settings = next;
+    for (const plugin of Object.keys(patch.trackedRepos ?? {}))
+      mockBus.emit<ReposChanged>("repos://changed", {
+        plugin,
+        repos: next.trackedRepos[plugin] ?? [],
+      });
     return next;
+  },
+
+  repos_status: () => {
+    const seen = new Set<string>();
+    return Object.values(state.settings.trackedRepos)
+      .flat()
+      .filter((repo) => !seen.has(repo.toLowerCase()) && seen.add(repo.toLowerCase()))
+      .map((repo) => cloneView(repo));
+  },
+  repos_checkout: ({ plugin, repo, task }) => {
+    if (!installed("repos_checkout", plugin).services.includes("repos"))
+      fail("repos_checkout", `Le plugin « ${plugin} » ne déclare pas services = ["repos"].`);
+    const tracked = state.settings.trackedRepos[plugin] ?? [];
+    if (!tracked.some((r) => r.toLowerCase() === repo.toLowerCase()))
+      fail("repos_checkout", `Le plugin « ${plugin} » ne suit pas le dépôt ${repo}.`);
+    const key = repo.toLowerCase();
+    const clone = (state.clones[key] ??= {
+      path: winPath(REPOS_DIR, ...key.split("/")),
+      worktrees: [],
+    });
+    const slug = task
+      ?.toLowerCase()
+      .normalize("NFD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    if (!slug) return { path: clone.path };
+    if (!clone.worktrees.includes(slug)) clone.worktrees = [...clone.worktrees, slug].sort();
+    return { path: winPath(REPOS_DIR, ".worktrees", ...key.split("/"), slug) };
+  },
+  repos_link: ({ repo, path }) => {
+    const key = repo.toLowerCase();
+    if (path === null) {
+      if (state.clones[key]?.linked) delete state.clones[key];
+      delete state.settings.repoClones[key];
+      return cloneView(repo);
+    }
+    if (!/^([a-z]:[\/]|\/)/i.test(path.trim()))
+      fail("repos_link", `${path} n'est pas un dépôt Git.`);
+    state.clones[key] = {
+      path: path.trim(),
+      worktrees: state.clones[key]?.worktrees ?? [],
+      linked: true,
+    };
+    state.settings.repoClones[key] = path.trim();
+    return cloneView(repo);
   },
 
   tools_list: async ({ refresh }) => {
@@ -784,6 +847,16 @@ const handlers: Handlers = {
     return detail;
   },
 };
+
+function cloneView(repo: string): RepoCloneView {
+  const clone = state.clones[repo.toLowerCase()];
+  return {
+    repo,
+    state: clone ? (clone.linked ? "linked" : "cloned") : "missing",
+    path: clone?.path ?? null,
+    worktrees: clone?.worktrees ?? [],
+  };
+}
 
 export async function handleMock<C extends CommandName>(
   command: C,

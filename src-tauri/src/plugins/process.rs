@@ -26,8 +26,8 @@ use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use rmcp::{
     ClientHandler, Peer, RoleClient, ServiceError,
     model::{
-        CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, CustomNotification, Implementation,
-        JsonObject, LoggingMessageNotificationParam, Tool,
+        CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, ClientNotification, CustomNotification,
+        Implementation, JsonObject, LoggingMessageNotificationParam, Tool,
     },
     service::NotificationContext,
 };
@@ -224,6 +224,27 @@ impl PluginProcess {
             }
             if rx.changed().await.is_err() {
                 return Err(self.unavailable(None));
+            }
+        }
+    }
+
+    /// Envoie une notification au serveur s'il tourne (sinon rien : il lira l'état à jour au
+    /// prochain lancement). Renvoie vrai si elle est partie.
+    pub async fn notify(&self, method: &str, params: serde_json::Value) -> bool {
+        let peer = {
+            let inner = self.inner.lock().unwrap();
+            if inner.state != ProcessState::Ready {
+                return false;
+            }
+            inner.peer.clone()
+        };
+        let Some(peer) = peer else { return false };
+        let notification = ClientNotification::CustomNotification(CustomNotification::new(method, Some(params)));
+        match peer.send_notification(notification).await {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!(plugin = self.id, method, %err, "notification au serveur non envoyée");
+                false
             }
         }
     }

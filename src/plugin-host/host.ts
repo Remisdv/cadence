@@ -89,6 +89,14 @@ export function hostApi(plugin: Pick<InstalledPluginView, "id" | "name">): HostA
       const saved = await call("app_settings_set", { patch: { trackedRepos: { [id]: next } } });
       return saved.trackedRepos[id] ?? [];
     },
+    reposLocalPaths: async () =>
+      Object.fromEntries(
+        (await call("repos_status"))
+          .filter((clone) => clone.path !== null)
+          .map((clone) => [clone.repo.toLowerCase(), clone.path as string]),
+      ),
+    reposCheckout: async (repo, task) =>
+      (await call("repos_checkout", { plugin: id, repo, task })).path,
     toolStatus: async (tool, ensure) => {
       const report = await call("tools_list", { refresh: false });
       const info = report.tools.find((t) => t.id === tool);

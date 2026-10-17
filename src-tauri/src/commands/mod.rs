@@ -14,5 +14,6 @@ pub mod issues;
 pub mod plugins;
 pub mod project;
 pub mod prs;
+pub mod repos;
 pub mod tools;
 pub mod versions;

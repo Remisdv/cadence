@@ -99,6 +99,7 @@ pub fn run() {
                 gateway::registry_lister(state.plugins.clone()),
                 gateway_events,
             );
+            context.set_repos(state.repo_service.clone());
             match tauri::async_runtime::block_on(gateway::server::Gateway::start(context, 0)) {
                 Ok(gateway) => state.gateway = Some(gateway),
                 Err(err) => tracing::error!(%err, "passerelle MCP impossible à démarrer"),
@@ -230,6 +231,9 @@ pub fn run() {
             commands::prs::prs_list,
             commands::prs::reviews_pending,
             commands::prs::pr_detail,
+            commands::repos::repos_status,
+            commands::repos::repos_checkout,
+            commands::repos::repos_link,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

@@ -134,6 +134,15 @@ impl PluginHost {
         self.process(plugin).tools().await
     }
 
+    /// Notification `method` au serveur du plugin s'il tourne ; un serveur arrêté n'est pas
+    /// démarré pour autant. Renvoie vrai si elle est partie.
+    pub async fn notify(&self, plugin: &str, method: &str, params: serde_json::Value) -> bool {
+        match self.existing(plugin) {
+            Some(process) => process.notify(method, params).await,
+            None => false,
+        }
+    }
+
     /// Arrête le serveur d'un plugin s'il tourne, et attend la fin du processus.
     pub async fn stop(&self, plugin: &str) {
         if let Some(process) = self.existing(plugin) {

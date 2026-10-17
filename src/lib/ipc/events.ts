@@ -11,6 +11,7 @@ import type {
   PluginInstallEvent,
   PluginStateEvent,
   RateLimitInfo,
+  ReposChanged,
   RunReport,
   SyncUpdated,
   ToolRunEvent,
@@ -37,6 +38,8 @@ export interface Events {
   "chat://state": ChatStatePayload;
   /** Journal d'une installation ou d'une connexion d'outil (ligne, ou fin avec `done`). */
   "tool://install": ToolRunEvent;
+  /** Dépôts suivis d'un plugin modifiés (relayé à ses iframes : événement `repos`). */
+  "repos://changed": ReposChanged;
 }
 
 export type EventName = keyof Events;

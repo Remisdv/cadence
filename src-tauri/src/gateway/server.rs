@@ -10,9 +10,10 @@
 //!   plugin indisponible répond par un résultat d'erreur lisible par l'IA, pas par une panne.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     net::{Ipv4Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    path::PathBuf,
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -42,6 +43,7 @@ use super::{
 use crate::{
     error::{AppError, AppResult},
     plugins::host::PluginHost,
+    repos::RepoService,
 };
 
 /// Plugins activés, lus à chaque requête (activation et désinstallation prises en compte).
@@ -61,6 +63,11 @@ pub struct GatewayContext {
     pub call_timeout: Duration,
     /// Dernier rapport de chaque exécution de fond.
     reports: Mutex<HashMap<String, RunReport>>,
+    /// Service Dépôts (`cadence__repo_checkout`), branché au démarrage de l'app.
+    repos: OnceLock<Arc<RepoService>>,
+    /// Dossiers ouverts à chaque session par `cadence__repo_checkout`, en mémoire seulement :
+    /// le chat les passe à la CLI au prochain lancement de la session.
+    grants: Mutex<HashMap<String, BTreeSet<PathBuf>>>,
 }
 
 impl GatewayContext {
@@ -73,7 +80,33 @@ impl GatewayContext {
             tokens: Tokens::default(),
             call_timeout: AI_CALL_TIMEOUT,
             reports: Mutex::default(),
+            repos: OnceLock::new(),
+            grants: Mutex::default(),
         })
+    }
+
+    /// Branche le service Dépôts (une seule fois).
+    pub fn set_repos(&self, repos: Arc<RepoService>) {
+        let _ = self.repos.set(repos);
+    }
+
+    pub fn repos(&self) -> Option<&Arc<RepoService>> {
+        self.repos.get()
+    }
+
+    /// Ouvre `dir` à la session (worktree rendu par `cadence__repo_checkout`).
+    pub fn grant(&self, session: &str, dir: PathBuf) {
+        self.grants.lock().unwrap().entry(session.to_string()).or_default().insert(dir);
+    }
+
+    /// Dossiers ouverts à la session, triés.
+    pub fn granted(&self, session: &str) -> Vec<PathBuf> {
+        self.grants.lock().unwrap().get(session).map(|dirs| dirs.iter().cloned().collect()).unwrap_or_default()
+    }
+
+    /// La conversation disparaît : ses accès aussi.
+    pub fn forget_grants(&self, session: &str) {
+        self.grants.lock().unwrap().remove(session);
     }
 
     pub(crate) fn record_report(&self, report: RunReport) {
@@ -245,6 +278,9 @@ impl ServerHandler for GatewayHandler {
         let (plugin, tool) = scope::split(&request.name).ok_or_else(unknown)?;
         let args = request.arguments.clone().unwrap_or_default();
 
+        if plugin == CORE && tool == core_tools::REPO_CHECKOUT {
+            return Ok(core_tools::repo_checkout(&self.context, &session, &args).await.into());
+        }
         if plugin == CORE {
             return core_tools::call(&self.context, &session, tool, &args).map(Into::into).ok_or_else(unknown);
         }

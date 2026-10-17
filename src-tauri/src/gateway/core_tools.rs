@@ -4,10 +4,9 @@
 //!
 //! - `cadence__plugins_info` : plugins activés et leurs vues (pour les liens `cadence:`) ;
 //! - `cadence__open_view` : ouvre une vue de plugin dans l'app (événement `ui://open-view`) ;
-//! - `cadence__run_report` : progression et résultat d'une exécution de fond (`run://report`).
-//!
-//! `cadence__approve` (approbations de Claude Code) et `cadence__repo_checkout` (service
-//! Dépôts) viendront avec le chat et le service `repos`.
+//! - `cadence__run_report` : progression et résultat d'une exécution de fond (`run://report`) ;
+//! - `cadence__repo_checkout` : clone d'un dépôt suivi et worktree d'une tâche (service Dépôts),
+//!   ouvert à la session qui l'a demandé, et à elle seule.
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -95,6 +94,19 @@ pub fn tools() -> Vec<Tool> {
             false,
         ),
         core_tool(
+            REPO_CHECKOUT,
+            "Donne accès au code d'un dépôt GitHub suivi dans Cadence : clone au besoin, puis              prépare un worktree pour la tâche (`task`, ex. `issue-42`) et renvoie son chemin              (`path`). Un appel répété pour la même tâche renvoie le même worktree, avec le              travail en cours. Le worktree est détaché : crée ta branche dedans. Tu tournes dans              un dossier neutre ; ce dossier est ouvert à ta session, et à elle seule.",
+            json!({
+                "type": "object",
+                "required": ["repo"],
+                "properties": {
+                    "repo": { "type": "string", "description": "Dépôt suivi, `owner/name`." },
+                    "task": { "type": "string", "description": "Tâche (un worktree par tâche) ; sans tâche, le clone lui-même." }
+                }
+            }),
+            false,
+        ),
+        core_tool(
             "run_report",
             "Tâche de fond : signale la progression (`progress` en %, `text`) et, en dernier, le \
              résultat (`final: true`, `data` structuré facultatif). Personne ne peut répondre \
@@ -113,6 +125,36 @@ pub fn tools() -> Vec<Tool> {
             false,
         ),
     ]
+}
+
+/// Nom (sans préfixe) de l'outil du service Dépôts, asynchrone (clone, fetch).
+pub const REPO_CHECKOUT: &str = "repo_checkout";
+
+/// `cadence__repo_checkout { repo, task? }` → `{ path }` : le dossier est ouvert à la session.
+pub async fn repo_checkout(ctx: &GatewayContext, scope: &SessionScope, args: &JsonObject) -> CallToolResult {
+    let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+    let Some(repos) = ctx.repos() else {
+        return refused("Le service Dépôts de Cadence n'est pas disponible.");
+    };
+    let Some(repo) = text("repo") else { return refused("`repo` (owner/name) est obligatoire.") };
+    if !repos.is_tracked(repo, None) {
+        return refused(format!(
+            "Le dépôt {repo} n'est suivi par aucun plugin : l'utilisateur peut l'ajouter dans Réglages › Dépôts GitHub."
+        ));
+    }
+    let task = text("task");
+    match repos.checkout(repo, task).await {
+        Ok(path) => {
+            ctx.grant(&scope.session, path.clone());
+            ok(json!({
+                "path": path.display().to_string(),
+                "repo": repo,
+                "task": task,
+                "note": "Dossier ouvert à cette session. S'il n'est pas encore accessible pendant ce tour                          (refus ou demande d'approbation), il le sera dès le prochain message."
+            }))
+        }
+        Err(err) => refused(err.to_string()),
+    }
 }
 
 fn ok(value: Value) -> CallToolResult {

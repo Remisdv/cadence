@@ -34,6 +34,17 @@ pub const PLUGIN_EVENT: &str = "plugin://event";
 pub const CATALOG_UPDATED: &str = "catalog://updated";
 /// `ToolRunEvent` : journal d'une installation ou d'une connexion d'outil.
 pub const TOOL_RUN: &str = "tool://install";
+/// `ReposChanged` : dépôts suivis d'un plugin modifiés (relayé à ses iframes, événement `repos`).
+pub const REPOS_CHANGED: &str = "repos://changed";
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReposChanged {
+    pub plugin: String,
+    /// Liste complète des dépôts suivis (`owner/name`).
+    pub repos: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

@@ -28,6 +28,10 @@ function setup(overrides: Partial<HostApi> = {}) {
     pickFiles: vi.fn(async () => ["C:/cours.pdf"]),
     reposList: vi.fn(async () => ["RemiSDV/cadence"]),
     reposSet: vi.fn(async (update: (r: string[]) => string[]) => update(["RemiSDV/cadence"])),
+    reposLocalPaths: vi.fn(async () => ({ "remisdv/cadence": "C:/repos/remisdv/cadence" })),
+    reposCheckout: vi.fn(
+      async (repo: string, task: string | null) => `C:/repos/.worktrees/${repo}/${task}`,
+    ),
     toolStatus: vi.fn(async () => ({ installed: true, version: "2.47.1", authenticated: null })),
     ...overrides,
   };
@@ -174,7 +178,14 @@ describe("pont de l'iframe", () => {
       result: { runId: "c1" },
     });
     expect(await ask("r", "repos.list", {})).toMatchObject({
-      result: [{ fullName: "RemiSDV/cadence", owner: "RemiSDV", name: "cadence" }],
+      result: [
+        {
+          fullName: "RemiSDV/cadence",
+          owner: "RemiSDV",
+          name: "cadence",
+          localPath: "C:/repos/remisdv/cadence",
+        },
+      ],
     });
     expect(await ask("x", "inconnue", {})).toMatchObject({
       ok: false,
@@ -199,6 +210,31 @@ describe("pont de l'iframe", () => {
         data: { name: "sync.updated", data: { ids: [1] } },
       },
     ]);
+  });
+
+  it("prépare le worktree d'une tâche pour un dépôt suivi (repos.checkout)", async () => {
+    const { bridge, sent, frame, api } = setup();
+    const ask = async (id: string, params: unknown) => {
+      await bridge.handle({
+        source: frame,
+        data: { channel: "cadence", api: 1, kind: "request", id, method: "repos.checkout", params },
+      });
+      return sent.find((m) => (m as unknown as { id?: string }).id === id) as unknown;
+    };
+    expect(await ask("c1", { repo: "remisdv/Cadence", task: "issue-42" })).toMatchObject({
+      ok: true,
+      result: { path: "C:/repos/.worktrees/remisdv/Cadence/issue-42" },
+    });
+    expect(api.reposCheckout).toHaveBeenCalledWith("remisdv/Cadence", "issue-42");
+    expect(await ask("c2", { repo: "me/autre" })).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    expect(await ask("c3", { repo: "pas un dépôt" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+    expect(api.reposCheckout).toHaveBeenCalledTimes(1);
   });
 
   it("fusionne les réglages et pousse les événements", async () => {

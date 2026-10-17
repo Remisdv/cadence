@@ -10,6 +10,7 @@ use std::{
 };
 
 use cadence_lib::{
+    app_settings::AppSettingsStore,
     gateway::{
         PluginSummary,
         core_tools::GatewayEvent,
@@ -21,6 +22,8 @@ use cadence_lib::{
         host::{HostConfig, PluginHost},
         manifest::PluginViewInfo,
     },
+    repos::RepoService,
+    secrets::MemorySecrets,
 };
 use rmcp::{
     ServiceError, ServiceExt,
@@ -116,6 +119,7 @@ async fn exposes_plugin_and_core_tools_to_an_authorized_session() {
         [
             "cadence__open_view",
             "cadence__plugins_info",
+            "cadence__repo_checkout",
             "cadence__run_report",
             "fake__crash",
             "fake__echo",
@@ -123,6 +127,7 @@ async fn exposes_plugin_and_core_tools_to_an_authorized_session() {
             "fake__env",
             "fake__fail",
             "fake__grow",
+            "fake__received",
             "fake__slow",
         ],
         "`ui_only` n'est jamais exposé"
@@ -182,6 +187,62 @@ async fn records_background_run_reports() {
     assert_eq!(last.data, Some(json!({ "issues": [1, 2, 3] })));
     let reports = f.events.lock().unwrap().iter().filter(|e| matches!(e, GatewayEvent::RunReport(_))).count();
     assert_eq!(reports, 2);
+    let _ = client.cancel().await;
+}
+
+fn git(cwd: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(["-c", "user.name=Cadence", "-c", "user.email=cadence@example.invalid", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("git introuvable");
+    assert!(out.status.success(), "git {args:?} : {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn checks_out_a_tracked_repo_for_the_calling_session_only() {
+    let f = fixture("repos").await;
+    // Dépôt « GitHub » local : `<dir>/remotes/me/app.git`, un commit.
+    let bare = f.dir.join("remotes").join("me").join("app.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "--bare", "-q", "-b", "main"]);
+    let work = f.dir.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    std::fs::write(work.join("README.md"), "# app
+").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-q", "-m", "init"]);
+    git(&work, &["push", "-q", &bare.to_string_lossy(), "main"]);
+
+    let settings = Arc::new(AppSettingsStore::load(&f.dir.join("config")));
+    settings.update(|s| {
+        s.tracked_repos.insert("gestion-projet".into(), vec!["me/app".into()]);
+    })
+    .unwrap();
+    let base = format!("{}{}", f.dir.join("remotes").display(), std::path::MAIN_SEPARATOR);
+    let repos = RepoService::new(f.dir.join("repos"), settings, Arc::new(MemorySecrets::default())).with_remote_base(base);
+    f.gateway.context().set_repos(Arc::new(repos));
+
+    let token = f.gateway.issue_token(SessionScope { session: "chat-9".into(), run: None });
+    let client = connect(&f.gateway.url(), &token).await.unwrap();
+    let done = call(&client, "cadence__repo_checkout", json!({ "repo": "me/app", "task": "issue-42" })).await.unwrap();
+    assert_eq!(done.is_error, Some(false), "{done:?}");
+    let path = PathBuf::from(done.structured_content.unwrap()["path"].as_str().unwrap());
+    assert!(path.join("README.md").is_file());
+    assert!(path.ends_with(PathBuf::from(".worktrees").join("me").join("app").join("issue-42")));
+    assert_eq!(f.gateway.context().granted("chat-9"), [path.clone()]);
+    assert!(f.gateway.context().granted("chat-autre").is_empty(), "ouvert à la session appelante seulement");
+
+    // Dépôt non suivi, ou sans `repo` : refus lisible par l'IA, rien n'est ouvert.
+    for args in [json!({ "repo": "me/autre" }), json!({})] {
+        let refused = call(&client, "cadence__repo_checkout", args).await.unwrap();
+        assert_eq!(refused.is_error, Some(true));
+    }
+    assert_eq!(f.gateway.context().granted("chat-9").len(), 1);
+    f.gateway.context().forget_grants("chat-9");
+    assert!(f.gateway.context().granted("chat-9").is_empty());
     let _ = client.cancel().await;
 }
 

@@ -9,14 +9,15 @@
 //! - `env` : variables `CADENCE_*` reçues, dossier courant, fuite éventuelle de jetons d'IA ;
 //! - `grow` : ajoute l'outil `extra` et envoie `notifications/tools/list_changed` ;
 //! - `fail` : répond par une erreur MCP ;
-//! - `emit` : envoie `notifications/cadence/event` (`event`, `data` repris des arguments).
+//! - `emit` : envoie `notifications/cadence/event` (`event`, `data` repris des arguments) ;
+//! - `received` : notifications `notifications/cadence/*` reçues de l'hôte (méthode, paramètres).
 //!
 //! Arguments : `--crash-on-start` (quitte avant `initialize`), `--hang-on-start` (ne répond
 //! jamais). Écrit « fake-plugin prêt » sur stderr au démarrage.
 
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -28,13 +29,14 @@ use rmcp::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, CustomNotification, JsonObject,
         ListToolsResult, MetaObject, PaginatedRequestParams, ServerCapabilities, ServerConfig, ServerNotification, Tool,
     },
-    service::RequestContext,
+    service::{NotificationContext, RequestContext},
 };
 use serde_json::{Value, json};
 
 #[derive(Clone, Default)]
 struct Fake {
     grown: Arc<AtomicBool>,
+    received: Arc<Mutex<Vec<Value>>>,
 }
 
 fn schema(properties: Value) -> Arc<JsonObject> {
@@ -74,6 +76,7 @@ impl ServerHandler for Fake {
             tool("grow", "Ajoute l'outil `extra`.", json!({})),
             tool("fail", "Répond par une erreur.", json!({})),
             tool("emit", "Envoie un événement aux iframes du plugin.", json!({ "event": { "type": "string" } })),
+            tool("received", "Notifications reçues de l'hôte.", json!({})),
         ];
         if self.grown.load(Ordering::SeqCst) {
             tools.push(tool("extra", "Ajouté par `grow`.", json!({})));
@@ -124,7 +127,14 @@ impl ServerHandler for Fake {
                 let _ = context.peer.send_notification(ServerNotification::CustomNotification(notification)).await;
                 Ok(ok(json!({ "emitted": true })))
             }
+            "received" => Ok(ok(json!({ "received": *self.received.lock().unwrap() }))),
             other => Err(ErrorData::invalid_params(format!("outil inconnu : {other}"), None)),
+        }
+    }
+
+    async fn on_custom_notification(&self, notification: CustomNotification, _context: NotificationContext<RoleServer>) {
+        if notification.method.starts_with("notifications/cadence/") {
+            self.received.lock().unwrap().push(json!({ "method": notification.method, "params": notification.params }));
         }
     }
 }

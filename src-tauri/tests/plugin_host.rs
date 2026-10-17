@@ -125,12 +125,12 @@ async fn starts_on_demand_calls_in_parallel_and_stops() {
 
     let tools = f.host.tools(PLUGIN).await.unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
-    assert_eq!(names, ["echo", "slow", "crash", "ui_only", "env", "grow", "fail", "emit"]);
+    assert_eq!(names, ["echo", "slow", "crash", "ui_only", "env", "grow", "fail", "emit", "received"]);
     let ui_only = tools.iter().find(|t| t.name == "ui_only").unwrap();
     assert_eq!(ui_only.meta.as_ref().unwrap().0.get("cadence/visibility"), Some(&json!("ui")));
 
     let status = f.status();
-    assert_eq!((status.state, status.tools), (ProcessState::Ready, 8));
+    assert_eq!((status.state, status.tools), (ProcessState::Ready, 9));
     assert!(status.pid.is_some());
     assert_eq!(f.call("echo", json!({ "text": "bonjour" })).await.unwrap(), json!({ "echo": { "text": "bonjour" } }));
 
@@ -246,6 +246,28 @@ async fn stops_idle_servers_but_not_busy_ones() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn notifies_running_servers_only() {
+    let f = Fixture::new("notify", &[], None, |_| {});
+    let repos = json!({ "repos": ["me/app", "org/lib"] });
+    assert!(!f.host.notify(PLUGIN, "notifications/cadence/repos", repos.clone()).await, "serveur arrêté : pas démarré pour ça");
+    assert_eq!(f.status().state, ProcessState::Stopped);
+
+    f.call("echo", json!({})).await.unwrap();
+    assert!(f.host.notify(PLUGIN, "notifications/cadence/repos", repos.clone()).await);
+    let start = Instant::now();
+    loop {
+        let received = f.call("received", json!({})).await.unwrap();
+        if let Some(first) = received["received"].get(0) {
+            assert_eq!(*first, json!({ "method": "notifications/cadence/repos", "params": repos }));
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "notification jamais reçue");
+        tokio::time::sleep(ms(20)).await;
+    }
+    f.host.stop_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn relays_plugin_events() {
     let f = Fixture::new("events", &[], None, |_| {});
     f.call("emit", json!({ "event": "sync.updated", "data": { "ids": [12] } })).await.unwrap();
@@ -262,9 +284,9 @@ async fn relays_plugin_events() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rereads_tools_on_list_changed() {
     let f = Fixture::new("list-changed", &[], None, |_| {});
-    assert_eq!(f.host.tools(PLUGIN).await.unwrap().len(), 8);
+    assert_eq!(f.host.tools(PLUGIN).await.unwrap().len(), 9);
     f.call("grow", json!({})).await.unwrap();
-    f.wait("outil ajouté", |s| s.tools == 9).await;
+    f.wait("outil ajouté", |s| s.tools == 10).await;
     let tools = f.host.tools(PLUGIN).await.unwrap();
     assert!(tools.iter().any(|t| t.name == "extra"));
     assert_eq!(f.call("extra", json!({})).await.unwrap(), json!({ "ok": true }));

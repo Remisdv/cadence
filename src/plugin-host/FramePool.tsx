@@ -15,6 +15,7 @@ import type { InstalledPluginView } from "@/lib/types";
 import { createBridge, type Bridge } from "./bridge";
 import { isMockIpc } from "@/lib/ipc/transport";
 import { hostApi, mockFrameDocument, pluginRuns, pluginUrl, shellTheme } from "./host";
+import { reposChange } from "./published";
 
 type Route = { view: string; params: Record<string, string> };
 type Rect = { left: number; top: number; width: number; height: number };
@@ -115,9 +116,10 @@ function ManagedFrame({ plugin }: { plugin: InstalledPluginView }) {
   useEffect(() => {
     const frame = iframe.current?.contentWindow;
     if (!frame) return;
+    const api = hostApi(plugin);
     const b = createBridge({
       frame,
-      api: hostApi(plugin),
+      api,
       hello: () => ({
         api: 1,
         plugin: { id: plugin.id, version: plugin.version },
@@ -147,9 +149,15 @@ function ManagedFrame({ plugin }: { plugin: InstalledPluginView }) {
     const offEvents = subscribe("plugin://event", (payload) => {
       if (payload.plugin === plugin.id) b.emit(payload.event, payload.data);
     });
+    // Dépôts suivis modifiés (réglages, onboarding ou l'iframe elle-même) : événement `repos`.
+    const offRepos = subscribe("repos://changed", (payload) => {
+      if (payload.plugin !== plugin.id || !plugin.services.includes("repos")) return;
+      void reposChange(api, payload.repos).then((change) => bridge.current?.emit("repos", change));
+    });
     return () => {
       window.removeEventListener("message", onMessage);
       offEvents();
+      offRepos();
       offRuns();
       offRunState();
       bridge.current = null;
