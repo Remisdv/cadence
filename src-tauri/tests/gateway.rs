@@ -129,6 +129,7 @@ async fn exposes_plugin_and_core_tools_to_an_authorized_session() {
             "fake__grow",
             "fake__received",
             "fake__slow",
+            "fake__slow_progress",
         ],
         "`ui_only` n'est jamais exposé"
     );
@@ -166,6 +167,46 @@ async fn exposes_plugin_and_core_tools_to_an_authorized_session() {
     let no_run = call(&client, "cadence__run_report", json!({ "text": "fini" })).await.unwrap();
     assert_eq!(no_run.is_error, Some(true));
 
+    let _ = client.cancel().await;
+    f.host.stop_all().await;
+}
+
+/// Client MCP qui compte les `notifications/tools/list_changed` reçues.
+#[derive(Clone, Default)]
+struct Watcher(Arc<std::sync::atomic::AtomicU32>);
+
+impl rmcp::ClientHandler for Watcher {
+    async fn on_tool_list_changed(&self, _context: rmcp::service::NotificationContext<rmcp::RoleClient>) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tells_sessions_when_plugin_tools_change() {
+    let f = fixture("list-changed").await;
+    let token = f.gateway.issue_token(SessionScope { session: "chat-3".into(), run: None });
+    let watcher = Watcher::default();
+    let config = StreamableHttpClientTransportConfig::with_uri(f.gateway.url()).auth_header(token.expose_secret().to_string());
+    let client = watcher.clone().serve(StreamableHttpClientTransport::from_config(config)).await.unwrap();
+    let count = || watcher.0.load(std::sync::atomic::Ordering::SeqCst);
+    let wait_for = |n: u32| async move {
+        let start = std::time::Instant::now();
+        while count() < n {
+            assert!(start.elapsed() < std::time::Duration::from_secs(10), "{n} notification(s) attendue(s), {} reçue(s)", count());
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    };
+
+    // Le plugin ajoute un outil : la session en est prévenue et le voit.
+    let params = CallToolRequestParams::new("fake__grow".to_string());
+    client.peer().call_tool(params).await.unwrap();
+    wait_for(1).await;
+    let names: Vec<String> = client.peer().list_all_tools().await.unwrap().into_iter().map(|t| t.name.into_owned()).collect();
+    assert!(names.contains(&"fake__extra".to_string()));
+
+    // Plugin activé, désactivé, installé ou retiré : même chose.
+    f.gateway.context().notify_tools_changed().await;
+    wait_for(2).await;
     let _ = client.cancel().await;
     f.host.stop_all().await;
 }

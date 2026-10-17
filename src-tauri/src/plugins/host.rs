@@ -77,6 +77,8 @@ pub(crate) struct Shared {
     pub(crate) resolve: Resolver,
     pub(crate) sink: StateSink,
     pub(crate) events: Option<PluginEventSink>,
+    /// Id du plugin dont les outils viennent de changer (`notifications/tools/list_changed`).
+    pub(crate) tools_changed: tokio::sync::broadcast::Sender<String>,
 }
 
 pub struct PluginHost {
@@ -86,7 +88,13 @@ pub struct PluginHost {
 
 impl PluginHost {
     pub fn new(config: HostConfig, resolve: Resolver, sink: StateSink) -> Self {
-        Self { shared: Arc::new(Shared { config, resolve, sink, events: None }), processes: Mutex::default() }
+        let (tools_changed, _) = tokio::sync::broadcast::channel(16);
+        Self { shared: Arc::new(Shared { config, resolve, sink, events: None, tools_changed }), processes: Mutex::default() }
+    }
+
+    /// Plugins dont les outils changent en cours de route (relayé aux sessions d'IA).
+    pub fn subscribe_tools_changed(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.shared.tools_changed.subscribe()
     }
 
     /// Relaie les `notifications/cadence/event` des serveurs (à appeler avant tout lancement).

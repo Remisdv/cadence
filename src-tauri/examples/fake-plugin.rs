@@ -10,7 +10,8 @@
 //! - `grow` : ajoute l'outil `extra` et envoie `notifications/tools/list_changed` ;
 //! - `fail` : répond par une erreur MCP ;
 //! - `emit` : envoie `notifications/cadence/event` (`event`, `data` repris des arguments) ;
-//! - `received` : notifications `notifications/cadence/*` reçues de l'hôte (méthode, paramètres).
+//! - `received` : notifications `notifications/cadence/*` reçues de l'hôte (méthode, paramètres) ;
+//! - `slow_progress` : attend `ms` millisecondes en signalant sa progression toutes les `every` ms.
 //!
 //! Arguments : `--crash-on-start` (quitte avant `initialize`), `--hang-on-start` (ne répond
 //! jamais). Écrit « fake-plugin prêt » sur stderr au démarrage.
@@ -27,7 +28,8 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, CustomNotification, JsonObject,
-        ListToolsResult, MetaObject, PaginatedRequestParams, ServerCapabilities, ServerConfig, ServerNotification, Tool,
+        ListToolsResult, MetaObject, PaginatedRequestParams, ProgressNotificationParam, ServerCapabilities, ServerConfig,
+        ServerNotification, Tool,
     },
     service::{NotificationContext, RequestContext},
 };
@@ -77,6 +79,7 @@ impl ServerHandler for Fake {
             tool("fail", "Répond par une erreur.", json!({})),
             tool("emit", "Envoie un événement aux iframes du plugin.", json!({ "event": { "type": "string" } })),
             tool("received", "Notifications reçues de l'hôte.", json!({})),
+            tool("slow_progress", "Attend `ms` ms en signalant sa progression.", json!({ "ms": { "type": "integer" }, "every": { "type": "integer" } })),
         ];
         if self.grown.load(Ordering::SeqCst) {
             tools.push(tool("extra", "Ajouté par `grow`.", json!({})));
@@ -128,6 +131,20 @@ impl ServerHandler for Fake {
                 Ok(ok(json!({ "emitted": true })))
             }
             "received" => Ok(ok(json!({ "received": *self.received.lock().unwrap() }))),
+            "slow_progress" => {
+                let total = args.get("ms").and_then(Value::as_u64).unwrap_or(500);
+                let every = args.get("every").and_then(Value::as_u64).unwrap_or(100).max(10);
+                let token = context.meta.get_progress_token();
+                let mut done = 0;
+                while done < total {
+                    tokio::time::sleep(Duration::from_millis(every)).await;
+                    done += every;
+                    if let Some(token) = &token {
+                        let _ = context.peer.notify_progress(ProgressNotificationParam::new(token.clone(), done as f64)).await;
+                    }
+                }
+                Ok(ok(json!({ "slept": total, "progress": token.is_some() })))
+            }
             other => Err(ErrorData::invalid_params(format!("outil inconnu : {other}"), None)),
         }
     }

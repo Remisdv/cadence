@@ -26,10 +26,10 @@ use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use rmcp::{
     ClientHandler, Peer, RoleClient, ServiceError,
     model::{
-        CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, ClientNotification, CustomNotification,
-        Implementation, JsonObject, LoggingMessageNotificationParam, Tool,
+        CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, ClientNotification,
+        ClientRequest, CustomNotification, Implementation, JsonObject, LoggingMessageNotificationParam, ServerResult, Tool,
     },
-    service::NotificationContext,
+    service::{NotificationContext, PeerRequestOptions},
 };
 use serde::Serialize;
 use tokio::{
@@ -263,11 +263,29 @@ impl PluginProcess {
         if let Some(args) = args {
             params = params.with_arguments(args);
         }
-        match tokio::time::timeout(timeout, peer.call_tool(params)).await {
-            Err(_) => Err(AppError::ToolError(format!("{}__{tool} n'a pas répondu en {} s.", self.id, timeout.as_secs()))),
-            Ok(Ok(result)) => Ok(result),
-            Ok(Err(ServiceError::McpError(err))) => Err(AppError::ToolError(format!("{}__{tool} : {}", self.id, err.message))),
-            Ok(Err(err)) => Err(self.unavailable(Some(&format!("{err}.")))),
+        // Chaque `notifications/progress` du serveur relance le délai, dans la limite de
+        // `PROGRESS_MAX_FACTOR` fois le délai de base.
+        let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
+        let mut options = PeerRequestOptions::with_timeout(timeout).reset_timeout_on_progress();
+        options.max_total_timeout = Some(timeout * PROGRESS_MAX_FACTOR);
+        let response = match peer.send_request_with_option(request, options).await {
+            Ok(handle) => handle.await_response().await,
+            Err(err) => Err(err),
+        };
+        match response {
+            Ok(ServerResult::CallToolResult(result)) => Ok(result),
+            Ok(_) => Err(AppError::ToolError(format!("{}__{tool} : réponse inattendue du serveur.", self.id))),
+            // Plafond atteint malgré la progression (rmcp rend le délai total dépassé).
+            Err(ServiceError::Timeout { timeout: total }) if total > timeout => Err(AppError::ToolError(format!(
+                "{}__{tool} n'a pas fini en {} s malgré sa progression.",
+                self.id,
+                total.as_secs()
+            ))),
+            Err(ServiceError::Timeout { .. }) => {
+                Err(AppError::ToolError(format!("{}__{tool} n'a pas répondu en {} s.", self.id, timeout.as_secs())))
+            }
+            Err(ServiceError::McpError(err)) => Err(AppError::ToolError(format!("{}__{tool} : {}", self.id, err.message))),
+            Err(err) => Err(self.unavailable(Some(&format!("{err}.")))),
         }
     }
 
@@ -319,9 +337,16 @@ impl PluginProcess {
     }
 
     fn replace_tools(&self, generation: u64, tools: Vec<Tool>) {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.generation == generation {
-            inner.tools = tools;
+        let changed = {
+            let mut inner = self.inner.lock().unwrap();
+            let current = inner.generation == generation;
+            if current {
+                inner.tools = tools;
+            }
+            current
+        };
+        if changed {
+            let _ = self.shared.tools_changed.send(self.id.clone());
         }
     }
 
@@ -546,6 +571,9 @@ fn exit_message(status: std::io::Result<std::process::ExitStatus>) -> String {
 }
 
 const TAIL_LINES: usize = 5;
+
+/// Un appel qui signale sa progression peut durer jusqu'à ce multiple de son délai.
+pub const PROGRESS_MAX_FACTOR: u32 = 6;
 
 /// Ajoute les dernières lignes de stderr à un message d'arrêt.
 fn with_tail(why: String, tail: &Mutex<VecDeque<String>>) -> String {

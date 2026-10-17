@@ -7,7 +7,9 @@
 //! - `tools/list` : outils `all` des plugins activés qui ont un serveur (démarré au besoin),
 //!   préfixés, puis outils du cœur ;
 //! - `tools/call` : route vers le serveur du plugin (600 s), ou vers les outils du cœur. Un
-//!   plugin indisponible répond par un résultat d'erreur lisible par l'IA, pas par une panne.
+//!   plugin indisponible répond par un résultat d'erreur lisible par l'IA, pas par une panne ;
+//! - `notifications/tools/list_changed` aux sessions connectées quand les outils d'un plugin
+//!   changent, ou qu'un plugin est activé, désactivé, installé ou retiré.
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -25,12 +27,12 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use rmcp::{
-    ErrorData, RoleServer, ServerHandler,
+    ErrorData, Peer, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation, ListToolsResult,
         PaginatedRequestParams, ResultType, ServerCapabilities, ServerConfig,
     },
-    service::RequestContext,
+    service::{NotificationContext, RequestContext},
     transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager},
 };
 use tokio::sync::oneshot;
@@ -68,6 +70,8 @@ pub struct GatewayContext {
     /// Dossiers ouverts à chaque session par `cadence__repo_checkout`, en mémoire seulement :
     /// le chat les passe à la CLI au prochain lancement de la session.
     grants: Mutex<HashMap<String, BTreeSet<PathBuf>>>,
+    /// Sessions MCP connectées, prévenues quand la liste des outils change.
+    peers: Mutex<Vec<Peer<RoleServer>>>,
 }
 
 impl GatewayContext {
@@ -82,7 +86,20 @@ impl GatewayContext {
             reports: Mutex::default(),
             repos: OnceLock::new(),
             grants: Mutex::default(),
+            peers: Mutex::default(),
         })
+    }
+
+    /// Prévient les sessions connectées que la liste des outils a changé ; oublie celles qui
+    /// sont fermées.
+    pub async fn notify_tools_changed(&self) {
+        self.peers.lock().unwrap().retain(|p| !p.is_transport_closed());
+        let peers: Vec<Peer<RoleServer>> = self.peers.lock().unwrap().clone();
+        for peer in peers {
+            if let Err(err) = peer.notify_tool_list_changed().await {
+                tracing::debug!(%err, "session MCP non prévenue du changement d'outils");
+            }
+        }
     }
 
     /// Branche le service Dépôts (une seule fois).
@@ -142,6 +159,20 @@ impl Gateway {
         let router = Router::new()
             .route_service("/mcp", service)
             .layer(middleware::from_fn_with_state(context.clone(), authorize));
+
+        // Outils d'un plugin modifiés : les sessions connectées relisent `tools/list`.
+        {
+            let context = context.clone();
+            let mut changes = context.host.subscribe_tools_changed();
+            tokio::spawn(async move {
+                loop {
+                    match changes.recv().await {
+                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => context.notify_tools_changed().await,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
 
         let (tx, rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -230,13 +261,17 @@ fn tool_error(err: &AppError) -> CallToolResult {
 
 impl ServerHandler for GatewayHandler {
     fn get_info(&self) -> ServerConfig {
-        let mut config = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
+        let mut config = ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_tool_list_changed().build());
         config.server_info = Implementation::new("cadence", &self.context.app_version);
         config.instructions = Some(
             "Outils des plugins installés dans Cadence, nommés `<plugin>__<outil>`, et outils du cœur `cadence__*`."
                 .into(),
         );
         config
+    }
+
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        self.context.peers.lock().unwrap().push(context.peer);
     }
 
     async fn list_tools(

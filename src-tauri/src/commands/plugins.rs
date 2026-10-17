@@ -27,6 +27,13 @@ use crate::{
     state::AppState,
 };
 
+/// La liste des outils exposés aux IA change : les sessions connectées sont prévenues.
+async fn tools_changed(state: &AppState) {
+    if let Some(gateway) = &state.gateway {
+        gateway.context().notify_tools_changed().await;
+    }
+}
+
 fn has_secret(state: &AppState, plugin: &str, secret: &str) -> bool {
     secrets::plugin_account(plugin, secret)
         .and_then(|account| state.secrets.has(&account))
@@ -54,6 +61,7 @@ pub async fn plugins_set_enabled(state: State<'_, AppState>, id: String, enabled
     if !enabled {
         state.plugin_host.stop(&id).await;
     }
+    tools_changed(&state).await;
     view(&state, &id)
 }
 
@@ -163,6 +171,7 @@ pub async fn plugin_install_zip(
     tauri::async_runtime::spawn_blocking(move || prepared.commit(&registry)).await.map_err(interrupted)??;
     let done = PluginInstallEvent { id: id.clone(), received: 0, total: 0, phase: InstallPhase::Done };
     events::emit(&app, events::PLUGIN_INSTALL, done);
+    tools_changed(&state).await;
     view(&state, &id)
 }
 
@@ -178,6 +187,7 @@ pub async fn plugin_install_dev(state: State<'_, AppState>, path: String) -> App
             s.dev_plugins.push(dir);
         }
     })?;
+    tools_changed(&state).await;
     view(&state, &id)
 }
 
@@ -192,6 +202,7 @@ pub async fn plugin_uninstall(state: State<'_, AppState>, id: String, delete_sec
         let dir = state.plugins.plugin_dir(&id, &entry);
         state.settings.update(|s| s.dev_plugins.retain(|d| PathBuf::from(d) != dir))?;
     }
+    tools_changed(&state).await;
     Ok(())
 }
 
@@ -283,6 +294,7 @@ pub async fn plugin_install(app: AppHandle, state: State<'_, AppState>, id: Stri
     tauri::async_runtime::spawn_blocking(move || prepared.commit(&registry)).await.map_err(interrupted)??;
     let done = PluginInstallEvent { id: id.clone(), received: 0, total: 0, phase: InstallPhase::Done };
     events::emit(&app, events::PLUGIN_INSTALL, done);
+    tools_changed(&state).await;
     view(&state, &id)
 }
 

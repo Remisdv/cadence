@@ -125,12 +125,12 @@ async fn starts_on_demand_calls_in_parallel_and_stops() {
 
     let tools = f.host.tools(PLUGIN).await.unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
-    assert_eq!(names, ["echo", "slow", "crash", "ui_only", "env", "grow", "fail", "emit", "received"]);
+    assert_eq!(names, ["echo", "slow", "crash", "ui_only", "env", "grow", "fail", "emit", "received", "slow_progress"]);
     let ui_only = tools.iter().find(|t| t.name == "ui_only").unwrap();
     assert_eq!(ui_only.meta.as_ref().unwrap().0.get("cadence/visibility"), Some(&json!("ui")));
 
     let status = f.status();
-    assert_eq!((status.state, status.tools), (ProcessState::Ready, 9));
+    assert_eq!((status.state, status.tools), (ProcessState::Ready, 10));
     assert!(status.pid.is_some());
     assert_eq!(f.call("echo", json!({ "text": "bonjour" })).await.unwrap(), json!({ "echo": { "text": "bonjour" } }));
 
@@ -246,6 +246,22 @@ async fn stops_idle_servers_but_not_busy_ones() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn progress_extends_the_call_timeout() {
+    let f = Fixture::new("progress", &[], None, |_| {});
+    let args = |ms: u64, every: u64| Some(json!({ "ms": ms, "every": every }).as_object().unwrap().clone());
+    // 900 ms d'outil pour un délai de 300 ms : la progression toutes les 100 ms le prolonge.
+    let done = f.host.call_with_timeout(PLUGIN, "slow_progress", args(900, 100), ms(300)).await.unwrap();
+    assert_eq!(done.structured_content, Some(json!({ "slept": 900, "progress": true })), "jeton de progression transmis");
+    // Sans progression assez fréquente : délai dépassé.
+    let err = f.host.call_with_timeout(PLUGIN, "slow_progress", args(900, 600), ms(300)).await.unwrap_err();
+    assert!(err.to_string().contains("n'a pas répondu en"), "{err}");
+    // Plafond : jamais plus de 6 fois le délai, même en progressant.
+    let err = f.host.call_with_timeout(PLUGIN, "slow_progress", args(3000, 50), ms(200)).await.unwrap_err();
+    assert!(err.to_string().contains("malgré sa progression"), "{err}");
+    f.host.stop_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn notifies_running_servers_only() {
     let f = Fixture::new("notify", &[], None, |_| {});
     let repos = json!({ "repos": ["me/app", "org/lib"] });
@@ -284,9 +300,9 @@ async fn relays_plugin_events() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rereads_tools_on_list_changed() {
     let f = Fixture::new("list-changed", &[], None, |_| {});
-    assert_eq!(f.host.tools(PLUGIN).await.unwrap().len(), 9);
+    assert_eq!(f.host.tools(PLUGIN).await.unwrap().len(), 10);
     f.call("grow", json!({})).await.unwrap();
-    f.wait("outil ajouté", |s| s.tools == 10).await;
+    f.wait("outil ajouté", |s| s.tools == 11).await;
     let tools = f.host.tools(PLUGIN).await.unwrap();
     assert!(tools.iter().any(|t| t.name == "extra"));
     assert_eq!(f.call("extra", json!({})).await.unwrap(), json!({ "ok": true }));
