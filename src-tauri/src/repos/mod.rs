@@ -13,16 +13,23 @@
 //! Le clone géré par Cadence est remis à jour (`fetch`) à chaque demande ; hors ligne, la copie
 //! existante sert telle quelle. Un appel répété pour la même tâche renvoie le même worktree,
 //! avec le travail en cours.
+//!
+//! Nettoyage (`prune_merged`, au lancement puis toutes les 6 h) : un worktree dont la branche a
+//! des PR GitHub toutes fusionnées ou fermées est supprimé, sauf s'il garde du travail non
+//! commité ou non poussé. Un worktree resté détaché (aucune branche créée) n'est pas touché.
 
 pub mod git;
 
 use std::{
     collections::HashMap,
+    future::Future,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
-use serde::Serialize;
+use secrecy::{ExposeSecret, SecretString};
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use self::git::Git;
@@ -73,6 +80,69 @@ pub struct RepoCloneView {
 pub struct RepoCheckout {
     /// Worktree de la tâche, ou le clone lui-même sans tâche.
     pub path: String,
+}
+
+/// Délai entre deux nettoyages des worktrees.
+pub const PRUNE_EVERY: Duration = Duration::from_secs(6 * 3600);
+
+/// État d'une pull request GitHub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrState {
+    Open,
+    Merged,
+    Closed,
+}
+
+/// Worktree supprimé par le nettoyage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedWorktree {
+    pub repo: String,
+    pub task: String,
+    pub branch: String,
+}
+
+/// PR d'une branche poussée sur le dépôt (`GET /repos/{repo}/pulls?head=owner:branch&state=all`).
+pub async fn branch_prs(http: &reqwest::Client, token: &SecretString, repo: &str, branch: &str) -> AppResult<Vec<PrState>> {
+    #[derive(Deserialize)]
+    struct Raw {
+        state: String,
+        merged_at: Option<String>,
+    }
+    let owner = repo.split('/').next().unwrap_or_default();
+    let resp = http
+        .get(format!(
+            "{}/repos/{repo}/pulls?state=all&per_page=20&head={}",
+            crate::api::github::API_URL,
+            percent_encode(&format!("{owner}:{branch}"))
+        ))
+        .bearer_auth(token.expose_secret())
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", crate::api::github::API_VERSION)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(AppError::GitHub(format!("PR de {repo}:{branch} illisibles ({})", resp.status())));
+    }
+    let raw: Vec<Raw> = resp.json().await?;
+    Ok(raw
+        .into_iter()
+        .map(|pr| match (pr.state.as_str(), pr.merged_at) {
+            ("open", _) => PrState::Open,
+            (_, Some(_)) => PrState::Merged,
+            _ => PrState::Closed,
+        })
+        .collect())
+}
+
+/// Encodage d'un paramètre d'URL (tout sauf `A-Z a-z 0-9 - . _ ~`).
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// `owner/name` en minuscules, validé (il finit dans un chemin).
@@ -246,6 +316,86 @@ impl RepoService {
         Ok(self.view(repo.trim(), &key))
     }
 
+    /// Nettoyage avec l'API GitHub (jeton du trousseau) ; rien sans connexion GitHub.
+    pub async fn prune_merged(&self, http: &reqwest::Client) -> Vec<PrunedWorktree> {
+        let token = match self.secrets.get(GITHUB_ACCOUNT) {
+            Ok(Some(token)) => token,
+            _ => return Vec::new(),
+        };
+        let repos = self.tracked();
+        self.prune(&repos, |repo, branch| {
+            let token = token.clone();
+            async move { branch_prs(http, &token, &repo, &branch).await }
+        })
+        .await
+    }
+
+    /// Supprime les worktrees des dépôts `repos` dont la branche n'a plus que des PR fusionnées
+    /// ou fermées (`prs` : PR d'une branche). Renvoie ceux qui ont été supprimés.
+    pub async fn prune<F, Fut>(&self, repos: &[String], prs: F) -> Vec<PrunedWorktree>
+    where
+        F: Fn(String, String) -> Fut,
+        Fut: Future<Output = AppResult<Vec<PrState>>>,
+    {
+        let Ok(git) = self.git() else { return Vec::new() };
+        let mut pruned = Vec::new();
+        let mut seen = Vec::new();
+        for repo in repos {
+            let Ok(key) = repo_key(repo) else { continue };
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key.clone());
+            let lock = self.lock(&key);
+            let _guard = lock.lock().await;
+            let entries: Vec<PathBuf> = std::fs::read_dir(self.worktrees_dir(&key))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.join(".git").exists())
+                .collect();
+            for wt in entries {
+                let Some(branch) = git.run(&wt, &["symbolic-ref", "--short", "-q", "HEAD"]).await.ok() else {
+                    continue; // détaché : l'IA n'y a pas créé de branche
+                };
+                let branch = branch.trim().to_string();
+                let dirty = git.run(&wt, &["status", "--porcelain"]).await.map_or(true, |s| !s.trim().is_empty());
+                let ahead = git
+                    .run(&wt, &["rev-list", "--count", "@{upstream}..HEAD"])
+                    .await
+                    .map_or(false, |n| n.trim() != "0");
+                if dirty || ahead {
+                    continue;
+                }
+                let states = match prs(repo.trim().to_string(), branch.clone()).await {
+                    Ok(states) => states,
+                    Err(err) => {
+                        tracing::info!(repo = key, branch, %err, "PR de la branche illisibles, worktree gardé");
+                        continue;
+                    }
+                };
+                if states.is_empty() || states.contains(&PrState::Open) {
+                    continue;
+                }
+                let target = wt.to_string_lossy().into_owned();
+                let base = self.linked(&key).unwrap_or_else(|| self.clone_dir(&key));
+                if git.run(&base, &["worktree", "remove", &target]).await.is_err() {
+                    let _ = std::fs::remove_dir_all(&wt);
+                    let _ = git.run(&base, &["worktree", "prune"]).await;
+                }
+                if wt.exists() {
+                    tracing::warn!(repo = key, branch, "worktree de PR terminée non supprimé");
+                    continue;
+                }
+                let task = wt.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                tracing::info!(repo = key, task, branch, "worktree supprimé : PR fusionnée ou fermée");
+                pruned.push(PrunedWorktree { repo: repo.trim().to_string(), task, branch });
+            }
+        }
+        pruned
+    }
+
     /// Copie locale de `repo`, clonée au besoin, puis le worktree de `task` s'il y en a une.
     /// Renvoie le dossier à ouvrir.
     pub async fn checkout(&self, repo: &str, task: Option<&str>) -> AppResult<PathBuf> {
@@ -398,6 +548,7 @@ pub(crate) mod tests {
         }
         assert_eq!(task_slug("Issue #42").unwrap(), "issue-42");
         assert!(task_slug("!!!").is_err());
+        assert_eq!(percent_encode("me:feat/1-a b#é"), "me%3Afeat%2F1-a%20b%23%C3%A9");
         assert!(points_to("origin\tgit@github.com:Me/App.git (fetch)\n", "me/app"));
         assert!(points_to("up\thttps://github.com/me/app (push)\n", "me/app"));
         assert!(!points_to("origin\thttps://github.com/me/app-fork.git (fetch)\n", "me/app"));
@@ -450,6 +601,59 @@ pub(crate) mod tests {
         assert_eq!(view.worktrees, ["issue-42", "issue-43", "issue-44"]);
         assert_eq!(git(&clone, &["status", "--porcelain"]).trim(), "", "le clone reste propre");
         assert!(repos.checkout("../x", None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn prunes_worktrees_whose_pull_requests_are_done() {
+        let fx = Fixture::new("prune");
+        let repos = fx.service();
+        let tracked = vec!["me/app".to_string()];
+        // Une tâche par cas : branche fusionnée, PR ouverte, travail non commité, détachée,
+        // commit non poussé.
+        let mut wts = Vec::new();
+        for (task, branch) in [("issue-1", "feat/1-fini"), ("issue-2", "feat/2-en-cours"), ("issue-3", "feat/3-sale"), ("issue-4", ""), ("issue-5", "feat/5-local")] {
+            let wt = repos.checkout("me/app", Some(task)).await.unwrap();
+            if !branch.is_empty() {
+                git(&wt, &["switch", "-q", "-c", branch]);
+                std::fs::write(wt.join(format!("{task}.txt")), task).unwrap();
+                git(&wt, &["add", "."]);
+                git(&wt, &["commit", "-q", "-m", task]);
+                if task != "issue-5" {
+                    git(&wt, &["push", "-q", "-u", "origin", branch]);
+                } else {
+                    git(&wt, &["push", "-q", "-u", "origin", branch]);
+                    std::fs::write(wt.join("encore.txt"), "x").unwrap();
+                    git(&wt, &["add", "."]);
+                    git(&wt, &["commit", "-q", "-m", "pas encore poussé"]);
+                }
+            }
+            wts.push(wt);
+        }
+        std::fs::write(wts[2].join("brouillon.txt"), "pas commité").unwrap();
+
+        let asked = Mutex::new(Vec::new());
+        let pruned = repos
+            .prune(&tracked, |repo, branch| {
+                asked.lock().unwrap().push(branch.clone());
+                async move {
+                    assert_eq!(repo, "me/app");
+                    Ok(match branch.as_str() {
+                        "feat/2-en-cours" => vec![PrState::Closed, PrState::Open],
+                        _ => vec![PrState::Merged],
+                    })
+                }
+            })
+            .await;
+        assert_eq!(pruned, [PrunedWorktree { repo: "me/app".into(), task: "issue-1".into(), branch: "feat/1-fini".into() }]);
+        assert!(!wts[0].exists(), "PR fusionnée : worktree supprimé");
+        assert!(wts[1].exists() && wts[2].exists() && wts[3].exists() && wts[4].exists());
+        assert_eq!(*asked.lock().unwrap(), ["feat/1-fini", "feat/2-en-cours"], "GitHub interrogé seulement pour les worktrees propres et poussés");
+        assert_eq!(repos.status(&tracked)[0].worktrees, ["issue-2", "issue-3", "issue-4", "issue-5"]);
+        assert!(!git(&repos.clone_dir("me/app"), &["worktree", "list"]).contains("issue-1"));
+
+        // Aucune PR (branche jamais proposée) : gardé.
+        let none = repos.prune(&tracked, |_, _| async { Ok(Vec::new()) }).await;
+        assert!(none.is_empty());
     }
 
     #[tokio::test]

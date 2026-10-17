@@ -153,6 +153,21 @@ pub fn run() {
             }
             app.manage(state);
 
+            // Worktrees dont la PR est fusionnée ou fermée : supprimés 1 min après le lancement,
+            // puis toutes les 6 h.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                loop {
+                    let state = handle.state::<state::AppState>();
+                    let pruned = state.repo_service.prune_merged(&state.http).await;
+                    if !pruned.is_empty() {
+                        tracing::info!(count = pruned.len(), "worktrees de PR terminées supprimés");
+                    }
+                    tokio::time::sleep(repos::PRUNE_EVERY).await;
+                }
+            });
+
             // Catalogue : relu au lancement puis toutes les 6 h ; badge « mises à jour ».
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
