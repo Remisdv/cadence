@@ -44,13 +44,13 @@ export function PluginsStep({ onNext, onBack }: StepProps) {
   );
   const [error, setError] = useState<string | null>(null);
 
-  const cards = useMemo(
-    () =>
-      catalogCards(catalog.data?.plugins ?? [], installed.data ?? []).filter(
-        (c) => c.entry?.compatible !== false || c.installed,
-      ),
+  const all = useMemo(
+    () => catalogCards(catalog.data?.plugins ?? [], installed.data ?? []),
     [catalog.data, installed.data],
   );
+  const cards = all.filter((c) => c.entry?.compatible !== false || c.installed);
+  // Plugins écartés parce qu'ils demandent une version plus récente de Cadence.
+  const incompatible = all.length - cards.length;
 
   // Sélection de départ : ce qui est déjà activé, sinon les plugins officiels.
   const selected =
@@ -169,9 +169,11 @@ export function PluginsStep({ onNext, onBack }: StepProps) {
         ))}
         {visible.length === 0 && (
           <div className="col-span-2 rounded-card border border-dashed border-line2 px-4 py-6 text-center text-body-sm text-tx3">
-            {cards.length === 0
-              ? "Le catalogue est vide pour l'instant : vous pourrez ajouter des plugins plus tard."
-              : "Aucun plugin ne correspond à cette recherche."}
+            {cards.length > 0
+              ? "Aucun plugin ne correspond à cette recherche."
+              : incompatible > 0
+                ? `${incompatible} plugin${incompatible > 1 ? "s" : ""} du catalogue demande${incompatible > 1 ? "nt" : ""} une version plus récente de Cadence : mettez l'app à jour pour ${incompatible > 1 ? "les " : "l'"}installer.`
+                : "Le catalogue est vide pour l'instant : vous pourrez ajouter des plugins plus tard."}
           </div>
         )}
       </div>

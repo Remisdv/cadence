@@ -778,7 +778,7 @@ function ViewTask({
   return (
     <>
       {plugin.uiEntry ? (
-        <div className="h-[440px] overflow-hidden rounded-card border border-line2 bg-panel">
+        <div className="flex h-[440px] flex-col overflow-hidden rounded-card border border-line2 bg-panel">
           <PluginFrameSlot plugin={plugin.id} view={step.view} params={{ setup: step.id }} />
         </div>
       ) : (
