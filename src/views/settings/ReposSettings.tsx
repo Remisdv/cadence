@@ -1,24 +1,29 @@
 /**
  * Réglages › Services › Dépôts GitHub (V2-Settings.dc.html) : compte connecté au service,
  * emplacement des clones (sous la configuration de l'app), dépôts suivis par chaque plugin qui
- * déclare `services = ["repos"]`.
+ * déclare `services = ["repos"]`, avec l'état réel de leur copie locale (clonée par Cadence,
+ * clone désigné par l'utilisateur, ou pas encore clonée).
  */
 import { useState } from "react";
-import type { InstalledPluginView } from "@/lib/types";
+import type { InstalledPluginView, RepoCloneView } from "@/lib/types";
 import { Icon } from "@/components/icons/Icon";
 import { Avatar, initialsOf } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Input } from "@/components/ui/Field";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/Menu";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { SettingRow } from "@/components/domain/Panels";
 import { PluginTile } from "@/components/domain/PluginTile";
 import { parseRepoInput } from "@/lib/domain/onboarding";
+import { pickPaths } from "@/lib/platform";
 import {
   useAppSettings,
   useAppStatus,
   useAuthStatus,
+  useLinkRepoClone,
+  useReposStatus,
   useSaveAppSettings,
   useSignOut,
 } from "@/lib/query/queries";
@@ -37,6 +42,10 @@ export function ReposSettings({ plugins }: { plugins: InstalledPluginView[] }) {
   const users = plugins.filter((p) => p.enabled && p.services.includes("repos"));
   const tracked = settings?.trackedRepos ?? {};
   const all = [...new Set(Object.values(tracked).flat())];
+  const clones = new Map(
+    (useReposStatus().data ?? []).map((clone) => [clone.repo.toLowerCase(), clone]),
+  );
+  const anyClone = [...clones.values()].some((clone) => clone.state !== "missing");
 
   return (
     <div className="flex gap-6">
@@ -140,10 +149,15 @@ export function ReposSettings({ plugins }: { plugins: InstalledPluginView[] }) {
           </Callout>
         ) : (
           users.map((plugin) => (
-            <TrackedRepos key={plugin.id} plugin={plugin} repos={tracked[plugin.id] ?? []} />
+            <TrackedRepos
+              key={plugin.id}
+              plugin={plugin}
+              repos={tracked[plugin.id] ?? []}
+              clones={clones}
+            />
           ))
         )}
-        {all.length > 0 && (
+        {all.length > 0 && !anyClone && (
           <p className="mt-2 text-caption leading-[1.6] text-tx3">
             Aucun clone pour l'instant : le premier skill qui touche au code clonera le dépôt sous
             l'emplacement ci-dessus.
@@ -187,8 +201,48 @@ export function ReposSettings({ plugins }: { plugins: InstalledPluginView[] }) {
   );
 }
 
-function TrackedRepos({ plugin, repos }: { plugin: InstalledPluginView; repos: string[] }) {
+/** Copie locale d'un dépôt : texte court, et le dossier en infobulle. */
+function CloneState({ clone }: { clone: RepoCloneView | undefined }) {
+  if (!clone || clone.state === "missing")
+    return <span className="text-caption text-tx3">pas encore cloné</span>;
+  const worktrees = clone.worktrees.length;
+  return (
+    <span className="flex min-w-0 items-center gap-2" title={clone.path ?? undefined}>
+      <Badge tone={clone.state === "linked" ? "blue" : "green"}>
+        {clone.state === "linked" ? "clone désigné" : "cloné"}
+      </Badge>
+      {clone.state === "linked" && clone.path && (
+        <span className="max-w-[220px] truncate mono text-caption text-tx3">{clone.path}</span>
+      )}
+      {worktrees > 0 && (
+        <span className="text-caption whitespace-nowrap text-tx3">
+          {worktrees} worktree{worktrees > 1 ? "s" : ""}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function TrackedRepos({
+  plugin,
+  repos,
+  clones,
+}: {
+  plugin: InstalledPluginView;
+  repos: string[];
+  clones: Map<string, RepoCloneView>;
+}) {
   const save = useSaveAppSettings();
+  const link = useLinkRepoClone();
+  const designate = async (repo: string) => {
+    const [path] = await pickPaths({
+      title: `Clone existant de ${repo}`,
+      multiple: false,
+      directory: true,
+      filters: [],
+    });
+    if (path) link.mutate({ repo, path });
+  };
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const update = (next: string[]) => save.mutate({ trackedRepos: { [plugin.id]: next } });
@@ -214,6 +268,7 @@ function TrackedRepos({ plugin, repos }: { plugin: InstalledPluginView; repos: s
       </div>
       {repos.map((repo) => {
         const [owner, name] = repo.split("/");
+        const clone = clones.get(repo.toLowerCase());
         return (
           <div key={repo} className="flex h-11 items-center gap-3 border-b border-line px-3.5">
             <span className="inline-flex size-[26px] shrink-0 items-center justify-center rounded-control bg-clay-d mono text-[10px] font-semibold text-clay">
@@ -223,7 +278,29 @@ function TrackedRepos({ plugin, repos }: { plugin: InstalledPluginView; repos: s
               <span className="text-tx3">{owner}/</span>
               {name}
             </span>
-            <span className="text-caption text-tx3">pas encore cloné</span>
+            <CloneState clone={clone} />
+            <Menu>
+              <MenuTrigger asChild>
+                <Button variant="quiet" size="xs" iconOnly aria-label={`Clone local de ${repo}`}>
+                  <Icon name="more" size={13} />
+                </Button>
+              </MenuTrigger>
+              <MenuContent align="end">
+                <MenuItem onSelect={() => void designate(repo)} disabled={link.isPending}>
+                  <Icon name="folder" size={13} />
+                  Désigner un clone existant…
+                </MenuItem>
+                {clone?.state === "linked" && (
+                  <MenuItem
+                    onSelect={() => link.mutate({ repo, path: null })}
+                    disabled={link.isPending}
+                  >
+                    <Icon name="refresh" size={13} />
+                    Revenir au clone de Cadence
+                  </MenuItem>
+                )}
+              </MenuContent>
+            </Menu>
             <Button
               variant="quiet"
               size="xs"
@@ -257,8 +334,10 @@ function TrackedRepos({ plugin, repos }: { plugin: InstalledPluginView; repos: s
           Suivre
         </Button>
       </form>
-      {(error || save.error) && (
-        <div className="px-3.5 pb-2.5 text-caption text-red">{error ?? save.error?.message}</div>
+      {(error || save.error || link.error) && (
+        <div className="px-3.5 pb-2.5 text-caption text-red">
+          {error ?? save.error?.message ?? link.error?.message}
+        </div>
       )}
     </div>
   );
