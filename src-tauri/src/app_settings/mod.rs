@@ -131,6 +131,9 @@ pub struct AppSettings {
     pub ignored_tools: Vec<ToolId>,
     /// Service `repos` : dépôts GitHub suivis (`owner/name`) par plugin.
     pub tracked_repos: BTreeMap<String, Vec<String>>,
+    /// Service `repos` : clone local désigné par l'utilisateur, par dépôt (`owner/name` en
+    /// minuscules → dossier). Écrit seulement par `repos_link`, après vérification du clone.
+    pub repo_clones: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Legacy::is_empty")]
     #[ts(skip)]
     pub legacy: Legacy,
@@ -149,6 +152,7 @@ impl Default for AppSettings {
             tool_paths: BTreeMap::new(),
             ignored_tools: Vec::new(),
             tracked_repos: BTreeMap::new(),
+            repo_clones: BTreeMap::new(),
             legacy: Legacy::default(),
         }
     }
@@ -244,7 +248,7 @@ fn is_plugin_id(id: &str) -> bool {
 }
 
 /// `owner/name` d'un dépôt GitHub.
-fn is_repo_name(repo: &str) -> bool {
+pub fn is_repo_name(repo: &str) -> bool {
     let ok = |part: &str| {
         !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     };

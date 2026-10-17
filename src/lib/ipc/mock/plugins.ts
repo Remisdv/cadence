@@ -264,6 +264,7 @@ export const mockAppSettings: AppSettings = {
   toolPaths: {},
   ignoredTools: [],
   trackedRepos: { "gestion-projet": ["cadence-app/desktop"] },
+  repoClones: {},
 };
 
 /** Schéma de réglages de Gestion de projet (extrait des réglages de `.cadence/config.toml`). */

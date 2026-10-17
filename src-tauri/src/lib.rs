@@ -22,6 +22,7 @@ pub mod gateway;
 pub mod plugins;
 pub mod project_config;
 pub mod protocol;
+pub mod repos;
 pub mod secrets;
 pub mod state;
 pub mod store;

@@ -39,4 +39,9 @@ ignoredTools: Array<ToolId>,
 /**
  * Service `repos` : dépôts GitHub suivis (`owner/name`) par plugin.
  */
-trackedRepos: { [key in string]: Array<string> }, };
+trackedRepos: { [key in string]: Array<string> }, 
+/**
+ * Service `repos` : clone local désigné par l'utilisateur, par dépôt (`owner/name` en
+ * minuscules → dossier). Écrit seulement par `repos_link`, après vérification du clone.
+ */
+repoClones: { [key in string]: string }, };

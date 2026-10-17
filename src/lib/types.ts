@@ -96,6 +96,9 @@ export type { AuthFailure } from "./bindings/AuthFailure";
 
 // Projet
 export type { Repo } from "./bindings/Repo";
+export type { CloneState } from "./bindings/CloneState";
+export type { RepoCheckout } from "./bindings/RepoCheckout";
+export type { RepoCloneView } from "./bindings/RepoCloneView";
 export type { ProjectState } from "./bindings/ProjectState";
 export type { OwnerKind } from "./bindings/OwnerKind";
 export type { RepoOwner } from "./bindings/RepoOwner";
