@@ -143,7 +143,7 @@ async fn chat_service(dir: &std::path::Path, gateway: &Gateway) -> Arc<ChatServi
     let mut config = ChatConfig::new(dir.join("sessions"), dir.join("staging"));
     config.model = Some("haiku".into());
     let access = GatewayAccess { url: gateway.url(), context: gateway.context().clone() };
-    ChatService::new(store, config, Arc::new(move || Ok(claude.clone())), Arc::new(Vec::new), Some(access), Arc::new(|_| {}))
+    ChatService::new(store, config, Arc::new(move |_| Ok(claude.clone())), Arc::new(Vec::new), Some(access), Arc::new(|_| {}))
 }
 
 async fn wait_idle(chat: &ChatService, id: &str) -> ChatState {
@@ -199,6 +199,137 @@ async fn ai_smoke_chat_calls_a_tool_then_resumes_after_a_restart() {
     });
     assert!(last.unwrap_or_default().to_lowercase().contains("marmotte"), "contexte repris après redémarrage");
 
+    chat.shutdown().await;
+    host.stop_all().await;
+    gateway.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CLI d'une IA pour les tests de fumée : variable `CADENCE_SMOKE_<IA>` (chemin), sinon le `PATH`.
+fn smoke_cli(var: &str, name: &str) -> PathBuf {
+    std::env::var_os(var).map(PathBuf::from).or_else(|| which::which(name).ok()).unwrap_or_else(|| panic!("{name} introuvable ({var})"))
+}
+
+async fn chat_for(dir: &std::path::Path, gateway: &Gateway, cli: PathBuf) -> Arc<ChatService> {
+    let store = ChatStore::open(&dir.join("chat.sqlite3")).await.unwrap();
+    let config = ChatConfig::new(dir.join("sessions"), dir.join("staging"));
+    let access = GatewayAccess { url: gateway.url(), context: gateway.context().clone() };
+    ChatService::new(store, config, Arc::new(move |_| Ok(cli.clone())), Arc::new(Vec::new), Some(access), Arc::new(|_| {}))
+}
+
+async fn fake_gateway(dir: &std::path::Path) -> (Arc<PluginHost>, Gateway) {
+    let host = fake_host(dir);
+    let plugins = Arc::new(|| {
+        vec![PluginSummary { id: "fake".into(), name: "Factice".into(), description: String::new(), views: vec![], has_server: true }]
+    });
+    let context = GatewayContext::new("0.3.0", host.clone(), plugins, Arc::new(|_| {}));
+    (host, Gateway::start(context, 0).await.unwrap())
+}
+
+fn texts(events: &[AiEvent]) -> String {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            AiEvent::MessageCompleted { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// OpenCode isolé de la configuration de l'utilisateur (dossiers XDG temporaires) : il répond
+/// avec le modèle gratuit d'OpenCode Zen, sans compte.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "lance OpenCode (modèle gratuit d'OpenCode Zen, réseau)"]
+async fn ai_smoke_opencode_chat_calls_a_tool_then_resumes() {
+    let cli = smoke_cli("CADENCE_SMOKE_OPENCODE", "opencode");
+    let dir = std::env::temp_dir().join(format!("cadence-ai-opencode-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for var in ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
+        // SAFETY : test isolé, variables posées avant tout lancement de processus.
+        unsafe { std::env::set_var(var, dir.join("xdg").join(var.to_lowercase())) };
+    }
+    let (host, gateway) = fake_gateway(&dir).await;
+    let chat = chat_for(&dir, &gateway, cli.clone()).await;
+    let input = ChatSendInput {
+        session: None,
+        text: "Appelle l'outil cadence_fake__echo avec text=\"marmotte\", puis réponds uniquement par la valeur renvoyée.".into(),
+        ai: Some(cadence_lib::app_settings::AiId::Opencode),
+    };
+    let id = chat.send(input).await.unwrap().session;
+    assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle, "{:?}", chat.detail(&id).await.unwrap().events);
+    let events: Vec<AiEvent> = chat.detail(&id).await.unwrap().events.into_iter().map(|e| e.event).collect();
+    assert!(
+        events.iter().any(|e| matches!(e, AiEvent::ToolStarted { source: cadence_lib::ai::events::ToolSource::Cadence { plugin, tool }, .. }
+            if plugin == "fake" && tool == "echo")),
+        "outil du plugin appelé : {events:?}"
+    );
+    assert!(texts(&events).to_lowercase().contains("marmotte"), "{events:?}");
+    chat.shutdown().await;
+
+    let chat = chat_for(&dir, &gateway, cli).await;
+    let follow = ChatSendInput { session: Some(id.clone()), text: "Quel mot as-tu envoyé à l'outil ? Réponds par ce mot seulement.".into(), ai: None };
+    chat.send(follow).await.unwrap();
+    assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle);
+    let events: Vec<AiEvent> = chat.detail(&id).await.unwrap().events.into_iter().map(|e| e.event).collect();
+    let last = events.iter().rev().find_map(|e| match e {
+        AiEvent::MessageCompleted { text, .. } => Some(text.clone()),
+        _ => None,
+    });
+    assert!(last.unwrap_or_default().to_lowercase().contains("marmotte"), "contexte repris après redémarrage : {events:?}");
+
+    chat.shutdown().await;
+    host.stop_all().await;
+    gateway.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Codex connecté (compte ChatGPT ou clé) : un tour qui appelle l'outil du plugin.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "lance Codex CLI (abonnement de l'utilisateur)"]
+async fn ai_smoke_codex_chat_calls_a_tool() {
+    let cli = smoke_cli("CADENCE_SMOKE_CODEX", "codex");
+    let dir = std::env::temp_dir().join(format!("cadence-ai-codex-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (host, gateway) = fake_gateway(&dir).await;
+    let chat = chat_for(&dir, &gateway, cli).await;
+    let input = ChatSendInput {
+        session: None,
+        text: "Appelle l'outil MCP fake__echo du serveur cadence avec text=\"marmotte\", puis réponds uniquement par la valeur renvoyée.".into(),
+        ai: Some(cadence_lib::app_settings::AiId::Codex),
+    };
+    let id = chat.send(input).await.unwrap().session;
+    assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle, "{:?}", chat.detail(&id).await.unwrap().events);
+    let events: Vec<AiEvent> = chat.detail(&id).await.unwrap().events.into_iter().map(|e| e.event).collect();
+    assert!(events.iter().any(|e| matches!(e, AiEvent::ToolStarted { name, .. } if name == "mcp__cadence__fake__echo")), "{events:?}");
+    assert!(texts(&events).to_lowercase().contains("marmotte"), "{events:?}");
+    chat.shutdown().await;
+    host.stop_all().await;
+    gateway.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Codex sans compte (`CODEX_HOME` vide) : la poignée de main et le fil marchent, le tour
+/// échoue proprement avec une erreur de connexion.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "lance Codex CLI (réseau)"]
+async fn ai_smoke_codex_reports_a_missing_login() {
+    let cli = smoke_cli("CADENCE_SMOKE_CODEX", "codex");
+    let dir = std::env::temp_dir().join(format!("cadence-ai-codex-login-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("codex-home")).unwrap();
+    // SAFETY : test isolé, variable posée avant tout lancement de processus.
+    unsafe { std::env::set_var("CODEX_HOME", dir.join("codex-home")) };
+    let (host, gateway) = fake_gateway(&dir).await;
+    let chat = chat_for(&dir, &gateway, cli).await;
+    let input = ChatSendInput { session: None, text: "Réponds OK".into(), ai: Some(cadence_lib::app_settings::AiId::Codex) };
+    let id = chat.send(input).await.unwrap().session;
+    assert_eq!(wait_idle(&chat, &id).await, ChatState::Failed);
+    let events: Vec<AiEvent> = chat.detail(&id).await.unwrap().events.into_iter().map(|e| e.event).collect();
+    assert!(
+        events.iter().any(|e| matches!(e, AiEvent::Error { kind: cadence_lib::ai::events::AiErrorKind::Auth, .. })),
+        "{events:?}"
+    );
     chat.shutdown().await;
     host.stop_all().await;
     gateway.shutdown();

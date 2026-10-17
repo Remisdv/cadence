@@ -56,7 +56,7 @@ async fn service(dir: PathBuf, tweak: impl FnOnce(&mut ChatConfig)) -> Fixture {
     let chat = ChatService::new(
         store,
         config,
-        Arc::new(move || Ok(cli.clone())),
+        Arc::new(move |_| Ok(cli.clone())),
         Arc::new(Vec::new),
         None,
         Arc::new(move |n| sink.lock().unwrap().push(n)),

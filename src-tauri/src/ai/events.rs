@@ -35,6 +35,23 @@ impl ToolSource {
             None => ToolSource::OtherMcp { server: rest.into() },
         }
     }
+
+    /// Outil MCP désigné par son serveur et son nom (Codex : `server`, `tool`).
+    pub fn from_mcp(server: &str, tool: &str) -> Self {
+        match (server, tool.split_once("__")) {
+            ("cadence", Some((plugin, tool))) => ToolSource::Cadence { plugin: plugin.into(), tool: tool.into() },
+            _ => ToolSource::OtherMcp { server: server.into() },
+        }
+    }
+
+    /// Déduit du nom d'outil vu par OpenCode (`<serveur>_<outil>`, `cadence_<plugin>__<outil>`).
+    pub fn from_opencode_name(name: &str) -> Self {
+        match name.strip_prefix("cadence_").and_then(|rest| rest.split_once("__")) {
+            Some((plugin, tool)) => ToolSource::Cadence { plugin: plugin.into(), tool: tool.into() },
+            None if name.starts_with("cadence_") => ToolSource::OtherMcp { server: "cadence".into() },
+            None => ToolSource::Builtin,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -183,6 +200,16 @@ mod tests {
         );
         assert_eq!(ToolSource::from_claude_name("mcp__github__search"), ToolSource::OtherMcp { server: "github".into() });
         assert_eq!(ToolSource::from_claude_name("Read"), ToolSource::Builtin);
+        assert_eq!(
+            ToolSource::from_mcp("cadence", "exemple__echo"),
+            ToolSource::Cadence { plugin: "exemple".into(), tool: "echo".into() }
+        );
+        assert_eq!(ToolSource::from_mcp("github", "search"), ToolSource::OtherMcp { server: "github".into() });
+        assert_eq!(
+            ToolSource::from_opencode_name("cadence_exemple__echo"),
+            ToolSource::Cadence { plugin: "exemple".into(), tool: "echo".into() }
+        );
+        assert_eq!(ToolSource::from_opencode_name("bash"), ToolSource::Builtin);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Chat du cœur (plan § 5, révision 1.1 : un chat global, plus de sessions par espace).
 //!
-//! Une conversation = une session d'IA (Claude Code pour l'instant), fixée à la création. Un
+//! Une conversation = une session d'IA (Claude Code, Codex CLI ou OpenCode), fixée à la création. Un
 //! tour : `send` enregistre le message, démarre au besoin le processus de la CLI (préparation,
 //! jeton de passerelle, reprise par `native_id`), envoie le texte ; les événements normalisés
 //! sont enregistrés (deltas exclus) et poussés au front (`chat://event`, `chat://state`).
@@ -28,8 +28,9 @@ use ts_rs::TS;
 use self::store::{ChatEventRow, ChatMode, ChatSessionDetail, ChatSessionRow, ChatState, ChatStore};
 use crate::{
     ai::{
-        claude_code::{ClaudeLaunch, ClaudeSession, Permissions, SessionMode},
+        claude_code::{Permissions, SessionMode},
         events::{AiErrorKind, AiEvent, ApprovalDecision},
+        session::{AiLaunch, AiSession},
         staging::{self, StagedSkill},
     },
     app_settings::AiId,
@@ -85,8 +86,8 @@ pub enum ChatNotice {
 }
 
 pub type ChatSink = Arc<dyn Fn(ChatNotice) + Send + Sync>;
-/// Chemin de `claude`, lu à chaque démarrage de processus (réglages à jour).
-pub type ClaudeLocator = Arc<dyn Fn() -> AppResult<PathBuf> + Send + Sync>;
+/// Chemin de la CLI d'une IA, lu à chaque démarrage de processus (réglages à jour).
+pub type AiLocator = Arc<dyn Fn(AiId) -> AppResult<PathBuf> + Send + Sync>;
 /// Skills des plugins activés, copiés dans chaque session.
 pub type SkillSource = Arc<dyn Fn() -> Vec<StagedSkill> + Send + Sync>;
 
@@ -107,6 +108,7 @@ pub struct ChatConfig {
     pub max_live: usize,
     pub interrupt_grace: Duration,
     pub close_grace: Duration,
+    /// Modèle imposé à Claude Code (alias `haiku`…), pour les tests ; les autres IA gardent le leur.
     pub model: Option<String>,
 }
 
@@ -125,7 +127,7 @@ impl ChatConfig {
 }
 
 struct Live {
-    session: Arc<ClaudeSession>,
+    session: Arc<AiSession>,
     turn: Arc<AtomicU32>,
     last_used: Instant,
 }
@@ -133,7 +135,7 @@ struct Live {
 pub struct ChatService {
     store: Arc<ChatStore>,
     config: ChatConfig,
-    claude: ClaudeLocator,
+    locate: AiLocator,
     skills: SkillSource,
     gateway: Option<GatewayAccess>,
     sink: ChatSink,
@@ -157,12 +159,12 @@ impl ChatService {
     pub fn new(
         store: ChatStore,
         config: ChatConfig,
-        claude: ClaudeLocator,
+        locate: AiLocator,
         skills: SkillSource,
         gateway: Option<GatewayAccess>,
         sink: ChatSink,
     ) -> Arc<Self> {
-        Arc::new(Self { store: Arc::new(store), config, claude, skills, gateway, sink, live: Mutex::default() })
+        Arc::new(Self { store: Arc::new(store), config, locate, skills, gateway, sink, live: Mutex::default() })
     }
 
     pub async fn sessions(&self) -> AppResult<Vec<ChatSessionRow>> {
@@ -208,7 +210,7 @@ impl ChatService {
                     id: new_id(),
                     title: title_of(&text),
                     ai,
-                    model: self.config.model.clone(),
+                    model: (ai == AiId::ClaudeCode).then(|| self.config.model.clone()).flatten(),
                     origin: "user".into(),
                     mode: ChatMode::Chat,
                     state: ChatState::Idle,
@@ -220,9 +222,6 @@ impl ChatService {
             }
         };
         let row = self.store.get(&id).await?;
-        if row.ai != AiId::ClaudeCode {
-            return Err(AppError::Validation("Seul Claude Code est pris en charge pour l'instant dans le chat.".into()));
-        }
         if matches!(row.state, ChatState::Running | ChatState::WaitingApproval) {
             return Err(AppError::Validation("Un tour est déjà en cours dans cette conversation.".into()));
         }
@@ -248,7 +247,7 @@ impl ChatService {
     }
 
     /// Processus vivant de la conversation, lancé au besoin.
-    async fn ensure_live(self: &Arc<Self>, id: &str) -> AppResult<(Arc<ClaudeSession>, Arc<AtomicU32>)> {
+    async fn ensure_live(self: &Arc<Self>, id: &str) -> AppResult<(Arc<AiSession>, Arc<AtomicU32>)> {
         let mut live = self.live.lock().await;
         if let Some(entry) = live.get_mut(id) {
             if entry.session.is_alive() {
@@ -266,31 +265,40 @@ impl ChatService {
             }
         }
 
-        let cli = (self.claude)()?;
+        let row = self.store.get(id).await?;
+        let cli = (self.locate)(row.ai)?;
         let resume = self.store.native_id(id).await?;
         let token = self.gateway.as_ref().map(|g| g.context.tokens.issue(SessionScope { session: id.into(), run: None }));
         let files = staging::stage(&self.config.staging_root, id, self.gateway.as_ref().map(|g| g.url.as_str()), &(self.skills)())?;
         let (tx, rx) = mpsc::unbounded_channel();
-        let session = Arc::new(ClaudeSession::start(
-            ClaudeLaunch {
-                cli,
-                cwd: self.config.sessions_root.join(id),
-                files,
-                token,
-                resume,
-                model: self.config.model.clone(),
-                mode: SessionMode::Chat,
-                permissions: Permissions::Ask,
-            },
-            tx,
-        )?);
         let turn = Arc::new(AtomicU32::new(0));
+        // Le consommateur part avant le démarrage : Codex et OpenCode annoncent leur session
+        // pendant la poignée de main.
         tokio::spawn(consume(Arc::downgrade(self), id.to_string(), turn.clone(), rx));
+        let session = Arc::new(
+            AiSession::start(
+                AiLaunch {
+                    ai: row.ai,
+                    cli,
+                    cwd: self.config.sessions_root.join(id),
+                    files,
+                    gateway_url: self.gateway.as_ref().map(|g| g.url.clone()),
+                    token,
+                    resume,
+                    model: row.model.clone().filter(|_| row.ai == AiId::ClaudeCode),
+                    mode: SessionMode::Chat,
+                    permissions: Permissions::Ask,
+                    title: row.title.clone(),
+                },
+                tx,
+            )
+            .await?,
+        );
         live.insert(id.to_string(), Live { session: session.clone(), turn: turn.clone(), last_used: Instant::now() });
         Ok((session, turn))
     }
 
-    fn spawn_close(&self, id: &str, session: Arc<ClaudeSession>) {
+    fn spawn_close(&self, id: &str, session: Arc<AiSession>) {
         if let Some(gateway) = &self.gateway {
             gateway.context.tokens.revoke(id);
         }
@@ -303,7 +311,7 @@ impl ChatService {
         });
     }
 
-    async fn live_session(&self, id: &str) -> Option<Arc<ClaudeSession>> {
+    async fn live_session(&self, id: &str) -> Option<Arc<AiSession>> {
         self.live.lock().await.get(id).map(|l| l.session.clone())
     }
 

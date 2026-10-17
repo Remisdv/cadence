@@ -144,6 +144,60 @@ pub fn stage(staging_root: &Path, session: &str, gateway_url: Option<&str>, skil
     Ok(files)
 }
 
+impl SessionFiles {
+    /// Racine des skills de la session (`<plugin>-<skill>/SKILL.md`), commune aux trois CLI :
+    /// `--plugin-dir` (Claude Code), `skills/extraRoots/set` (Codex), `skills.paths` (OpenCode).
+    pub fn skills_root(&self) -> PathBuf {
+        self.plugin_dir.join("skills")
+    }
+}
+
+/// Surcharges de configuration d'un fil Codex (`thread/start.config`) : la passerelle, jeton lu
+/// dans `CADENCE_MCP_TOKEN`, outils pré-approuvés (sinon Codex demande pour chaque outil
+/// sans `readOnlyHint`, et refuse en fond).
+pub fn codex_config(gateway_url: Option<&str>) -> serde_json::Value {
+    match gateway_url {
+        Some(url) => json!({ "mcp_servers": { "cadence": {
+            "url": url,
+            "bearer_token_env_var": "CADENCE_MCP_TOKEN",
+            "default_tools_approval_mode": "approve",
+            "tool_timeout_sec": 600
+        } } }),
+        None => json!({}),
+    }
+}
+
+/// Règle de permission OpenCode d'un profil (`ask`, `allow`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpencodePermissions {
+    pub edit: &'static str,
+    pub bash: &'static str,
+}
+
+/// Configuration d'un serveur OpenCode (`OPENCODE_CONFIG_CONTENT`, chargée après celle du
+/// projet) : passerelle sans OAuth, outils `cadence_*` autorisés, consignes et skills de la
+/// session, pas de partage ni de mise à jour automatique.
+pub fn opencode_config(gateway_url: Option<&str>, files: &SessionFiles, permissions: OpencodePermissions) -> serde_json::Value {
+    let mut config = json!({
+        "$schema": "https://opencode.ai/config.json",
+        "autoupdate": false,
+        "share": "disabled",
+        "instructions": [files.instructions.display().to_string()],
+        "skills": { "paths": [files.skills_root().display().to_string()] },
+        "permission": { "edit": permissions.edit, "bash": permissions.bash, "cadence_*": "allow" },
+    });
+    if let Some(url) = gateway_url {
+        config["mcp"] = json!({ "cadence": {
+            "type": "remote",
+            "url": url,
+            "oauth": false,
+            "headers": { "Authorization": "Bearer {env:CADENCE_MCP_TOKEN}" },
+            "timeout": 600000
+        } });
+    }
+    config
+}
+
 /// Copie récursive ; les liens symboliques sont ignorés.
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     fs::create_dir_all(to)?;
@@ -209,6 +263,17 @@ mod tests {
         assert!(!files.plugin_dir.join("skills").join("documents-absent").exists(), "skill illisible écarté");
         assert!(crate::plugins::skills::load_all(&files.plugin_dir.join("skills")).is_ok(), "skills valides pour Claude Code");
         assert!(fs::read_to_string(&files.settings).unwrap().contains("disableAllHooks"));
+
+        let codex = codex_config(Some("http://127.0.0.1:5000/mcp"));
+        assert_eq!(codex["mcp_servers"]["cadence"]["bearer_token_env_var"], "CADENCE_MCP_TOKEN");
+        assert_eq!(codex["mcp_servers"]["cadence"]["default_tools_approval_mode"], "approve");
+        let opencode =
+            opencode_config(Some("http://127.0.0.1:5000/mcp"), &files, OpencodePermissions { edit: "ask", bash: "ask" });
+        assert_eq!(opencode["mcp"]["cadence"]["headers"]["Authorization"], "Bearer {env:CADENCE_MCP_TOKEN}");
+        assert_eq!(opencode["mcp"]["cadence"]["oauth"], false);
+        assert_eq!(opencode["permission"]["cadence_*"], "allow");
+        assert!(opencode["skills"]["paths"][0].as_str().unwrap().ends_with("skills"));
+        assert!(!opencode.to_string().contains("jeton"), "jeton jamais dans la configuration");
 
         let dir = files.dir.clone();
         drop(files);

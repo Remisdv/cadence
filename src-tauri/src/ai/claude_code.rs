@@ -30,7 +30,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin},
+    process::ChildStdin,
     sync::mpsc,
     task::JoinHandle,
 };
@@ -38,6 +38,7 @@ use tokio::{
 use super::{
     claude_stream::{ClaudeStream, PendingApproval, StreamItem, approval_response, interrupt_request, user_message},
     events::{AiErrorKind, AiEvent, ApprovalDecision},
+    process::TreeChild,
     staging::SessionFiles,
 };
 use crate::error::{AppError, AppResult};
@@ -121,7 +122,7 @@ pub fn args(launch: &ClaudeLaunch) -> Vec<OsString> {
 pub struct ClaudeSession {
     stdin: tokio::sync::Mutex<Option<ChildStdin>>,
     shared: Arc<Shared>,
-    child: Arc<tokio::sync::Mutex<Child>>,
+    child: Arc<tokio::sync::Mutex<TreeChild>>,
     reader: JoinHandle<()>,
     next_request: AtomicU32,
     /// Fichiers de préparation, supprimés à la fin de la session.
@@ -144,7 +145,7 @@ impl ClaudeSession {
     /// Lance `claude` ; les événements arrivent sur `events` dans l'ordre du flux.
     pub fn start(launch: ClaudeLaunch, events: mpsc::UnboundedSender<AiEvent>) -> AppResult<Self> {
         std::fs::create_dir_all(&launch.cwd)?;
-        let mut command = crate::auth::cli::command(&launch.cli);
+        let mut command = super::process::command(&launch.cli);
         command
             .args(args(&launch))
             .current_dir(&launch.cwd)
@@ -155,10 +156,10 @@ impl ClaudeSession {
         if let Some(token) = &launch.token {
             command.env("CADENCE_MCP_TOKEN", token.expose_secret());
         }
-        let mut child = command.spawn().map_err(|e| AppError::Internal(format!("Claude Code ne démarre pas : {e}")))?;
-        let stdin = child.stdin.take();
-        let stdout = child.stdout.take().ok_or_else(|| AppError::Internal("sortie de Claude Code absente".into()))?;
-        let stderr = child.stderr.take();
+        let mut child = TreeChild::spawn(command).map_err(|e| AppError::Internal(format!("Claude Code ne démarre pas : {e}")))?;
+        let stdin = child.stdin();
+        let stdout = child.stdout().ok_or_else(|| AppError::Internal("sortie de Claude Code absente".into()))?;
+        let stderr = child.stderr();
 
         let shared = Arc::new(Shared { alive: AtomicBool::new(true), ..Shared::default() });
         let tail = Arc::new(Mutex::new(VecDeque::new()));
@@ -292,7 +293,7 @@ impl ClaudeSession {
     /// Tue le processus (le tour en cours est marqué interrompu).
     pub async fn kill(&self) {
         self.shared.killed.store(true, Ordering::SeqCst);
-        let _ = self.child.lock().await.kill().await;
+        self.child.lock().await.kill().await;
     }
 
     /// Ferme stdin, laisse `grace` à la CLI pour finir, puis la tue.

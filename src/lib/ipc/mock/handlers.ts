@@ -410,9 +410,7 @@ const handlers: Handlers = {
     const text = input.text.trim();
     if (!text) fail("chat_send", "Le message est vide.");
     const ai = input.ai ?? state.settings.defaultAi ?? "claude-code";
-    if (!input.session && ai !== "claude-code")
-      fail("chat_send", "Seul Claude Code est pris en charge pour l'instant dans le chat.");
-    const id = input.session ?? newChat(state.chats, text).id;
+    const id = input.session ?? newChat(state.chats, text, ai).id;
     const chat = state.chats.get(id);
     if (!chat) fail("chat_send", `Conversation « ${id} » introuvable.`);
     if (chat.session.state === "running" || chat.session.state === "waiting-approval")

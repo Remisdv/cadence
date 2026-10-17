@@ -19,7 +19,9 @@ import {
 } from "@/components/ui/Dialog";
 import { Field, Input } from "@/components/ui/Field";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/Menu";
-import { aiLabels } from "@/lib/domain/ai";
+import { aiTileClass } from "@/components/domain/AiCard";
+import { aiLabels, aiOrder } from "@/lib/domain/ai";
+import { toolIcons, toolOfAi } from "@/lib/domain/tools";
 import { formatDuration, parseCadenceLink, type ChatItem } from "@/lib/domain/chat";
 import {
   useAppSettings,
@@ -32,8 +34,9 @@ import {
   usePlugins,
   useRenameChat,
   useSendChat,
+  useTools,
 } from "@/lib/query/queries";
-import type { ChatSessionRow, InstalledPluginView } from "@/lib/types";
+import type { AiId, ChatSessionRow, InstalledPluginView } from "@/lib/types";
 import { navigate, useNavigation } from "@/stores/navigation";
 import type { ViewProps } from "@/views/registry";
 
@@ -49,14 +52,25 @@ export default function ChatView({ view }: ViewProps<"chat">) {
   const approve = useApproveChat(sessionId ?? "");
   const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
 
-  const aiId = session?.ai ?? settings?.defaultAi ?? null;
+  const tools = useTools().data;
+  /** IA choisie dans le composeur pour une nouvelle conversation (fixée ensuite). */
+  const [picked, setPicked] = useState<AiId | null>(null);
+  const available = aiOrder.filter((id) => {
+    const tool = tools?.tools.find((t) => t.id === toolOfAi[id]);
+    return tool && tool.status !== "missing" && !tool.ignored;
+  });
+  const aiId = session?.ai ?? picked ?? settings?.defaultAi ?? available[0] ?? null;
   const ai = aiId ? aiLabels[aiId].name : null;
   const running = session?.state === "running" || session?.state === "waiting-approval";
   const n = plugins.length;
 
   const open = (id: string | null) => navigate(id ? { id: "chat", session: id } : { id: "chat" });
   const onSend = async (text: string) => {
-    const { session: id } = await send.mutateAsync({ session: sessionId, text, ai: null });
+    const { session: id } = await send.mutateAsync({
+      session: sessionId,
+      text,
+      ai: sessionId ? null : aiId,
+    });
     if (id !== sessionId) replace({ id: "chat", session: id });
   };
   const onLink = (href: string) => {
@@ -132,7 +146,9 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             onLink={onLink}
           />
           <Composer
-            ai={ai}
+            ai={aiId}
+            choices={sessionId ? [] : available}
+            onPick={setPicked}
             running={running}
             sending={send.isPending}
             error={send.error?.message ?? interrupt.error?.message ?? approve.error?.message}
@@ -274,16 +290,35 @@ function Welcome({ ai, plugins }: { ai: string | null; plugins: InstalledPluginV
   );
 }
 
+/** Tuile et nom d'une IA (puce du composeur). */
+function AiChip({ ai }: { ai: AiId | null }) {
+  return (
+    <>
+      <span
+        className={`inline-flex size-[18px] shrink-0 items-center justify-center rounded-badge ${ai ? aiTileClass[ai] : "bg-p4 text-tx3"}`}
+      >
+        <Icon name={ai ? toolIcons[toolOfAi[ai]] : "sparkle"} size={11} />
+      </span>
+      {ai ? aiLabels[ai].name : "Aucune IA"}
+    </>
+  );
+}
+
 /** Composeur (V2-Chat) : Entrée envoie, Maj+Entrée va à la ligne ; Arrêter pendant un tour. */
 function Composer({
-  ai,
+  ai: aiId,
+  choices,
+  onPick,
   running,
   sending,
   error,
   onSend,
   onStop,
 }: {
-  ai: string | null;
+  ai: AiId | null;
+  /** IA proposées pour une nouvelle conversation ; vide = IA fixée (conversation existante). */
+  choices: AiId[];
+  onPick: (ai: AiId) => void;
   running: boolean;
   sending: boolean;
   error?: string;
@@ -292,6 +327,7 @@ function Composer({
 }) {
   const [text, setText] = useState("");
   const area = useRef<HTMLTextAreaElement>(null);
+  const ai = aiId ? aiLabels[aiId].name : null;
   const canSend = text.trim().length > 0 && !running && !sending && ai !== null;
 
   // Hauteur ajustée au texte, 8 lignes au plus.
@@ -338,12 +374,34 @@ function Composer({
             className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-body leading-[1.55] text-tx outline-none placeholder:text-tx3"
           />
           <div className="flex items-center gap-2 px-2.5 py-2">
-            <span className="inline-flex h-[30px] items-center gap-[7px] rounded-control border border-line bg-p2 pr-[9px] pl-1.5 text-body-sm text-tx">
-              <span className="inline-flex size-[18px] items-center justify-center rounded-badge bg-clay text-ink">
-                <Icon name="sparkle" size={11} />
+            {choices.length > 1 ? (
+              <Menu>
+                <MenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Choisir l'IA de la conversation"
+                    className="inline-flex h-[30px] items-center gap-[7px] rounded-control border border-line bg-p2 pr-[7px] pl-1.5 text-body-sm text-tx hover:border-line2"
+                  >
+                    <AiChip ai={aiId} />
+                    <Icon name="chevronDown" size={13} className="text-tx3" />
+                  </button>
+                </MenuTrigger>
+                <MenuContent>
+                  {choices.map((choice) => (
+                    <MenuItem key={choice} onSelect={() => onPick(choice)}>
+                      <AiChip ai={choice} />
+                      {choice === aiId && (
+                        <Icon name="check" size={13} className="ml-auto text-clay" />
+                      )}
+                    </MenuItem>
+                  ))}
+                </MenuContent>
+              </Menu>
+            ) : (
+              <span className="inline-flex h-[30px] items-center gap-[7px] rounded-control border border-line bg-p2 pr-[9px] pl-1.5 text-body-sm text-tx">
+                <AiChip ai={aiId} />
               </span>
-              {ai ?? "Aucune IA"}
-            </span>
+            )}
             <button
               type="button"
               disabled

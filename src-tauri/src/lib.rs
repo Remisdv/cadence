@@ -100,15 +100,17 @@ pub fn run() {
             );
             ai::staging::sweep(&config.staging_root);
             let settings = state.settings.clone();
-            let claude: chat::ClaudeLocator = Arc::new(move || {
-                let cli = settings.get().ai.claude_code;
-                if !cli.enabled {
-                    return Err(error::AppError::Validation("Claude Code est désactivé dans les réglages.".into()));
+            let locate: chat::AiLocator = Arc::new(move |ai| {
+                let tool = tools::ToolId::from_ai(ai);
+                let current = settings.get();
+                if !current.ai.get(ai).enabled {
+                    return Err(error::AppError::Validation(format!("{} est désactivé dans les réglages.", tool.name())));
                 }
-                auth::cli::locate(auth::cli::CliTool::ClaudeCode, cli.path.as_deref()).ok_or_else(|| {
-                    error::AppError::Validation(
-                        "Claude Code est introuvable : installez-le ou indiquez son chemin dans Réglages › IA.".into(),
-                    )
+                tools::detect::locate(tool, tools::configured_path(&current, tool).as_deref()).ok_or_else(|| {
+                    error::AppError::Validation(format!(
+                        "{} est introuvable : installez-le ou indiquez son chemin dans Réglages › Outils.",
+                        tool.name()
+                    ))
                 })
             });
             let registry = state.plugins.clone();
@@ -128,7 +130,7 @@ pub fn run() {
             });
             match opened {
                 Ok(store) => {
-                    let service = chat::ChatService::new(store, config, claude, skills, gateway_access, chat_events);
+                    let service = chat::ChatService::new(store, config, locate, skills, gateway_access, chat_events);
                     tauri::async_runtime::spawn(chat::run_idle_closer(
                         Arc::downgrade(&service),
                         std::time::Duration::from_secs(60),

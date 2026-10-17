@@ -1,0 +1,18 @@
+{"type":"message.updated","properties":{"sessionID":"ses_1","info":{"id":"msg_user","role":"user","sessionID":"ses_1","time":{"created":1}}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_user","messageID":"msg_user","sessionID":"ses_1","type":"text","text":"Appelle l'outil echo puis liste les fichiers"}}}
+{"type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"busy"}}}
+{"type":"message.updated","properties":{"sessionID":"ses_1","info":{"id":"msg_ai","role":"assistant","sessionID":"ses_1","time":{"created":2}}}}
+{"type":"todo.updated","properties":{"sessionID":"ses_1","todos":[{"content":"Appeler echo","status":"in_progress","priority":"high"},{"content":"Lister les fichiers","status":"pending","priority":"medium"}]}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_tool","messageID":"msg_ai","sessionID":"ses_1","type":"tool","callID":"call_echo","tool":"cadence_exemple__echo","state":{"status":"pending","input":{},"raw":""}}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_tool","messageID":"msg_ai","sessionID":"ses_1","type":"tool","callID":"call_echo","tool":"cadence_exemple__echo","state":{"status":"running","input":{"text":"bonjour"},"time":{"start":3}}}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_tool","messageID":"msg_ai","sessionID":"ses_1","type":"tool","callID":"call_echo","tool":"cadence_exemple__echo","state":{"status":"completed","input":{"text":"bonjour"},"output":"bonjour","title":"echo","metadata":{},"time":{"start":3,"end":4}}}}}
+{"type":"permission.asked","properties":{"id":"per_1","sessionID":"ses_1","permission":"bash","patterns":["ls"],"metadata":{},"always":["ls *"],"tool":{"messageID":"msg_ai","callID":"call_bash"}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_bash","messageID":"msg_ai","sessionID":"ses_1","type":"tool","callID":"call_bash","tool":"bash","state":{"status":"running","input":{"command":"ls","description":"Liste les fichiers"},"time":{"start":5}}}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_bash","messageID":"msg_ai","sessionID":"ses_1","type":"tool","callID":"call_bash","tool":"bash","state":{"status":"completed","input":{"command":"ls","description":"Liste les fichiers"},"output":"a.txt\n","title":"ls","metadata":{"exit":0},"time":{"start":5,"end":6}}}}}
+{"type":"file.edited","properties":{"file":"notes.md"}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_answer","messageID":"msg_ai","sessionID":"ses_1","type":"text","text":"","time":{"start":7}}}}
+{"type":"message.part.delta","properties":{"sessionID":"ses_1","messageID":"msg_ai","partID":"prt_answer","field":"text","delta":"Fait : bonjour."}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_answer","messageID":"msg_ai","sessionID":"ses_1","type":"text","text":"Fait : bonjour.","time":{"start":7,"end":8}}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_step","messageID":"msg_ai","sessionID":"ses_1","type":"step-finish","reason":"stop","tokens":{"total":900,"input":850,"output":50,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.002}}}
+{"type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"idle"}}}
+{"type":"session.idle","properties":{"sessionID":"ses_1"}}

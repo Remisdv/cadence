@@ -5,6 +5,7 @@
  */
 import type {
   AiEvent,
+  AiId,
   ApprovalDecision,
   ChatEventPayload,
   ChatSessionDetail,
@@ -198,7 +199,7 @@ export function requestInterrupt(id: string) {
   interrupts.add(id);
 }
 
-export function newChat(chats: Chats, text: string): ChatSessionRow {
+export function newChat(chats: Chats, text: string, ai: AiId = "claude-code"): ChatSessionRow {
   const line =
     text
       .split("\n")
@@ -209,6 +210,8 @@ export function newChat(chats: Chats, text: string): ChatSessionRow {
     line.length > 60 ? `${line.slice(0, 59)}…` : line,
     0,
   );
+  row.ai = ai;
+  row.model = ai === "claude-code" ? row.model : null;
   chats.set(row.id, { session: row, events: [] });
   return row;
 }
