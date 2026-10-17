@@ -26,6 +26,7 @@ pub mod secrets;
 pub mod state;
 pub mod store;
 pub mod sync;
+pub mod tools;
 pub mod vcs;
 
 use std::sync::Arc;
@@ -160,6 +161,12 @@ pub fn run() {
             commands::app::app_status,
             commands::app::app_settings_get,
             commands::app::app_settings_set,
+            commands::tools::tools_list,
+            commands::tools::tool_install,
+            commands::tools::tool_login,
+            commands::tools::tool_cancel,
+            commands::tools::tool_set_path,
+            commands::tools::ai_test,
             commands::plugins::plugins_installed,
             commands::plugins::plugins_set_enabled,
             commands::plugins::plugins_reorder,

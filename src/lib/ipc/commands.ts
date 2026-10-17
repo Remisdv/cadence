@@ -4,6 +4,7 @@
  * Les types viennent de ts-rs : si Rust change une structure, ce fichier casse à la compilation.
  */
 import type {
+  AiId,
   AppSettings,
   AppSettingsPatch,
   AppStatus,
@@ -16,6 +17,7 @@ import type {
   ChatSessionDetail,
   ChatSessionRow,
   CliAgentInfo,
+  CliTest,
   CloseReport,
   DeviceFlowStart,
   GithubAuth,
@@ -40,6 +42,9 @@ import type {
   VersionDetail,
   VersionReport,
   WebFlowStart,
+  ToolId,
+  ToolRunResult,
+  ToolsReport,
 } from "@/lib/types";
 
 /** Commande sans argument : `keyof` vide, l'argument devient facultatif dans `call()`. */
@@ -50,6 +55,18 @@ export interface Commands {
   app_status: { args: NoArgs; result: AppStatus };
   app_settings_get: { args: NoArgs; result: AppSettings };
   app_settings_set: { args: { patch: AppSettingsPatch }; result: AppSettings };
+  // Registre d'outils : rien ne s'installe sans clic, la commande exacte est affichée.
+  /** Détection au premier appel puis cache ; `refresh` relance tout (« Revérifier »). */
+  tools_list: { args: { refresh: boolean }; result: ToolsReport };
+  /** Journal par `tool://install` ; réponse à la fin, outil redétecté. `recipe` null = la première utilisable. */
+  tool_install: { args: { tool: ToolId; recipe: string | null }; result: ToolRunResult };
+  /** Connexion guidée (navigateur, code d'appairage dans le journal, ou terminal du système). */
+  tool_login: { args: { tool: ToolId }; result: ToolRunResult };
+  tool_cancel: { args: { tool: ToolId }; result: boolean };
+  /** « Localiser le binaire… » ; `null` = détection automatique. */
+  tool_set_path: { args: { tool: ToolId; path: string | null }; result: ToolsReport };
+  /** Session de test de quelques secondes d'une IA de code. */
+  ai_test: { args: { ai: AiId }; result: CliTest };
   // Plugins installés
   plugins_installed: { args: NoArgs; result: InstalledPluginView[] };
   plugins_set_enabled: { args: { id: string; enabled: boolean }; result: InstalledPluginView };

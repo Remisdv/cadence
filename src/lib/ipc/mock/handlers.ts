@@ -46,6 +46,14 @@ import {
   validateMockSettings,
   withMockDefaults,
 } from "./plugins";
+import {
+  mockCancelTool,
+  mockInstallTool,
+  mockLoginTool,
+  mockSetToolPath,
+  mockTestAi,
+  mockToolsReport,
+} from "./tools";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -221,8 +229,53 @@ const handlers: Handlers = {
     }
     if (patch.devPlugins !== undefined)
       next.devPlugins = [...new Set(patch.devPlugins.map((d) => d.trim()).filter(Boolean))];
+    if (patch.ignoredTools !== undefined)
+      next.ignoredTools = [...new Set(patch.ignoredTools)].sort();
     state.settings = next;
     return next;
+  },
+
+  tools_list: async ({ refresh }) => {
+    if (refresh) await delay(900);
+    return mockToolsReport(state.settings, state.plugins);
+  },
+  tool_install: async ({ tool, recipe }) => {
+    try {
+      return await mockInstallTool(tool, recipe);
+    } catch (e) {
+      fail("tool_install", (e as Error).message);
+    }
+  },
+  tool_login: async ({ tool }) => {
+    try {
+      return await mockLoginTool(tool);
+    } catch (e) {
+      fail("tool_login", (e as Error).message);
+    }
+  },
+  tool_cancel: ({ tool }) => mockCancelTool(tool),
+  tool_set_path: ({ tool, path }) => {
+    try {
+      mockSetToolPath(tool, path?.trim() || null);
+    } catch (e) {
+      fail("tool_set_path", (e as Error).message);
+    }
+    const ai = { claude: "claudeCode", codex: "codex", opencode: "opencode" } as const;
+    if (tool in ai) {
+      const slot = state.settings.ai[ai[tool as keyof typeof ai]];
+      slot.path = path?.trim() || null;
+      if (slot.path) slot.enabled = true;
+    } else if (path?.trim()) state.settings.toolPaths[tool] = path.trim();
+    else delete state.settings.toolPaths[tool];
+    return mockToolsReport(state.settings, state.plugins);
+  },
+  ai_test: async ({ ai }) => {
+    const tool = ai === "claude-code" ? "claude" : ai;
+    try {
+      return await mockTestAi(tool, cliOutcome);
+    } catch (e) {
+      fail("ai_test", (e as Error).message);
+    }
   },
 
   plugins_installed: () => state.plugins,

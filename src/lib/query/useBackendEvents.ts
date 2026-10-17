@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { subscribe } from "@/lib/ipc/events";
 import { keys, keysForResource } from "./keys";
 import { useUiStore } from "@/stores/ui";
+import { applyRunEvent, type ToolRunLog } from "@/lib/domain/tools";
 
 /**
  * Pont événements Rust → cache front. Monté une fois à la racine de l'app.
@@ -28,7 +29,16 @@ export function useBackendEvents() {
         void queryClient.invalidateQueries({ queryKey: keys.pluginStatus() });
       }),
       subscribe("plugin://install", ({ phase }) => {
-        if (phase === "done") void queryClient.invalidateQueries({ queryKey: keys.plugins });
+        if (phase === "done") {
+          void queryClient.invalidateQueries({ queryKey: keys.plugins });
+          // Un plugin activé peut demander de nouveaux outils.
+          void queryClient.invalidateQueries({ queryKey: keys.toolsReport() });
+        }
+      }),
+      subscribe("tool://install", (event) => {
+        queryClient.setQueryData<ToolRunLog>(keys.toolRun(event.tool), (prev) =>
+          applyRunEvent(prev, event),
+        );
       }),
       subscribe("catalog://updated", () => {
         void queryClient.invalidateQueries({ queryKey: keys.catalog(), refetchType: "none" });

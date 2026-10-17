@@ -234,6 +234,31 @@ const paths = {
       <circle cx="18" cy="12" r="1.3" {...dot} />
     </>
   ),
+  terminal: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2.4" />
+      <path d="m7 9.5 3 2.5-3 2.5M12.5 15h4.5" />
+    </>
+  ),
+  package: (
+    <>
+      <path d="m12 3.2 8 4.5v8.6l-8 4.5-8-4.5V7.7z" />
+      <path d="m4 7.7 8 4.5 8-4.5M12 12.2v8.6" />
+    </>
+  ),
+  code: <path d="m8.5 7-5 5 5 5M15.5 7l5 5-5 5" />,
+  copy: (
+    <>
+      <rect x="8.5" y="8.5" width="11" height="11" rx="2" />
+      <path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5" />
+    </>
+  ),
+  external: (
+    <>
+      <path d="M14 4.5h5.5V10M19.5 4.5 11 13" />
+      <path d="M18 14v4.5a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1H10" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof paths;

@@ -21,6 +21,7 @@ use crate::{
     auth::cli::CliTool,
     domain::project::ProjectState,
     error::{AppError, AppResult},
+    tools::ToolId,
 };
 
 /// Version du format écrit sur disque.
@@ -124,6 +125,10 @@ pub struct AppSettings {
     pub catalog_url: Option<String>,
     /// Dossiers de plugins chargés en mode développement (non zippés).
     pub dev_plugins: Vec<String>,
+    /// Chemin choisi à la main pour un outil hors IA (Git, GitHub CLI, Node.js).
+    pub tool_paths: BTreeMap<ToolId, String>,
+    /// Outils optionnels écartés (« Ignorer ») ; les IA, elles, passent par `ai.<id>.enabled`.
+    pub ignored_tools: Vec<ToolId>,
     #[serde(skip_serializing_if = "Legacy::is_empty")]
     #[ts(skip)]
     pub legacy: Legacy,
@@ -139,6 +144,8 @@ impl Default for AppSettings {
             action_ai: BTreeMap::new(),
             catalog_url: None,
             dev_plugins: Vec::new(),
+            tool_paths: BTreeMap::new(),
+            ignored_tools: Vec::new(),
             legacy: Legacy::default(),
         }
     }
@@ -200,6 +207,11 @@ impl AppSettings {
             dirs.dedup();
             self.dev_plugins = dirs;
         }
+        if let Some(mut ignored) = patch.ignored_tools {
+            ignored.sort();
+            ignored.dedup();
+            self.ignored_tools = ignored;
+        }
         Ok(())
     }
 }
@@ -239,6 +251,7 @@ pub struct AppSettingsPatch {
     /// Chaîne vide = catalogue public.
     pub catalog_url: Option<String>,
     pub dev_plugins: Option<Vec<String>>,
+    pub ignored_tools: Option<Vec<ToolId>>,
 }
 
 /// État de l'app au démarrage : choisit l'écran de départ.

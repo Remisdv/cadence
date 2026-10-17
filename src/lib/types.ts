@@ -19,6 +19,18 @@ export type { AppSettings } from "./bindings/AppSettings";
 export type { AiCliPatch } from "./bindings/AiCliPatch";
 export type { AppSettingsPatch } from "./bindings/AppSettingsPatch";
 
+// Registre d'outils (Git, GitHub CLI, IA de code, Node.js)
+export type { ToolId } from "./bindings/ToolId";
+export type { ToolStatus } from "./bindings/ToolStatus";
+export type { ToolRequesterKind } from "./bindings/ToolRequesterKind";
+export type { ToolRequester } from "./bindings/ToolRequester";
+export type { ToolRecipe } from "./bindings/ToolRecipe";
+export type { ToolInfo } from "./bindings/ToolInfo";
+export type { ToolsReport } from "./bindings/ToolsReport";
+export type { ToolRunKind } from "./bindings/ToolRunKind";
+export type { ToolRunResult } from "./bindings/ToolRunResult";
+export type { ToolRunEvent } from "./bindings/ToolRunEvent";
+
 // Plugins
 export type { PluginCategory } from "./bindings/PluginCategory";
 export type { PluginColor } from "./bindings/PluginColor";

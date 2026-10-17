@@ -32,6 +32,8 @@ pub const CHAT_STATE: &str = "chat://state";
 pub const PLUGIN_EVENT: &str = "plugin://event";
 /// `CatalogUpdated` : le catalogue a été relu ; nombre de mises à jour disponibles.
 pub const CATALOG_UPDATED: &str = "catalog://updated";
+/// `ToolRunEvent` : journal d'une installation ou d'une connexion d'outil.
+pub const TOOL_RUN: &str = "tool://install";
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

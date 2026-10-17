@@ -30,6 +30,7 @@ use crate::{
     },
     secrets::SecretStore,
     store::RepoCache,
+    tools::ToolService,
 };
 
 /// Dossiers de l'app, résolus au démarrage par Tauri.
@@ -57,6 +58,8 @@ pub struct AppState {
     pub cli: RwLock<CliCache>,
     /// Préférences de la machine (`settings.json` v2).
     pub settings: Arc<AppSettingsStore>,
+    /// Registre d'outils : détection, installation, connexion (Git, gh, IA, Node.js).
+    pub tools: Arc<ToolService>,
     /// Trousseau du système (secrets des plugins, jeton GitHub).
     pub secrets: Arc<dyn SecretStore>,
     /// Plugins installés, activation et ordre du rail.
@@ -112,6 +115,7 @@ impl AppState {
             github: RwLock::default(),
             sign_in: Mutex::default(),
             cli: RwLock::default(),
+            tools: Arc::new(ToolService::new()),
             settings: Arc::new(AppSettingsStore::load(&config_dir)),
             secrets,
             plugins,

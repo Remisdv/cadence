@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call } from "@/lib/ipc/transport";
 import { buildThread } from "@/lib/domain/chat";
+import { startLog, type ToolRunLog } from "@/lib/domain/tools";
 import type {
   ApprovalDecision,
   AppSettingsPatch,
@@ -16,7 +17,10 @@ import type {
   IssueCreateInput,
   IssueFilter,
   PrFilter,
+  AiId,
   RepoCreateInput,
+  ToolId,
+  ToolRunResult,
   VersionCloseInput,
 } from "@/lib/types";
 import { keys } from "./keys";
@@ -37,7 +41,104 @@ export function useSaveAppSettings() {
     onSuccess: (settings) => {
       qc.setQueryData(keys.appSettings(), settings);
       void qc.invalidateQueries({ queryKey: keys.appStatus() });
+      // IA par défaut, IA ignorées, outils écartés : les demandeurs changent.
+      void qc.invalidateQueries({ queryKey: keys.toolsReport() });
     },
+  });
+}
+
+/* ---------- Registre d'outils ---------- */
+
+/** Outils de la machine (détection en cache côté Rust ; « Revérifier » = `useRecheckTools`). */
+export const useTools = () =>
+  useQuery({
+    queryKey: keys.toolsReport(),
+    queryFn: () => call("tools_list", { refresh: false }),
+    staleTime: 60_000,
+  });
+
+/** Relance toute la détection (« Revérifier », « Relancer la détection »). */
+export function useRecheckTools() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => call("tools_list", { refresh: true }),
+    onSuccess: (report) => qc.setQueryData(keys.toolsReport(), report),
+  });
+}
+
+/** Journal en direct de la dernière installation ou connexion de l'outil. */
+export const useToolRun = (tool: ToolId) =>
+  useQuery<ToolRunLog | null>({
+    queryKey: keys.toolRun(tool),
+    queryFn: () => null,
+    enabled: false,
+    staleTime: Infinity,
+    initialData: null,
+  });
+
+function useToolRunMutation<A extends { tool: ToolId; command: string }>(
+  kind: "install" | "login",
+  run: (args: A) => Promise<ToolRunResult>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: run,
+    onMutate: ({ tool, command }) => {
+      qc.setQueryData<ToolRunLog>(keys.toolRun(tool), startLog(kind, command));
+    },
+    onSettled: (result, error, { tool }) => {
+      // Le résultat est aussi poussé par `tool://install` ; une erreur de lancement, non.
+      if (error)
+        qc.setQueryData<ToolRunLog>(keys.toolRun(tool), (prev) =>
+          prev ? { ...prev, running: false } : prev,
+        );
+      else if (result)
+        qc.setQueryData<ToolRunLog>(keys.toolRun(tool), (prev) =>
+          prev ? { ...prev, running: false, result } : prev,
+        );
+      void qc.invalidateQueries({ queryKey: keys.toolsReport() });
+      void qc.invalidateQueries({ queryKey: keys.auth });
+    },
+  });
+}
+
+/** Lance une recette d'installation (`recipe` null = la première utilisable). */
+export const useInstallTool = () =>
+  useToolRunMutation(
+    "install",
+    ({ tool, recipe }: { tool: ToolId; recipe: string | null; command: string }) =>
+      call("tool_install", { tool, recipe }),
+  );
+
+/** « Se connecter » : commande de connexion de l'outil. */
+export const useLoginTool = () =>
+  useToolRunMutation("login", ({ tool }: { tool: ToolId; command: string }) =>
+    call("tool_login", { tool }),
+  );
+
+export function useCancelTool() {
+  return useMutation({ mutationFn: (tool: ToolId) => call("tool_cancel", { tool }) });
+}
+
+/** « Localiser le binaire… » ; `path` null = détection automatique. */
+export function useSetToolPath() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ tool, path }: { tool: ToolId; path: string | null }) =>
+      call("tool_set_path", { tool, path }),
+    onSuccess: (report) => {
+      qc.setQueryData(keys.toolsReport(), report);
+      void qc.invalidateQueries({ queryKey: keys.appSettings() });
+    },
+  });
+}
+
+/** Session de test d'une IA ; le résultat s'affiche dans sa carte. */
+export function useTestAi() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ai: AiId) => call("ai_test", { ai }),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.toolsReport() }),
   });
 }
 

@@ -13,6 +13,7 @@ import type {
   RateLimitInfo,
   RunReport,
   SyncUpdated,
+  ToolRunEvent,
 } from "@/lib/types";
 import { isMockIpc } from "./transport";
 import { mockBus } from "./mock/bus";
@@ -34,6 +35,8 @@ export interface Events {
   /** Événement d'une conversation ; `seq` nul pour un delta (jamais enregistré). */
   "chat://event": ChatEventPayload;
   "chat://state": ChatStatePayload;
+  /** Journal d'une installation ou d'une connexion d'outil (ligne, ou fin avec `done`). */
+  "tool://install": ToolRunEvent;
 }
 
 export type EventName = keyof Events;

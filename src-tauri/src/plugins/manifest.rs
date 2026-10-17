@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::skills::{self, SkillInfo};
-use crate::error::{AppError, AppResult};
+use crate::{
+    error::{AppError, AppResult},
+    tools::ToolId,
+};
 
 /// Plus haute version de l'API plugins prise en charge.
 pub const API_VERSION: u32 = 1;
@@ -58,6 +61,14 @@ impl PluginColor {
         let hash = id.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
         Self::ALL[(hash % Self::ALL.len() as u32) as usize]
     }
+}
+
+/// Programme de la machine demandé par un plugin (registre d'outils, révision 1.2 du plan).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolRequirement {
+    pub id: ToolId,
+    /// Optionnel : son absence ne bloque pas le plugin.
+    pub optional: bool,
 }
 
 /// Service de l'app activé par un plugin (`services = ["repos"]`).
@@ -197,6 +208,8 @@ pub struct Manifest {
     pub category: PluginCategory,
     pub color: PluginColor,
     pub services: Vec<PluginService>,
+    /// Programmes de la machine dont le plugin a besoin (`tools = ["node", { id = "gh", optional = true }]`).
+    pub tools: Vec<ToolRequirement>,
     pub server: Option<ServerSpec>,
     /// Fichier HTML de l'UI, sous `ui/` (obligatoire dès qu'il y a une section `[ui]`).
     pub ui_entry: Option<String>,
@@ -244,6 +257,8 @@ struct Raw {
     color: Option<String>,
     #[serde(default)]
     services: Vec<String>,
+    #[serde(default)]
+    tools: Vec<RawTool>,
     server: Option<RawServer>,
     ui: Option<RawUi>,
     #[serde(default)]
@@ -253,6 +268,17 @@ struct Raw {
     #[serde(default)]
     actions: Vec<RawAction>,
     settings: Option<RawSettings>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawTool {
+    Name(String),
+    Table {
+        id: String,
+        #[serde(default)]
+        optional: bool,
+    },
 }
 
 #[derive(Deserialize)]
@@ -490,6 +516,19 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         }
     }
 
+    let mut tools: Vec<ToolRequirement> = Vec::new();
+    for t in raw.tools {
+        let (name, optional) = match t {
+            RawTool::Name(name) => (name, false),
+            RawTool::Table { id, optional } => (id, optional),
+        };
+        match ToolId::parse(&name) {
+            Some(id) if !tools.iter().any(|t| t.id == id) => tools.push(ToolRequirement { id, optional }),
+            Some(_) => {}
+            None => warnings.push(format!("Outil « {name} » inconnu, ignoré.")),
+        }
+    }
+
     let server = match raw.server {
         None => None,
         Some(srv) => Some(parse_server(srv)?),
@@ -588,6 +627,7 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         category,
         color,
         services,
+        tools,
         server,
         ui_entry,
         views,
@@ -646,6 +686,7 @@ min_cadence = "0.3.0"
 category = "projet"
 color = "blue"
 services = ["repos"]
+tools = ["node", { id = "gh", optional = true }]
 futur = "clé inconnue, ignorée"
 
 [server]
@@ -675,6 +716,16 @@ schema = "settings.schema.json"
         assert_eq!(m.category, PluginCategory::Projet);
         assert_eq!(m.color, PluginColor::Blue);
         assert_eq!(m.services, [PluginService::Repos]);
+        assert_eq!(
+            m.tools,
+            [
+                ToolRequirement { id: ToolId::Node, optional: false },
+                ToolRequirement { id: ToolId::Gh, optional: true },
+            ]
+        );
+        let unknown = parse(&GESTION_PROJET.replacen("\"node\",", "\"node\", \"ffmpeg\",", 1), "0.3.0").unwrap();
+        assert_eq!(unknown.tools.len(), 2);
+        assert!(unknown.warnings.iter().any(|w| w.contains("ffmpeg")));
         assert_eq!(m.views.len(), 3);
         assert_eq!(m.views[0].section.as_deref(), Some("Pilotage"));
         assert!(m.views[2].hidden);

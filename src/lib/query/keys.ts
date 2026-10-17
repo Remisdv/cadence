@@ -1,4 +1,4 @@
-import type { IssueFilter, PrFilter, SyncResource } from "@/lib/types";
+import type { IssueFilter, PrFilter, SyncResource, ToolId } from "@/lib/types";
 
 /**
  * Clés de cache TanStack Query, regroupées par ressource. La première clé de chaque groupe
@@ -14,6 +14,10 @@ export const keys = {
   pluginSecret: (plugin: string, secret: string) => ["plugins", "secret", plugin, secret] as const,
   pluginStatus: () => ["plugins", "status"] as const,
   catalog: () => ["plugins", "catalog"] as const,
+  tools: ["tools"] as const,
+  toolsReport: () => ["tools", "report"] as const,
+  /** Journal de la dernière installation ou connexion d'un outil (`tool://install`). */
+  toolRun: (tool: ToolId) => ["tools", "run", tool] as const,
   chat: ["chat"] as const,
   chatSessions: () => ["chat", "sessions"] as const,
   chatSession: (id: string) => ["chat", "session", id] as const,

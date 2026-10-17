@@ -230,6 +230,8 @@ export const mockAppSettings: AppSettings = {
   actionAi: {},
   catalogUrl: null,
   devPlugins: ["C:/Users/moi/dev/cadence-plugins/plugins/journal"],
+  toolPaths: {},
+  ignoredTools: [],
 };
 
 /** Schéma de réglages de Gestion de projet (extrait des réglages de `.cadence/config.toml`). */
