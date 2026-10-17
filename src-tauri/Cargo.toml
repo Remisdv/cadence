@@ -1,6 +1,6 @@
 [package]
 name = "cadence"
-version = "0.1.0"
+version = "0.3.0"
 description = "Cockpit de projet logiciel adossé à GitHub"
 authors = ["Rémi Lhuillier"]
 edition = "2024"
