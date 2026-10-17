@@ -52,6 +52,9 @@ export function useBackendEvents() {
           }));
           return;
         }
+        // Fin de tour : relecture du détail (worktrees ouverts pendant le tour).
+        if (event.type === "turn-completed")
+          void queryClient.invalidateQueries({ queryKey: keys.chatSession(session) });
         if (event.type === "message-completed" || event.type === "turn-completed") {
           queryClient.setQueryData<Record<string, string>>(drafts, (prev = {}) => {
             if (event.type === "turn-completed") return {};

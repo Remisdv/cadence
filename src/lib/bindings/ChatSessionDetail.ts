@@ -2,4 +2,8 @@
 import type { ChatEventRow } from "./ChatEventRow";
 import type { ChatSessionRow } from "./ChatSessionRow";
 
-export type ChatSessionDetail = { session: ChatSessionRow, events: Array<ChatEventRow>, };
+export type ChatSessionDetail = { session: ChatSessionRow, events: Array<ChatEventRow>, 
+/**
+ * Worktrees ouverts à la session par `cadence__repo_checkout` (tant que l'app tourne).
+ */
+worktrees: Array<string>, };

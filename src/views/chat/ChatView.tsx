@@ -168,6 +168,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
           session={session}
           ai={ai}
           items={sessionId ? thread.items : []}
+          worktrees={sessionId ? (thread.data?.worktrees ?? []) : []}
           plugins={plugins}
         />
       </Page>
@@ -458,11 +459,14 @@ function SessionPanel({
   session,
   ai,
   items,
+  worktrees,
   plugins,
 }: {
   session?: ChatSessionRow;
   ai: string | null;
   items: ChatItem[];
+  /** Worktrees ouverts à la session (`cadence__repo_checkout`). */
+  worktrees: string[];
   plugins: InstalledPluginView[];
 }) {
   const status = usePluginStatus().data ?? [];
@@ -534,17 +538,40 @@ function SessionPanel({
       <div>
         <PanelLabel>Accès aux dépôts</PanelLabel>
         <div className="mt-2 rounded-field border border-line bg-p2 px-3 py-2.5">
-          <div className="flex items-center gap-2 text-body-sm text-tx2">
-            <Icon name="branch" size={14} />
-            Aucun worktree ouvert
-          </div>
+          {worktrees.length === 0 ? (
+            <div className="flex items-center gap-2 text-body-sm text-tx2">
+              <Icon name="branch" size={14} />
+              Aucun worktree ouvert
+            </div>
+          ) : (
+            worktrees.map((path) => (
+              <div
+                key={path}
+                title={path}
+                className="flex min-w-0 items-center gap-2 py-0.5 text-body-sm text-tx2"
+              >
+                <Icon name="branch" size={14} className="shrink-0 text-green" />
+                <span className="truncate mono text-small">{worktreeLabel(path)}</span>
+              </div>
+            ))
+          )}
           <p className="mt-[5px] text-caption leading-[1.55] text-tx3">
-            Un skill qui modifie du code reçoit le worktree de sa tâche, pour sa session seulement.
+            {worktrees.length === 0
+              ? "Un skill qui modifie du code reçoit le worktree de sa tâche, pour sa session seulement."
+              : "Ouvert à cette session seulement, jusqu'à la fermeture de Cadence."}
           </p>
         </div>
       </div>
     </aside>
   );
+}
+
+/** `owner/nom/tâche` d'un worktree (`…/repos/.worktrees/owner/nom/tâche`), sinon le dossier. */
+function worktreeLabel(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  const at = parts.lastIndexOf(".worktrees");
+  if (at >= 0 && parts.length - at > 3) return parts.slice(at + 1).join("/");
+  return parts.slice(-2).join("/");
 }
 
 function PanelLabel({ children }: { children: string }) {
@@ -568,8 +595,10 @@ function PanelRow({
     <div
       className={`flex justify-between gap-3 py-[7px] text-body-sm ${last ? "" : "border-b border-line"}`}
     >
-      <span className="text-tx3">{label}</span>
-      <span className={`text-right text-tx2 ${mono ? "mono" : ""}`}>{value}</span>
+      <span className="shrink-0 text-tx3">{label}</span>
+      <span title={value} className={`min-w-0 truncate text-right text-tx2 ${mono ? "mono" : ""}`}>
+        {value}
+      </span>
     </div>
   );
 }

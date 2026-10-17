@@ -35,6 +35,7 @@ function detail(row: ChatSessionRow, events: AiEvent[]): ChatSessionDetail {
   return {
     session: row,
     events: events.map((event, i) => ({ seq: i + 1, turn: 1, at: row.updatedAt, event })),
+    worktrees: [],
   };
 }
 
@@ -212,7 +213,7 @@ export function newChat(chats: Chats, text: string, ai: AiId = "claude-code"): C
   );
   row.ai = ai;
   row.model = ai === "claude-code" ? row.model : null;
-  chats.set(row.id, { session: row, events: [] });
+  chats.set(row.id, { session: row, events: [], worktrees: [] });
   return row;
 }
 

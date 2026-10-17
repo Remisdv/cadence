@@ -1,6 +1,6 @@
 /**
  * Rendu du markdown des issues (sous-ensemble) : titres `##`, paragraphes, listes `-`/`1.`,
- * cases `- [ ]` (lecture seule : cocher écrirait sur GitHub), `**gras**`, `*italique*`,
+ * cases `- [ ]` (lecture seule : cocher écrirait sur GitHub), tableaux `| a | b |`, `**gras**`, `*italique*`,
  * `` `code` ``, liens. Le HTML brut n'est jamais interprété. `onLink` intercepte un clic sur un
  * lien (liens `cadence:` du chat) : il renvoie `true` s'il l'a traité.
  */
@@ -13,7 +13,20 @@ type Block =
   | { kind: "list"; ordered: boolean; items: string[] }
   | { kind: "tasks"; items: { done: boolean; text: string }[] }
   | { kind: "quote"; text: string }
-  | { kind: "code"; text: string };
+  | { kind: "code"; text: string }
+  | { kind: "table"; head: string[]; rows: string[][] };
+
+/** Cellules d'une ligne `| a | b |` (barres de bord facultatives). */
+function cells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+}
+
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
 /** `breaks` : un simple retour à la ligne reste une ligne (messages du chat). */
 export function parseMarkdown(source: string, { breaks = false } = {}): Block[] {
@@ -30,6 +43,13 @@ export function parseMarkdown(source: string, { breaks = false } = {}): Block[] 
       while (i < lines.length && !lines[i]!.startsWith("```")) code.push(lines[i++]!);
       i++;
       blocks.push({ kind: "code", text: code.join("\n") });
+    } else if (line.includes("|") && TABLE_RULE.test(lines[i + 1] ?? "")) {
+      const head = cells(line);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i]!.includes("|") && lines[i]!.trim())
+        rows.push(cells(lines[i++]!));
+      blocks.push({ kind: "table", head, rows });
     } else if (/^#{1,6}\s/.test(line)) {
       blocks.push({ kind: "heading", text: line.replace(/^#+\s*/, "") });
       i++;
@@ -61,7 +81,8 @@ export function parseMarkdown(source: string, { breaks = false } = {}): Block[] 
       while (
         i < lines.length &&
         lines[i]!.trim() &&
-        !/^(#{1,6}\s|```|>|\s*([-*+]|\d+\.)\s)/.test(lines[i]!)
+        !/^(#{1,6}\s|```|>|\s*([-*+]|\d+\.)\s)/.test(lines[i]!) &&
+        !(lines[i]!.includes("|") && TABLE_RULE.test(lines[i + 1] ?? ""))
       ) {
         para.push(lines[i++]!.trim());
       }
@@ -175,6 +196,33 @@ export function Markdown({
               </List>
             );
           }
+          case "table":
+            return (
+              <div key={i} className="overflow-x-auto rounded-lg border border-line">
+                <table className="w-full border-collapse text-body-sm">
+                  <thead className="bg-p2 text-left text-tx">
+                    <tr>
+                      {b.head.map((cell, j) => (
+                        <th key={j} className="border-b border-line px-3 py-1.5 font-semibold">
+                          {inline(cell)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((row, r) => (
+                      <tr key={r} className={cn(r < b.rows.length - 1 && "border-b border-line")}>
+                        {b.head.map((_, j) => (
+                          <td key={j} className="px-3 py-1.5 align-top">
+                            {inline(row[j] ?? "")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           case "tasks":
             return (
               <div key={i} className="flex flex-col gap-[7px]">

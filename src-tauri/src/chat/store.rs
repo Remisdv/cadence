@@ -96,6 +96,8 @@ pub struct ChatEventRow {
 pub struct ChatSessionDetail {
     pub session: ChatSessionRow,
     pub events: Vec<ChatEventRow>,
+    /// Worktrees ouverts à la session par `cadence__repo_checkout` (tant que l'app tourne).
+    pub worktrees: Vec<String>,
 }
 
 fn kebab<T: Serialize>(value: &T) -> String {

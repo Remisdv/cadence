@@ -240,6 +240,7 @@ async fn opens_granted_worktrees_to_the_cli_from_the_next_turn() {
     f.wait(&id, ChatState::Idle).await;
     assert_eq!(f.replies(&id).await.last().unwrap(), &format!("dossiers [reprise] : {}", wt.display()));
     assert_eq!(f.chat.live_count().await, 1, "l'ancien processus est fermé");
+    assert_eq!(f.chat.detail(&id).await.unwrap().worktrees, [wt.display().to_string()], "montré dans le panneau");
 
     // Pendant le tour, un accès au worktree est accordé d'office (pas de carte d'approbation) ;
     // un autre dossier reste soumis à l'utilisateur.

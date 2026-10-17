@@ -200,7 +200,11 @@ impl ChatService {
     }
 
     pub async fn detail(&self, id: &str) -> AppResult<ChatSessionDetail> {
-        Ok(ChatSessionDetail { session: self.store.get(id).await?, events: self.store.events(id).await? })
+        Ok(ChatSessionDetail {
+            session: self.store.get(id).await?,
+            events: self.store.events(id).await?,
+            worktrees: self.granted(id).into_iter().map(|dir| dir.display().to_string()).collect(),
+        })
     }
 
     pub async fn rename(&self, id: &str, title: &str) -> AppResult<ChatSessionRow> {
