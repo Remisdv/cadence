@@ -21,12 +21,21 @@ pub enum CodexItem {
     Reply(Value),
 }
 
-/// Approbation en attente de la réponse de l'utilisateur.
+/// Approbation ou question en attente de la réponse de l'utilisateur.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingCodex {
     /// Identifiant de la requête JSON-RPC, renvoyé tel quel.
     pub id: Value,
     pub request: String,
+    /// Questions de `item/tool/requestUserInput` (vide pour une approbation).
+    pub questions: Vec<String>,
+}
+
+/// Réponse JSON-RPC à une question : la même réponse pour chaque question posée.
+pub fn question_reply(pending: &PendingCodex, answer: &str) -> Value {
+    let answers: serde_json::Map<String, Value> =
+        pending.questions.iter().map(|q| (q.clone(), json!({ "answers": [answer] }))).collect();
+    json!({ "jsonrpc": "2.0", "id": pending.id, "result": { "answers": answers } })
 }
 
 /// Réponse JSON-RPC à une approbation.
@@ -123,7 +132,7 @@ impl CodexStream {
         };
         let approval = |kind: ApprovalKind, title: String| {
             vec![
-                CodexItem::Approval(PendingCodex { id: id.clone(), request: request.clone() }),
+                CodexItem::Approval(PendingCodex { id: id.clone(), request: request.clone(), questions: Vec::new() }),
                 CodexItem::Event(AiEvent::ApprovalRequested { request: request.clone(), kind, title, detail: params.clone() }),
             ]
         };
@@ -138,6 +147,25 @@ impl CodexStream {
             "item/fileChange/requestApproval" => {
                 let title = str_of(params, "reason").unwrap_or("Modifier des fichiers").to_string();
                 approval(ApprovalKind::FileChange, title)
+            }
+            "item/tool/requestUserInput" => {
+                let questions = params.get("questions").and_then(Value::as_array).cloned().unwrap_or_default();
+                let ids: Vec<String> = questions.iter().filter_map(|q| str_of(q, "id").map(str::to_string)).collect();
+                let text = questions
+                    .iter()
+                    .filter_map(|q| str_of(q, "question"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let options = questions
+                    .first()
+                    .and_then(|q| q.get("options"))
+                    .and_then(Value::as_array)
+                    .map(|o| o.iter().filter_map(|o| str_of(o, "label").map(str::to_string)).collect())
+                    .unwrap_or_default();
+                vec![
+                    CodexItem::Approval(PendingCodex { id: id.clone(), request: request.clone(), questions: ids }),
+                    CodexItem::Event(AiEvent::Question { request: request.clone(), text, options }),
+                ]
             }
             // Ancien protocole : même sens, autre forme de réponse (refus par défaut).
             "applyPatchApproval" | "execCommandApproval" => {
@@ -402,6 +430,14 @@ mod tests {
         assert!(matches!(&items[1], CodexItem::Event(AiEvent::ApprovalRequested { kind: ApprovalKind::Command, title, .. }) if title == "rm -rf build"));
         assert_eq!(approval_reply(pending, ApprovalDecision::AllowSession)["result"]["decision"], "acceptForSession");
         assert_eq!(approval_reply(pending, ApprovalDecision::Deny)["id"], 7);
+
+        let question = stream.push_line(
+            r#"{"jsonrpc":"2.0","id":8,"method":"item/tool/requestUserInput","params":{"threadId":"t","turnId":"u","itemId":"i","isBlocking":true,"autoResolutionMs":null,"questions":[{"id":"q1","header":"Langue","question":"En quelle langue ?","isOther":false,"isSecret":false,"options":[{"label":"Français","description":""},{"label":"Anglais","description":""}]}]}}"#,
+        );
+        let CodexItem::Approval(pending) = &question[0] else { panic!("{question:?}") };
+        assert!(matches!(&question[1], CodexItem::Event(AiEvent::Question { text, options, .. })
+            if text == "En quelle langue ?" && options.len() == 2));
+        assert_eq!(question_reply(pending, "Français")["result"]["answers"]["q1"]["answers"][0], "Français");
 
         let other = stream.push_line(r#"{"jsonrpc":"2.0","id":"x","method":"attestation/generate","params":{}}"#);
         assert!(matches!(&other[0], CodexItem::Reply(v) if v["error"]["code"] == -32601));

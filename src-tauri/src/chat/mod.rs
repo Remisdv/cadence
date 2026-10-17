@@ -22,7 +22,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
 use ts_rs::TS;
 
 use self::store::{ChatEventRow, ChatMode, ChatSessionDetail, ChatSessionRow, ChatState, ChatStore};
@@ -36,7 +36,7 @@ use crate::{
     app_settings::AiId,
     domain::version::now_iso,
     error::{AppError, AppResult},
-    gateway::{scope::SessionScope, server::GatewayContext},
+    gateway::{core_tools::RunReport, scope::SessionScope, server::GatewayContext},
 };
 
 /// Charge de `chat://event`.
@@ -78,6 +78,18 @@ pub struct ChatSendResult {
     pub session: String,
 }
 
+/// Lancement d'une action dans le chat : nouvelle conversation (mode `chat`) ou exécution de
+/// fond (mode `background`), dont le premier message est le prompt de l'action.
+#[derive(Debug, Clone)]
+pub struct ActionStart {
+    pub ai: AiId,
+    pub mode: ChatMode,
+    pub title: String,
+    /// `action:<plugin>/<action>`.
+    pub origin: String,
+    pub prompt: String,
+}
+
 /// Ce que le chat pousse au front.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatNotice {
@@ -108,6 +120,8 @@ pub struct ChatConfig {
     pub max_live: usize,
     pub interrupt_grace: Duration,
     pub close_grace: Duration,
+    /// Exécutions de fond simultanées (les suivantes attendent leur tour).
+    pub max_background: usize,
     /// Modèle imposé à Claude Code (alias `haiku`…), pour les tests ; les autres IA gardent le leur.
     pub model: Option<String>,
 }
@@ -121,6 +135,7 @@ impl ChatConfig {
             max_live: 4,
             interrupt_grace: Duration::from_secs(5),
             close_grace: Duration::from_secs(3),
+            max_background: 2,
             model: None,
         }
     }
@@ -130,6 +145,9 @@ struct Live {
     session: Arc<AiSession>,
     turn: Arc<AtomicU32>,
     last_used: Instant,
+    mode: SessionMode,
+    /// Place dans la file des exécutions de fond, rendue à la fermeture du processus.
+    _permit: Option<OwnedSemaphorePermit>,
 }
 
 pub struct ChatService {
@@ -140,6 +158,7 @@ pub struct ChatService {
     gateway: Option<GatewayAccess>,
     sink: ChatSink,
     live: Mutex<HashMap<String, Live>>,
+    background: Arc<Semaphore>,
 }
 
 /// Titre d'une conversation : la première ligne du premier message, 60 caractères au plus.
@@ -164,7 +183,8 @@ impl ChatService {
         gateway: Option<GatewayAccess>,
         sink: ChatSink,
     ) -> Arc<Self> {
-        Arc::new(Self { store: Arc::new(store), config, locate, skills, gateway, sink, live: Mutex::default() })
+        let background = Arc::new(Semaphore::new(config.max_background.max(1)));
+        Arc::new(Self { store: Arc::new(store), config, locate, skills, gateway, sink, live: Mutex::default(), background })
     }
 
     pub async fn sessions(&self) -> AppResult<Vec<ChatSessionRow>> {
@@ -225,29 +245,107 @@ impl ChatService {
         if matches!(row.state, ChatState::Running | ChatState::WaitingApproval) {
             return Err(AppError::Validation("Un tour est déjà en cours dans cette conversation.".into()));
         }
-
         let turn = self.store.next_turn(&id).await?;
         self.record(&id, turn, AiEvent::UserMessage { text: text.clone() }).await?;
-        let (session, turn_slot) = match self.ensure_live(&id).await {
+        self.turn(&id, turn, &text, SessionMode::Chat, None).await?;
+        Ok(ChatSendResult { session: id })
+    }
+
+    /// Tour déjà enregistré (`UserMessage`) : processus lancé au besoin, texte envoyé.
+    async fn turn(
+        self: &Arc<Self>,
+        id: &str,
+        turn: u32,
+        text: &str,
+        mode: SessionMode,
+        permit: Option<OwnedSemaphorePermit>,
+    ) -> AppResult<()> {
+        let (session, turn_slot) = match self.ensure_live(id, mode, permit).await {
             Ok(live) => live,
             Err(err) => {
-                self.record(&id, turn, AiEvent::Error { kind: AiErrorKind::Other, message: err.to_string() }).await?;
-                self.set_state(&id, ChatState::Failed).await?;
+                self.record(id, turn, AiEvent::Error { kind: AiErrorKind::Other, message: err.to_string() }).await?;
+                self.set_state(id, ChatState::Failed).await?;
                 return Err(err);
             }
         };
         turn_slot.store(turn, Ordering::SeqCst);
-        self.set_state(&id, ChatState::Running).await?;
-        if let Err(err) = session.send(&text).await {
-            self.record(&id, turn, AiEvent::Error { kind: AiErrorKind::Crash, message: err.to_string() }).await?;
-            self.set_state(&id, ChatState::Failed).await?;
+        self.set_state(id, ChatState::Running).await?;
+        if let Err(err) = session.send(text).await {
+            self.record(id, turn, AiEvent::Error { kind: AiErrorKind::Crash, message: err.to_string() }).await?;
+            self.set_state(id, ChatState::Failed).await?;
             return Err(err);
         }
-        Ok(ChatSendResult { session: id })
+        Ok(())
+    }
+
+    /// Lance une action : conversation ouverte tout de suite (mode chat), ou exécution de fond
+    /// qui attend sa place dans la file. Renvoie l'id de la conversation.
+    pub async fn start_action(self: &Arc<Self>, start: ActionStart) -> AppResult<String> {
+        let now = now_iso();
+        let row = ChatSessionRow {
+            id: new_id(),
+            title: start.title,
+            ai: start.ai,
+            model: (start.ai == AiId::ClaudeCode).then(|| self.config.model.clone()).flatten(),
+            origin: start.origin,
+            mode: start.mode,
+            state: ChatState::Idle,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.store.create(&row).await?;
+        let id = row.id;
+        let turn = self.store.next_turn(&id).await?;
+        self.record(&id, turn, AiEvent::UserMessage { text: start.prompt.clone() }).await?;
+        match start.mode {
+            ChatMode::Chat => self.turn(&id, turn, &start.prompt, SessionMode::Chat, None).await?,
+            ChatMode::Background => {
+                self.set_state(&id, ChatState::Running).await?;
+                let (service, run) = (self.clone(), id.clone());
+                tokio::spawn(async move {
+                    let Ok(permit) = service.background.clone().acquire_owned().await else { return };
+                    if let Err(err) = service.turn(&run, turn, &start.prompt, SessionMode::Background, Some(permit)).await {
+                        tracing::warn!(run, %err, "exécution de fond non lancée");
+                    }
+                });
+            }
+        }
+        Ok(id)
+    }
+
+    /// Rapport `cadence__run_report` d'une exécution de fond, ajouté à son historique.
+    pub async fn record_report(&self, report: RunReport) -> AppResult<()> {
+        let id = report.run.clone();
+        if self.store.get(&id).await.is_err() {
+            return Ok(());
+        }
+        let turn = self.store.next_turn(&id).await?.saturating_sub(1);
+        let event = AiEvent::Report { text: report.text, progress: report.progress, is_final: report.is_final, data: report.data };
+        self.record(&id, turn, event).await.map(|_| ())
+    }
+
+    /// Répond à une question posée par l'IA (Codex, OpenCode).
+    pub async fn answer(&self, id: &str, request: &str, answer: &str) -> AppResult<()> {
+        let answer = answer.trim();
+        if answer.is_empty() {
+            return Err(AppError::Validation("La réponse est vide.".into()));
+        }
+        let Some(session) = self.live_session(id).await else {
+            return Err(AppError::Validation("Cette question n'attend plus de réponse.".into()));
+        };
+        session.answer_question(request, answer).await?;
+        let turn = self.store.next_turn(id).await?.saturating_sub(1);
+        self.record(id, turn, AiEvent::QuestionAnswered { request: request.into(), answer: answer.into() }).await?;
+        self.set_state(id, ChatState::Running).await
     }
 
     /// Processus vivant de la conversation, lancé au besoin.
-    async fn ensure_live(self: &Arc<Self>, id: &str) -> AppResult<(Arc<AiSession>, Arc<AtomicU32>)> {
+    async fn ensure_live(
+        self: &Arc<Self>,
+        id: &str,
+        mode: SessionMode,
+        permit: Option<OwnedSemaphorePermit>,
+    ) -> AppResult<(Arc<AiSession>, Arc<AtomicU32>)> {
         let mut live = self.live.lock().await;
         if let Some(entry) = live.get_mut(id) {
             if entry.session.is_alive() {
@@ -268,7 +366,8 @@ impl ChatService {
         let row = self.store.get(id).await?;
         let cli = (self.locate)(row.ai)?;
         let resume = self.store.native_id(id).await?;
-        let token = self.gateway.as_ref().map(|g| g.context.tokens.issue(SessionScope { session: id.into(), run: None }));
+        let run = (mode == SessionMode::Background).then(|| id.to_string());
+        let token = self.gateway.as_ref().map(|g| g.context.tokens.issue(SessionScope { session: id.into(), run }));
         let files = staging::stage(&self.config.staging_root, id, self.gateway.as_ref().map(|g| g.url.as_str()), &(self.skills)())?;
         let (tx, rx) = mpsc::unbounded_channel();
         let turn = Arc::new(AtomicU32::new(0));
@@ -286,15 +385,18 @@ impl ChatService {
                     token,
                     resume,
                     model: row.model.clone().filter(|_| row.ai == AiId::ClaudeCode),
-                    mode: SessionMode::Chat,
-                    permissions: Permissions::Ask,
+                    mode,
+                    permissions: if mode == SessionMode::Background { Permissions::AutoEdit } else { Permissions::Ask },
                     title: row.title.clone(),
                 },
                 tx,
             )
             .await?,
         );
-        live.insert(id.to_string(), Live { session: session.clone(), turn: turn.clone(), last_used: Instant::now() });
+        live.insert(
+            id.to_string(),
+            Live { session: session.clone(), turn: turn.clone(), last_used: Instant::now(), mode, _permit: permit },
+        );
         Ok((session, turn))
     }
 
@@ -371,6 +473,16 @@ impl ChatService {
         idle
     }
 
+    /// Fin du tour d'une exécution de fond : son processus est fermé, sa place libérée.
+    async fn end_background(&self, id: &str) {
+        let mut live = self.live.lock().await;
+        if live.get(id).is_some_and(|l| l.mode == SessionMode::Background)
+            && let Some(entry) = live.remove(id)
+        {
+            self.spawn_close(id, entry.session);
+        }
+    }
+
     /// Nombre de processus vivants (tests, réglages).
     pub async fn live_count(&self) -> usize {
         self.live.lock().await.values().filter(|l| l.session.is_alive()).count()
@@ -397,7 +509,7 @@ async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, m
         let Some(service) = service.upgrade() else { return };
         let turn = turn.load(Ordering::SeqCst);
         let state = match &event {
-            AiEvent::ApprovalRequested { .. } => Some(ChatState::WaitingApproval),
+            AiEvent::ApprovalRequested { .. } | AiEvent::Question { .. } => Some(ChatState::WaitingApproval),
             AiEvent::TurnCompleted { interrupted: true, .. } => Some(ChatState::Interrupted),
             AiEvent::TurnCompleted { ok, .. } => Some(if *ok { ChatState::Idle } else { ChatState::Failed }),
             _ => None,
@@ -421,6 +533,9 @@ async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, m
             && let Err(err) = service.set_state(&id, state).await
         {
             tracing::warn!(session = id, %err, "état du chat non enregistré");
+        }
+        if matches!(state, Some(ChatState::Idle | ChatState::Failed | ChatState::Interrupted)) {
+            service.end_background(&id).await;
         }
     }
 }

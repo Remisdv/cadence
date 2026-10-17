@@ -290,6 +290,11 @@ impl ClaudeSession {
         self.write(&approval_response(&pending, decision)).await
     }
 
+    /// Claude Code ne pose pas de question par le flux (outil `AskUserQuestion` refusé en `-p`).
+    pub async fn answer_question(&self, _request: &str, _answer: &str) -> AppResult<()> {
+        Err(AppError::Validation("Claude Code n'attend pas de réponse à une question.".into()))
+    }
+
     /// Tue le processus (le tour en cours est marqué interrompu).
     pub async fn kill(&self) {
         self.shared.killed.store(true, Ordering::SeqCst);

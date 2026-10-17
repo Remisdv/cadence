@@ -426,6 +426,47 @@ const handlers: Handlers = {
     requestInterrupt(session);
     return null;
   },
+  chat_answer: ({ session, request, answer }) => {
+    const chat = state.chats.get(session);
+    if (!chat?.events.some((e) => e.event.type === "question" && e.event.request === request))
+      fail("chat_answer", "Cette question n'attend plus de réponse.");
+    recordMockChatEvent(state.chats, session, { type: "question-answered", request, answer });
+    return null;
+  },
+  action_run: async ({ input }) => {
+    const plugin = installed("action_run", input.plugin);
+    const action = plugin.actions.find((a) => a.id === input.action);
+    if (!action)
+      fail("action_run", `« ${plugin.name} » ne déclare pas l'action « ${input.action} ».`);
+    if (action.context && (input.context as { type?: string } | null)?.type !== action.context)
+      fail(
+        "action_run",
+        `L'action « ${action.label} » attend un contexte de type « ${action.context} ».`,
+      );
+    const ai =
+      input.ai ??
+      state.settings.actionAi[`${plugin.id}/${action.id}`] ??
+      state.settings.defaultAi ??
+      "claude-code";
+    const prompt = `/cadence:${plugin.id}-${action.skill}\n\nAction : ${action.label}`;
+    const row = newChat(state.chats, action.label, ai);
+    Object.assign(row, {
+      origin: `action:${plugin.id}/${action.id}`,
+      mode: action.mode === "background" ? "background" : "chat",
+    });
+    recordMockChatEvent(state.chats, row.id, { type: "user-message", text: prompt });
+    void simulateTurn(state.chats, row.id, prompt).then(() => {
+      if (action.mode === "background")
+        recordMockChatEvent(state.chats, row.id, {
+          type: "report",
+          text: `${action.label} : terminé (simulation).`,
+          progress: 100,
+          isFinal: true,
+          data: null,
+        });
+    });
+    return { session: row.id, mode: action.mode, ai };
+  },
   chat_approve: ({ request, decision }) => {
     if (!answerApproval(request, decision))
       fail("chat_approve", "Cette demande d'approbation n'attend plus de réponse.");

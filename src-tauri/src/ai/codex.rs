@@ -35,7 +35,9 @@ use tokio::{
 
 use super::{
     claude_code::{Permissions, SessionMode},
-    codex_stream::{CodexItem, CodexStream, PendingCodex, approval_reply, notification, request, text_input},
+    codex_stream::{
+        CodexItem, CodexStream, PendingCodex, approval_reply, notification, question_reply, request, text_input,
+    },
     events::{AiErrorKind, AiEvent, ApprovalDecision},
     process::{Tail, TreeChild},
     session::AiLaunch,
@@ -309,6 +311,19 @@ impl CodexSession {
             .remove(request)
             .ok_or_else(|| AppError::Validation("Cette demande d'approbation n'attend plus de réponse.".into()))?;
         write_line(&self.stdin, &approval_reply(&pending, decision)).await
+    }
+
+    /// Répond à une question (`item/tool/requestUserInput`).
+    pub async fn answer_question(&self, request: &str, answer: &str) -> AppResult<()> {
+        let pending = self
+            .shared
+            .approvals
+            .lock()
+            .unwrap()
+            .remove(request)
+            .filter(|p| !p.questions.is_empty())
+            .ok_or_else(|| AppError::Validation("Cette question n'attend plus de réponse.".into()))?;
+        write_line(&self.stdin, &question_reply(&pending, answer)).await
     }
 
     pub async fn kill(&self) {

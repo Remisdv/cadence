@@ -7,6 +7,7 @@ import { call } from "@/lib/ipc/transport";
 import { buildThread } from "@/lib/domain/chat";
 import { startLog, type ToolRunLog } from "@/lib/domain/tools";
 import type {
+  ActionRunInput,
   ApprovalDecision,
   AppSettingsPatch,
   ChatSendInput,
@@ -341,6 +342,22 @@ export function useApproveChat(session: string) {
   return useMutation({
     mutationFn: ({ request, decision }: { request: string; decision: ApprovalDecision }) =>
       call("chat_approve", { session, request, decision }),
+  });
+}
+
+export function useAnswerChat(session: string) {
+  return useMutation({
+    mutationFn: ({ request, answer }: { request: string; answer: string }) =>
+      call("chat_answer", { session, request, answer }),
+  });
+}
+
+/** Lance une action de plugin ; la conversation (ou l'exécution de fond) apparaît dans le chat. */
+export function useRunAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ActionRunInput) => call("action_run", { input }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.chatSessions() }),
   });
 }
 

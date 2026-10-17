@@ -18,5 +18,6 @@ pub mod events;
 pub mod opencode;
 pub mod opencode_stream;
 pub mod process;
+pub mod prompt;
 pub mod session;
 pub mod staging;

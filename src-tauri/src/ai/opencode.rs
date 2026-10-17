@@ -46,6 +46,7 @@ const USER: &str = "opencode";
 #[derive(Default)]
 struct Shared {
     approvals: Mutex<HashSet<String>>,
+    questions: Mutex<HashSet<String>>,
     running: AtomicBool,
     alive: AtomicBool,
     killed: AtomicBool,
@@ -260,6 +261,15 @@ impl OpencodeSession {
             .map(|_| ())
     }
 
+    /// Répond à une question (`question.asked`) : la même réponse pour chaque question posée.
+    pub async fn answer_question(&self, request: &str, answer: &str) -> AppResult<()> {
+        if !self.shared.questions.lock().unwrap().remove(request) {
+            return Err(AppError::Validation("Cette question n'attend plus de réponse.".into()));
+        }
+        let body = json!({ "answers": [[answer]] });
+        self.send_json(reqwest::Method::POST, &format!("/question/{request}/reply"), Some(body)).await.map(|_| ())
+    }
+
     pub async fn kill(&self) {
         self.shared.killed.store(true, Ordering::SeqCst);
         self.events_task.abort();
@@ -311,6 +321,9 @@ async fn follow_events(
                 match &event {
                     AiEvent::ApprovalRequested { request, .. } => {
                         shared.approvals.lock().unwrap().insert(request.clone());
+                    }
+                    AiEvent::Question { request, .. } => {
+                        shared.questions.lock().unwrap().insert(request.clone());
                     }
                     AiEvent::TurnCompleted { .. } => {
                         shared.running.store(false, Ordering::SeqCst);

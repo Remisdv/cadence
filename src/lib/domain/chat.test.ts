@@ -87,6 +87,28 @@ describe("buildThread", () => {
   });
 });
 
+describe("questions et rapports", () => {
+  it("garde la réponse donnée et affiche les rapports de fond", () => {
+    const items = buildThread(
+      rows([
+        {
+          type: "question",
+          request: "q1",
+          text: "Quelle langue ?",
+          options: ["Français", "Anglais"],
+        },
+        { type: "question-answered", request: "q1", answer: "Français" },
+        { type: "report", text: "Moitié faite", progress: 50, isFinal: false, data: null },
+        { type: "report", text: "Terminé", progress: 100, isFinal: true, data: null },
+      ]),
+    );
+    expect(items[0]).toMatchObject({ kind: "question", key: "q1", answer: "Français" });
+    expect(
+      items.filter((i) => i.kind === "report").map((i) => i.kind === "report" && i.final),
+    ).toEqual([false, true]);
+  });
+});
+
 describe("aides du chat", () => {
   it("groupe les tours derrière chaque message", () => {
     const turns = groupTurns(

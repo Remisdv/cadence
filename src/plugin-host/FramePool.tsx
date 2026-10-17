@@ -14,7 +14,7 @@ import { usePlugins } from "@/lib/query/queries";
 import type { InstalledPluginView } from "@/lib/types";
 import { createBridge, type Bridge } from "./bridge";
 import { isMockIpc } from "@/lib/ipc/transport";
-import { hostApi, mockFrameDocument, pluginUrl, shellTheme } from "./host";
+import { hostApi, mockFrameDocument, pluginRuns, pluginUrl, shellTheme } from "./host";
 
 type Route = { view: string; params: Record<string, string> };
 type Rect = { left: number; top: number; width: number; height: number };
@@ -131,12 +131,27 @@ function ManagedFrame({ plugin }: { plugin: InstalledPluginView }) {
     const onMessage = (event: MessageEvent) =>
       void b.handle({ source: event.source, data: event.data });
     window.addEventListener("message", onMessage);
+    const offRuns = subscribe("run://report", (report) => {
+      if (pluginRuns.get(report.run) === plugin.id)
+        b.emit("run", {
+          runId: report.run,
+          text: report.text,
+          progress: report.progress,
+          final: report.final,
+          data: report.data,
+        });
+    });
+    const offRunState = subscribe("chat://state", ({ session, state }) => {
+      if (pluginRuns.get(session) === plugin.id) b.emit("run", { runId: session, state });
+    });
     const offEvents = subscribe("plugin://event", (payload) => {
       if (payload.plugin === plugin.id) b.emit(payload.event, payload.data);
     });
     return () => {
       window.removeEventListener("message", onMessage);
       offEvents();
+      offRuns();
+      offRunState();
       bridge.current = null;
     };
     // Recréé seulement si l'identité du plugin change (pas à chaque relecture de la liste).

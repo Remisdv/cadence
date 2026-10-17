@@ -100,6 +100,10 @@ impl AiSession {
         each!(self, s => s.answer(request, decision).await)
     }
 
+    pub async fn answer_question(&self, request: &str, answer: &str) -> AppResult<()> {
+        each!(self, s => s.answer_question(request, answer).await)
+    }
+
     /// Tue le processus (le tour en cours est marqué interrompu).
     pub async fn kill(&self) {
         each!(self, s => s.kill().await)

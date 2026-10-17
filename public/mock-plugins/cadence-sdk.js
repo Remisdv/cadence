@@ -138,8 +138,17 @@
     openExternal: function (url) {
       return call("ui.open", { url: url });
     },
-    runAction: function (id, context) {
-      return call("actions.run", { id: id, context: context || null });
+    runAction: function (id, context, options) {
+      return call("actions.run", {
+        id: id,
+        context: context || null,
+        ai: (options && options.ai) || null,
+      });
+    },
+    onRun: function (runId, fn) {
+      return this.on("run", function (event) {
+        if (event && event.runId === runId) fn(event);
+      });
     },
     settings: {
       get: function () {

@@ -80,7 +80,17 @@ pub fn run() {
             let handle = app.handle().clone();
             let gateway_events: gateway::server::GatewayEventSink = Arc::new(move |event| match event {
                 gateway::core_tools::GatewayEvent::OpenView(request) => events::emit(&handle, events::UI_OPEN_VIEW, request),
-                gateway::core_tools::GatewayEvent::RunReport(report) => events::emit(&handle, events::RUN_REPORT, report),
+                gateway::core_tools::GatewayEvent::RunReport(report) => {
+                    events::emit(&handle, events::RUN_REPORT, report.clone());
+                    // Le rapport rejoint l'historique de l'exécution (sa conversation).
+                    if let Some(chat) = handle.try_state::<state::AppState>().and_then(|s| s.chat.clone()) {
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(err) = chat.record_report(report).await {
+                                tracing::warn!(%err, "rapport d'exécution non enregistré");
+                            }
+                        });
+                    }
+                }
             });
             let context = gateway::server::GatewayContext::new(
                 &version,
@@ -190,6 +200,8 @@ pub fn run() {
             commands::chat::chat_session_get,
             commands::chat::chat_send,
             commands::chat::chat_interrupt,
+            commands::chat::chat_answer,
+            commands::actions::action_run,
             commands::chat::chat_approve,
             commands::chat::chat_session_rename,
             commands::chat::chat_session_delete,

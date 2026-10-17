@@ -41,6 +41,11 @@ export interface HostApi {
   secretHas(id: string): Promise<boolean>;
   storageGet(key: string): unknown;
   storageSet(key: string, value: unknown): void;
+  runAction(
+    id: string,
+    context: Record<string, unknown> | null,
+    ai: string | null,
+  ): Promise<{ runId: string; sessionId: string | null; mode: string }>;
 }
 
 export interface BridgeOptions {
@@ -133,6 +138,14 @@ export function createBridge({ frame, api, hello }: BridgeOptions) {
       return null;
     },
     "secrets.has": (params) => api.secretHas(text(params, "id")),
+    "actions.run": (params) => {
+      const ai = typeof params.ai === "string" ? params.ai : null;
+      if (ai && !["claude-code", "codex", "opencode"].includes(ai))
+        throw new BridgeError("invalid_params", `IA « ${ai} » inconnue.`);
+      const context =
+        params.context === undefined || params.context === null ? null : object(params.context);
+      return api.runAction(text(params, "id"), context, ai);
+    },
     "storage.get": (params) => api.storageGet(text(params, "key")) ?? null,
     "storage.set": (params) => {
       api.storageSet(text(params, "key"), params.value ?? null);

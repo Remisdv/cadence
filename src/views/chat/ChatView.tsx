@@ -26,6 +26,7 @@ import { formatDuration, parseCadenceLink, type ChatItem } from "@/lib/domain/ch
 import {
   useAppSettings,
   useAppStatus,
+  useAnswerChat,
   useApproveChat,
   useChatThread,
   useDeleteChat,
@@ -50,6 +51,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
   const send = useSendChat();
   const interrupt = useInterruptChat();
   const approve = useApproveChat(sessionId ?? "");
+  const answer = useAnswerChat(sessionId ?? "");
   const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
 
   const tools = useTools().data;
@@ -143,6 +145,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             running={running}
             plugins={plugins}
             onApprove={(request, decision) => approve.mutate({ request, decision })}
+            onAnswer={(request, text) => answer.mutate({ request, answer: text })}
             onLink={onLink}
           />
           <Composer
@@ -151,7 +154,12 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             onPick={setPicked}
             running={running}
             sending={send.isPending}
-            error={send.error?.message ?? interrupt.error?.message ?? approve.error?.message}
+            error={
+              send.error?.message ??
+              interrupt.error?.message ??
+              approve.error?.message ??
+              answer.error?.message
+            }
             onSend={onSend}
             onStop={() => sessionId && interrupt.mutate(sessionId)}
           />
@@ -209,6 +217,7 @@ function Thread({
   running,
   plugins,
   onApprove,
+  onAnswer,
   onLink,
 }: {
   items: ChatItem[];
@@ -219,6 +228,7 @@ function Thread({
   running: boolean;
   plugins: InstalledPluginView[];
   onApprove: (request: string, decision: "allow" | "allow-session" | "deny") => void;
+  onAnswer: (request: string, answer: string) => void;
   onLink: (href: string) => boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -252,6 +262,7 @@ function Thread({
             model={model}
             running={running}
             onApprove={onApprove}
+            onAnswer={onAnswer}
             onLink={onLink}
           />
         )}

@@ -4,7 +4,7 @@
  */
 import { call, isMockIpc } from "@/lib/ipc/transport";
 import { openExternal } from "@/lib/platform";
-import type { InstalledPluginView } from "@/lib/types";
+import type { AiId, InstalledPluginView } from "@/lib/types";
 import { navigate } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 import type { HostApi } from "./bridge";
@@ -61,6 +61,9 @@ export function shellTheme(): Record<string, string> {
 const storageKey = (plugin: string, key: string) => `cadence.plugin.${plugin}.${key}`;
 
 /** `HostApi` d'un plugin : chaque méthode est liée à ce plugin, jamais à un autre. */
+/** Exécutions lancées par chaque plugin (`runId` → plugin), pour lui relayer leur suivi. */
+export const pluginRuns = new Map<string, string>();
+
 export function hostApi(plugin: Pick<InstalledPluginView, "id" | "name">): HostApi {
   const id = plugin.id;
   return {
@@ -78,6 +81,19 @@ export function hostApi(plugin: Pick<InstalledPluginView, "id" | "name">): HostA
       await call("plugin_secret_set", { plugin: id, secret, value });
     },
     secretHas: (secret) => call("plugin_secret_has", { plugin: id, secret }),
+    runAction: async (action, context, ai) => {
+      const result = await call("action_run", {
+        input: { plugin: id, action, context, ...(ai ? { ai: ai as AiId } : {}) },
+      });
+      pluginRuns.set(result.session, id);
+      // Mode chat : la conversation s'ouvre dans le shell.
+      if (result.mode === "chat") navigate({ id: "chat", session: result.session });
+      return {
+        runId: result.session,
+        sessionId: result.mode === "chat" ? result.session : null,
+        mode: result.mode,
+      };
+    },
     storageGet: (key) => {
       try {
         const raw = localStorage.getItem(storageKey(id, key));

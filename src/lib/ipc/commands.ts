@@ -4,6 +4,8 @@
  * Les types viennent de ts-rs : si Rust change une structure, ce fichier casse à la compilation.
  */
 import type {
+  ActionRunInput,
+  ActionRunResult,
   AiId,
   AppSettings,
   AppSettingsPatch,
@@ -106,6 +108,10 @@ export interface Commands {
   chat_session_get: { args: { id: string }; result: ChatSessionDetail };
   chat_send: { args: { input: ChatSendInput }; result: ChatSendResult };
   chat_interrupt: { args: { session: string }; result: null };
+  /** Réponse à une question de l'IA (Codex, OpenCode). */
+  chat_answer: { args: { session: string; request: string; answer: string }; result: null };
+  /** Action d'un plugin : conversation (mode chat) ou exécution de fond. */
+  action_run: { args: { input: ActionRunInput }; result: ActionRunResult };
   chat_approve: {
     args: { session: string; request: string; decision: ApprovalDecision };
     result: null;

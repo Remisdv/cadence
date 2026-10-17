@@ -24,6 +24,7 @@ function setup(overrides: Partial<HostApi> = {}) {
     secretHas: vi.fn(async () => true),
     storageGet: (key) => store.get(key),
     storageSet: (key, value) => store.set(key, value),
+    runAction: vi.fn(async () => ({ runId: "c1", sessionId: null, mode: "background" })),
     ...overrides,
   };
   const bridge = createBridge({
@@ -128,6 +129,21 @@ describe("pont de l'iframe", () => {
     expect(await request("storage.get", { key: "onglet" })).toMatchObject({ result: { n: 2 } });
     expect(await request("storage.get", { key: "absent" })).toMatchObject({ result: null });
     expect(await request("inconnue")).toMatchObject({ error: { code: "method_not_found" } });
+  });
+
+  it("lance les actions du plugin, IA vérifiée", async () => {
+    const { request, api } = setup();
+    expect(await request("actions.run", { id: "resumer", context: { type: "doc" } })).toMatchObject(
+      {
+        result: { runId: "c1", mode: "background" },
+      },
+    );
+    expect(api.runAction).toHaveBeenCalledWith("resumer", { type: "doc" }, null);
+    await request("actions.run", { id: "resumer", ai: "codex" });
+    expect(api.runAction).toHaveBeenLastCalledWith("resumer", null, "codex");
+    expect(await request("actions.run", { id: "resumer", ai: "gpt" })).toMatchObject({
+      error: { code: "invalid_params" },
+    });
   });
 
   it("fusionne les réglages et pousse les événements", async () => {

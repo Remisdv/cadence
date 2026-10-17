@@ -45,6 +45,8 @@ export type ChatItem =
       decision: ApprovalDecision | null;
     }
   | { kind: "error"; key: string; error: AiErrorKind; message: string }
+  | { kind: "question"; key: string; text: string; options: string[]; answer: string | null }
+  | { kind: "report"; key: string; text: string; progress: number | null; final: boolean }
   | {
       kind: "turn";
       key: string;
@@ -151,7 +153,27 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
       return next ? { ...thread, items: next } : thread;
     }
     case "question":
-      return push({ kind: "assistant", key, text: event.text, streaming: false });
+      return push({
+        kind: "question",
+        key: event.request,
+        text: event.text,
+        options: event.options,
+        answer: null,
+      });
+    case "question-answered": {
+      const next = replace(items, event.request, "question", (i) =>
+        i.kind === "question" ? { ...i, answer: event.answer } : i,
+      );
+      return next ? { ...thread, items: next } : thread;
+    }
+    case "report":
+      return push({
+        kind: "report",
+        key,
+        text: event.text,
+        progress: event.progress,
+        final: event.isFinal,
+      });
     case "usage":
       return { ...thread, pendingCost: event.costUsd };
     case "turn-completed": {

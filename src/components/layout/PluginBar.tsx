@@ -7,7 +7,13 @@ import { Icon } from "@/components/icons/Icon";
 import { PluginTile } from "@/components/domain/PluginTile";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/Menu";
 import { homeView, kitIcon, moveInRail, viewSections } from "@/lib/domain/plugins";
-import { usePlugins, useReorderPlugins, useSetPluginEnabled } from "@/lib/query/queries";
+import {
+  usePlugins,
+  useReorderPlugins,
+  useRunAction,
+  useSetPluginEnabled,
+} from "@/lib/query/queries";
+import { useUiStore } from "@/stores/ui";
 import type { InstalledPluginView } from "@/lib/types";
 import { useNavigation } from "@/stores/navigation";
 import {
@@ -66,6 +72,8 @@ export function PluginBar({ plugin, view }: { plugin: InstalledPluginView; view:
         </ContextBarSection>
       ))}
 
+      <PluginActions plugin={plugin} />
+
       <ContextBarSection
         title="Conversations"
         action={
@@ -82,6 +90,50 @@ export function PluginBar({ plugin, view }: { plugin: InstalledPluginView; view:
         </ContextBarHint>
       </ContextBarSection>
     </ContextBar>
+  );
+}
+
+/**
+ * Actions globales du plugin (`[[actions]]` sans contexte) : un clic lance le skill, en
+ * conversation (mode chat) ou en fond (visible dans le groupe « En fond » du chat).
+ */
+function PluginActions({ plugin }: { plugin: InstalledPluginView }) {
+  const run = useRunAction();
+  const navigate = useNavigation((s) => s.navigate);
+  const actions = plugin.actions.filter((a) => a.context === null);
+  if (actions.length === 0) return null;
+  const launch = (action: (typeof actions)[number]) => {
+    if (action.confirm && !window.confirm(action.confirm)) return;
+    run.mutate(
+      { plugin: plugin.id, action: action.id, context: null },
+      {
+        onSuccess: (result) => {
+          if (result.mode === "chat") navigate({ id: "chat", session: result.session });
+          else
+            useUiStore.getState().pushToast({
+              message: `« ${action.label} » tourne en fond : suivez-la dans le chat.`,
+              kind: "info",
+              source: plugin.name,
+            });
+        },
+        onError: (error) =>
+          useUiStore
+            .getState()
+            .pushToast({ message: error.message, kind: "error", source: plugin.name }),
+      },
+    );
+  };
+  return (
+    <ContextBarSection title="Actions">
+      {actions.map((action) => (
+        <ContextBarItem
+          key={action.id}
+          icon={action.icon ? kitIcon(action.icon) : "sparkle"}
+          label={action.mode === "background" ? `${action.label} · en fond` : action.label}
+          onClick={() => launch(action)}
+        />
+      ))}
+    </ContextBarSection>
   );
 }
 

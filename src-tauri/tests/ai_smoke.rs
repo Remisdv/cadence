@@ -335,3 +335,67 @@ async fn ai_smoke_codex_reports_a_missing_login() {
     gateway.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Exécution de fond avec OpenCode : le jeton de passerelle porte l'exécution, l'IA rend son
+/// résultat par `cadence__run_report`, le processus se ferme à la fin du tour.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "lance OpenCode (modèle gratuit d'OpenCode Zen, réseau)"]
+async fn ai_smoke_opencode_background_action_reports_its_result() {
+    use cadence_lib::{
+        ai::prompt::action_prompt,
+        app_settings::AiId,
+        chat::{ActionStart, store::ChatMode},
+        gateway::core_tools::GatewayEvent,
+    };
+    let cli = smoke_cli("CADENCE_SMOKE_OPENCODE", "opencode");
+    let dir = std::env::temp_dir().join(format!("cadence-ai-opencode-bg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for var in ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
+        // SAFETY : test isolé, variables posées avant tout lancement de processus.
+        unsafe { std::env::set_var(var, dir.join("xdg").join(var.to_lowercase())) };
+    }
+    let host = fake_host(&dir);
+    let plugins = Arc::new(|| {
+        vec![PluginSummary { id: "fake".into(), name: "Factice".into(), description: String::new(), views: vec![], has_server: true }]
+    });
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let context = GatewayContext::new(
+        "0.3.0",
+        host.clone(),
+        plugins,
+        Arc::new(move |event| {
+            if let GatewayEvent::RunReport(report) = event {
+                sink.lock().unwrap().push(report);
+            }
+        }),
+    );
+    let gateway = Gateway::start(context, 0).await.unwrap();
+    let chat = chat_for(&dir, &gateway, cli).await;
+    let mut prompt = action_prompt(AiId::Opencode, "fake", "echo", "Écho de fond", None, true);
+    prompt.push_str("\n\nTâche : appelle l'outil cadence_fake__echo avec text=\"hibou\", puis appelle cadence_cadence__run_report avec text=<la valeur renvoyée> et final=true.");
+    let id = chat
+        .start_action(ActionStart {
+            ai: AiId::Opencode,
+            mode: ChatMode::Background,
+            title: "Écho de fond".into(),
+            origin: "action:fake/echo".into(),
+            prompt,
+        })
+        .await
+        .unwrap();
+    let state = wait_idle(&chat, &id).await;
+    let events: Vec<AiEvent> = chat.detail(&id).await.unwrap().events.into_iter().map(|e| e.event).collect();
+    assert_eq!(state, ChatState::Idle, "{events:?}");
+    let reports = reports.lock().unwrap().clone();
+    assert!(reports.iter().any(|r| r.run == id && r.is_final && r.text.to_lowercase().contains("hibou")), "{reports:?}\n{events:?}");
+    let start = Instant::now();
+    while chat.live_count().await > 0 {
+        assert!(start.elapsed() < Duration::from_secs(10), "processus de fond non fermé");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    chat.shutdown().await;
+    host.stop_all().await;
+    gateway.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

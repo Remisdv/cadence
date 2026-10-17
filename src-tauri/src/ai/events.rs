@@ -157,6 +157,16 @@ pub enum AiEvent {
     /// Réponse donnée à une demande d'approbation (écrit par Cadence).
     ApprovalAnswered { request: String, decision: ApprovalDecision },
     Question { request: String, text: String, options: Vec<String> },
+    /// Réponse donnée à une question (écrit par Cadence).
+    QuestionAnswered { request: String, answer: String },
+    /// Rapport d'une exécution de fond (`cadence__run_report`), écrit par Cadence.
+    Report {
+        text: String,
+        progress: Option<u32>,
+        is_final: bool,
+        #[ts(type = "unknown")]
+        data: Option<Value>,
+    },
     Usage { input_tokens: u32, output_tokens: u32, cost_usd: Option<f64> },
     TurnCompleted { ok: bool, interrupted: bool, error: Option<String>, duration_ms: u32 },
     Error { kind: AiErrorKind, message: String },

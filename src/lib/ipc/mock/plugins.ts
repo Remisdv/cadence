@@ -155,6 +155,10 @@ export const mockPlugins: InstalledPluginView[] = [
     railIcon: "grid",
     uiEntry: "index.html",
     source: "dev",
+    actions: [
+      action("resumer", "Résumer la journée", "chat"),
+      action("rapport", "Rapport hebdomadaire", "background"),
+    ],
     views: [
       view("accueil", "Accueil", "grid", null, { home: true }),
       view("outils", "Outils", "wrench", null),

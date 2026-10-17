@@ -83,6 +83,10 @@ impl Fixture {
         }
     }
 
+    async fn detail_origin(&self, id: &str) -> String {
+        self.chat.detail(id).await.unwrap().session.origin
+    }
+
     async fn events(&self, id: &str) -> Vec<AiEvent> {
         self.chat.detail(id).await.unwrap().events.into_iter().map(|e| e.event).collect()
     }
@@ -198,5 +202,57 @@ async fn closes_idle_processes_caps_them_and_deletes_conversations() {
     assert!(f.chat.detail(&a).await.is_err());
     assert_eq!(f.chat.rename(&b, "Renommée").await.unwrap().title, "Renommée");
     assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None }).await.is_err());
+    f.chat.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn runs_background_actions_in_a_queue_and_records_reports() {
+    use cadence_lib::{
+        app_settings::AiId,
+        chat::{ActionStart, store::ChatMode},
+        gateway::core_tools::RunReport,
+    };
+    let f = fixture("background", |c| c.max_background = 1).await;
+    let start = |n: u32| ActionStart {
+        ai: AiId::ClaudeCode,
+        mode: ChatMode::Background,
+        title: format!("Action {n}"),
+        origin: "action:exemple/resumer".into(),
+        prompt: format!("tâche {n}"),
+    };
+    let first = f.chat.start_action(start(1)).await.unwrap();
+    let second = f.chat.start_action(start(2)).await.unwrap();
+    let row = f.chat.detail(&second).await.unwrap().session;
+    assert_eq!((row.mode, row.state), (ChatMode::Background, ChatState::Running), "en file, affichée en cours");
+    f.wait(&first, ChatState::Idle).await;
+    f.wait(&second, ChatState::Idle).await;
+    assert_eq!(f.replies(&second).await, ["écho : tâche 2"]);
+    assert_eq!(f.detail_origin(&first).await, "action:exemple/resumer");
+
+    // Processus fermé à la fin du tour : la place est rendue.
+    let start_wait = Instant::now();
+    while f.chat.live_count().await > 0 {
+        assert!(start_wait.elapsed() < Duration::from_secs(10), "processus de fond non fermé");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    f.chat
+        .record_report(RunReport {
+            run: first.clone(),
+            session: first.clone(),
+            text: "Terminé".into(),
+            progress: Some(100),
+            data: None,
+            is_final: true,
+        })
+        .await
+        .unwrap();
+    assert!(f.events(&first).await.iter().any(|e| matches!(e, AiEvent::Report { is_final: true, text, .. } if text == "Terminé")));
+
+    // Suite dans le chat : la conversation reprend en mode conversation.
+    f.send(Some(&first), "et ensuite ?").await;
+    f.wait(&first, ChatState::Idle).await;
+    let last = f.replies(&first).await.last().cloned().unwrap_or_default();
+    assert!(last.contains("reprise fake-1") && last.ends_with("et ensuite ?"), "session native reprise : {last}");
     f.chat.shutdown().await;
 }

@@ -6,7 +6,7 @@
  * Les éléments viennent de `buildThread` (`lib/domain/chat.ts`) ; le composant ne lit aucune
  * donnée lui-même.
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Icon } from "@/components/icons/Icon";
 import { Markdown } from "@/components/domain/Markdown";
 import { Badge } from "@/components/ui/Badge";
@@ -33,11 +33,21 @@ export interface ChatThreadProps {
   /** Un tour est en cours : indicateur d'attente tant que rien n'arrive. */
   running?: boolean;
   onApprove?: (request: string, decision: ApprovalDecision) => void;
+  /** Réponse à une question de l'IA (Codex, OpenCode). */
+  onAnswer?: (request: string, answer: string) => void;
   /** Clic sur un lien du texte ; `true` s'il est traité (liens `cadence:`). */
   onLink?: (href: string) => boolean;
 }
 
-export function ChatThread({ items, ai, model, running, onApprove, onLink }: ChatThreadProps) {
+export function ChatThread({
+  items,
+  ai,
+  model,
+  running,
+  onApprove,
+  onAnswer,
+  onLink,
+}: ChatThreadProps) {
   const turns = groupTurns(items);
   return (
     <div className="flex flex-col gap-5">
@@ -49,6 +59,7 @@ export function ChatThread({ items, ai, model, running, onApprove, onLink }: Cha
           model={model}
           running={running === true && i === turns.length - 1}
           onApprove={onApprove}
+          onAnswer={onAnswer}
           onLink={onLink}
         />
       ))}
@@ -62,6 +73,7 @@ function TurnView({
   model,
   running,
   onApprove,
+  onAnswer,
   onLink,
 }: {
   turn: ChatTurn;
@@ -69,6 +81,7 @@ function TurnView({
   model?: string | null;
   running: boolean;
   onApprove?: ChatThreadProps["onApprove"];
+  onAnswer?: ChatThreadProps["onAnswer"];
   onLink?: ChatThreadProps["onLink"];
 }) {
   const visible = turn.reply.filter((i) => i.kind !== "turn");
@@ -83,7 +96,10 @@ function TurnView({
   const waiting =
     running &&
     !turn.reply.some(
-      (i) => (i.kind === "assistant" && i.streaming) || (i.kind === "approval" && !i.decision),
+      (i) =>
+        (i.kind === "assistant" && i.streaming) ||
+        (i.kind === "approval" && !i.decision) ||
+        (i.kind === "question" && i.answer === null),
     );
 
   return (
@@ -109,7 +125,13 @@ function TurnView({
                   )}
                 </div>
               ) : (
-                <ReplyItem key={segment.key} item={segment} onApprove={onApprove} onLink={onLink} />
+                <ReplyItem
+                  key={segment.key}
+                  item={segment}
+                  onApprove={onApprove}
+                  onAnswer={onAnswer}
+                  onLink={onLink}
+                />
               ),
             )}
             {waiting && (
@@ -173,10 +195,12 @@ export function UserBubble({ text }: { text: string }) {
 function ReplyItem({
   item,
   onApprove,
+  onAnswer,
   onLink,
 }: {
   item: ChatItem;
   onApprove?: ChatThreadProps["onApprove"];
+  onAnswer?: ChatThreadProps["onAnswer"];
   onLink?: ChatThreadProps["onLink"];
 }) {
   switch (item.kind) {
@@ -222,6 +246,10 @@ function ReplyItem({
       return <PlanCard item={item} />;
     case "approval":
       return <ApprovalCard item={item} onApprove={onApprove} />;
+    case "question":
+      return <QuestionCard item={item} onAnswer={onAnswer} />;
+    case "report":
+      return <ReportLine item={item} />;
     case "error":
       return (
         <div className="flex max-w-[720px] items-start gap-2 rounded-field border border-red-line bg-red-d px-3 py-2.5 text-body-sm leading-[1.55] text-tx2">
@@ -358,6 +386,83 @@ function PlanCard({ item }: { item: Item<"plan"> }) {
           </span>
         </span>
       ))}
+    </div>
+  );
+}
+
+/** Question de l'IA : les choix proposés, ou une réponse libre. */
+export function QuestionCard({
+  item,
+  onAnswer,
+}: {
+  item: Item<"question">;
+  onAnswer?: ChatThreadProps["onAnswer"];
+}) {
+  const [text, setText] = useState("");
+  const answered = item.answer !== null;
+  return (
+    <div
+      className={cn(
+        "flex max-w-[720px] flex-col gap-2.5 rounded-field border px-3.5 py-3",
+        answered ? "border-line bg-p2" : "border-blue-line bg-blue-d",
+      )}
+    >
+      <div className="flex items-start gap-2 text-body-sm">
+        <span className={cn("mt-px flex", answered ? "text-tx3" : "text-blue")}>
+          <Icon name="chat" size={14} />
+        </span>
+        <span className="grow leading-[1.55] font-medium whitespace-pre-wrap">{item.text}</span>
+        {answered && <Badge tone="green">Répondu</Badge>}
+      </div>
+      {answered ? (
+        <span className="text-small text-tx2">{item.answer}</span>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          {item.options.map((option) => (
+            <Button key={option} size="sm" onClick={() => onAnswer?.(item.key, option)}>
+              {option}
+            </Button>
+          ))}
+          <form
+            className="flex min-w-[240px] grow items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (text.trim()) onAnswer?.(item.key, text.trim());
+            }}
+          >
+            <input
+              aria-label="Votre réponse"
+              placeholder={item.options.length > 0 ? "Autre réponse…" : "Votre réponse…"}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              className="h-7 min-w-0 grow rounded-control border border-line2 bg-panel px-2.5 text-body-sm text-tx outline-none focus:border-blue-line"
+            />
+            <Button type="submit" size="sm" variant="primary" disabled={!text.trim()}>
+              Répondre
+            </Button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Rapport d'une exécution de fond (`cadence__run_report`). */
+function ReportLine({ item }: { item: Item<"report"> }) {
+  return (
+    <div
+      className={cn(
+        "flex max-w-[720px] items-start gap-2 rounded-field border px-3 py-2 text-body-sm leading-[1.55]",
+        item.final ? "border-green-line bg-green-d text-tx" : "border-line bg-p2 text-tx2",
+      )}
+    >
+      <span className={cn("mt-px flex", item.final ? "text-green" : "text-tx3")}>
+        <Icon name={item.final ? "check" : "clock"} size={14} />
+      </span>
+      <span className="grow whitespace-pre-wrap">{item.text}</span>
+      {item.progress !== null && !item.final && (
+        <span className="mono text-tiny text-tx3">{item.progress} %</span>
+      )}
     </div>
   );
 }

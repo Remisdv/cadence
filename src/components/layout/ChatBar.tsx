@@ -38,10 +38,16 @@ export function ChatBar({
     const q = query.trim().toLowerCase();
     const rows = (sessions.data ?? []).filter((s) => !q || s.title.toLowerCase().includes(q));
     const now = new Date();
-    return GROUPS.map((title) => ({
-      title,
-      rows: rows.filter((s) => conversationGroup(s.updatedAt, now) === title),
-    })).filter((g) => g.rows.length > 0);
+    // Exécutions de fond des actions : leur propre groupe, en tête (panneau Activité).
+    const background = rows.filter((s) => s.mode === "background");
+    const chats = rows.filter((s) => s.mode !== "background");
+    return [
+      { title: "En fond", rows: background },
+      ...GROUPS.map((title) => ({
+        title,
+        rows: chats.filter((s) => conversationGroup(s.updatedAt, now) === title),
+      })),
+    ].filter((g) => g.rows.length > 0);
   }, [sessions.data, query]);
 
   return (
@@ -130,6 +136,11 @@ export function SessionContext({
       {(session.state === "running" || session.state === "waiting-approval") && (
         <span className="ml-auto flex shrink-0 text-clay">
           {session.state === "running" ? <Spinner size={11} /> : <Icon name="warning" size={11} />}
+        </span>
+      )}
+      {session.state === "failed" && (
+        <span className="ml-auto flex shrink-0 text-red" title="Dernier tour en échec">
+          <Icon name="warning" size={11} />
         </span>
       )}
     </>
