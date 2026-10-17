@@ -80,6 +80,13 @@ pub async fn tool_login(
     state.tools.login(&settings, tool, sink(&app)).await
 }
 
+/// Répond à une invite de la commande en cours (texte puis Entrée) ; `false` s'il n'y a pas de
+/// commande ou pas de pseudo-terminal.
+#[tauri::command]
+pub fn tool_input(state: State<'_, AppState>, tool: ToolId, text: String) -> bool {
+    state.tools.send_input(tool, &text)
+}
+
 /// Arrête l'installation ou la connexion en cours ; `false` s'il n'y en avait pas.
 #[tauri::command]
 pub fn tool_cancel(state: State<'_, AppState>, tool: ToolId) -> bool {

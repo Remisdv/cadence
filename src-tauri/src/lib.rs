@@ -200,6 +200,7 @@ pub fn run() {
             commands::tools::tool_install,
             commands::tools::tool_login,
             commands::tools::tool_cancel,
+            commands::tools::tool_input,
             commands::tools::tool_set_path,
             commands::tools::ai_test,
             commands::plugins::plugins_installed,

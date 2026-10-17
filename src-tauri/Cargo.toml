@@ -46,6 +46,7 @@ axum = { version = "0.8.9", default-features = false, features = ["tokio", "http
 http = "1.5.0"
 # Processus des serveurs de plugin : job object (Windows) ou groupe (Unix).
 process-wrap = { version = "10.0.1", default-features = false, features = ["tokio1", "kill-on-drop", "job-object", "creation-flags", "process-group"] }
+portable-pty = "0.9"
 
 
 [target.'cfg(windows)'.dependencies]

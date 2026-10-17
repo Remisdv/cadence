@@ -50,6 +50,7 @@ import {
 } from "./plugins";
 import {
   mockCancelTool,
+  mockToolInput,
   mockInstallTool,
   mockLoginTool,
   mockSetToolPath,
@@ -365,6 +366,7 @@ const handlers: Handlers = {
     }
   },
   tool_cancel: ({ tool }) => mockCancelTool(tool),
+  tool_input: ({ tool, text }) => mockToolInput(tool, text),
   tool_set_path: ({ tool, path }) => {
     try {
       mockSetToolPath(tool, path?.trim() || null);

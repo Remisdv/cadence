@@ -141,6 +141,14 @@ export const useLoginTool = () =>
     call("tool_login", { tool }),
   );
 
+/** Répond à une invite de l'installation ou de la connexion en cours. */
+export function useToolInput() {
+  return useMutation({
+    mutationFn: ({ tool, text }: { tool: ToolId; text: string }) =>
+      call("tool_input", { tool, text }),
+  });
+}
+
 export function useCancelTool() {
   return useMutation({ mutationFn: (tool: ToolId) => call("tool_cancel", { tool }) });
 }

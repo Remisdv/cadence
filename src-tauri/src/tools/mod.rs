@@ -330,7 +330,8 @@ fn requesters(
 pub struct ToolService {
     detected: RwLock<Option<Detected>>,
     tests: Mutex<HashMap<ToolId, CliTest>>,
-    running: Mutex<HashMap<ToolId, Arc<Notify>>>,
+    /// Commande en cours par outil : annulation, entrée du pseudo-terminal.
+    running: Mutex<HashMap<ToolId, (Arc<Notify>, run::RunInput)>>,
 }
 
 impl Default for ToolService {
@@ -477,7 +478,7 @@ impl ToolService {
             .clone()
     }
 
-    fn start(&self, tool: ToolId) -> AppResult<Arc<Notify>> {
+    fn start(&self, tool: ToolId) -> AppResult<(Arc<Notify>, run::RunInput)> {
         let mut running = self.running.lock().unwrap();
         if running.contains_key(&tool) {
             return Err(AppError::Validation(format!(
@@ -486,8 +487,16 @@ impl ToolService {
             )));
         }
         let cancel = Arc::new(Notify::new());
-        running.insert(tool, cancel.clone());
-        Ok(cancel)
+        let input = run::RunInput::default();
+        running.insert(tool, (cancel.clone(), input.clone()));
+        Ok((cancel, input))
+    }
+
+    /// Répond à une invite de la commande en cours (texte suivi d'Entrée) ; `false` s'il n'y a
+    /// pas de commande, ou qu'elle ne tourne pas dans un pseudo-terminal.
+    pub fn send_input(&self, tool: ToolId, text: &str) -> bool {
+        let input = self.running.lock().unwrap().get(&tool).map(|(_, input)| input.clone());
+        input.is_some_and(|input| run::write_input(&input, text))
     }
 
     fn finish(&self, tool: ToolId) {
@@ -497,7 +506,7 @@ impl ToolService {
     /// Arrête la commande en cours pour cet outil ; `false` s'il n'y en avait pas.
     pub fn cancel(&self, tool: ToolId) -> bool {
         match self.running.lock().unwrap().get(&tool) {
-            Some(cancel) => {
+            Some((cancel, _)) => {
                 cancel.notify_one();
                 true
             }
@@ -514,7 +523,7 @@ impl ToolService {
         press_enter: bool,
         sink: RunSink,
     ) -> AppResult<ToolRunResult> {
-        let cancel = self.start(tool)?;
+        let (cancel, input) = self.start(tool)?;
         let line_sink = sink.clone();
         let on_line: Arc<dyn Fn(String, bool) + Send + Sync> = Arc::new(move |line, replace| {
             line_sink(ToolRunEvent {
@@ -525,7 +534,7 @@ impl ToolService {
                 done: None,
             })
         });
-        let result = run::run_streaming(program, &args, press_enter, cancel, on_line).await;
+        let result = run::run_streaming(program, &args, press_enter, cancel, input, on_line).await;
         self.finish(tool);
         sink(ToolRunEvent {
             tool,

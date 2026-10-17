@@ -395,6 +395,19 @@ export function mockCancelTool(tool: ToolId): boolean {
   return cancel !== undefined;
 }
 
+/** Réponse à une invite : écrite dans le journal, comme l'écho d'un terminal. */
+export function mockToolInput(tool: ToolId, text: string): boolean {
+  if (!running.has(tool)) return false;
+  mockBus.emit<ToolRunEvent>("tool://install", {
+    tool,
+    kind: "install",
+    line: `› ${text}`,
+    replace: false,
+    done: null,
+  });
+  return true;
+}
+
 export function mockSetToolPath(tool: ToolId, path: string | null) {
   if (path === null) return;
   if (!/\.(exe|cmd)$|\/[a-z]+$/i.test(path)) throw new Error(`${path} n'est pas un fichier.`);

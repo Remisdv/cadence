@@ -69,6 +69,8 @@ export interface Commands {
   /** Connexion guidée (navigateur, code d'appairage dans le journal, ou terminal du système). */
   tool_login: { args: { tool: ToolId }; result: ToolRunResult };
   tool_cancel: { args: { tool: ToolId }; result: boolean };
+  /** Réponse à une invite de la commande en cours (pseudo-terminal) ; `false` si impossible. */
+  tool_input: { args: { tool: ToolId; text: string }; result: boolean };
   /** « Localiser le binaire… » ; `null` = détection automatique. */
   tool_set_path: { args: { tool: ToolId; path: string | null }; result: ToolsReport };
   /** Session de test de quelques secondes d'une IA de code. */

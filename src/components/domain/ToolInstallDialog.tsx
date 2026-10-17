@@ -33,6 +33,7 @@ import {
   useInstallTool,
   useLoginTool,
   useRecheckTools,
+  useToolInput,
   useToolRun,
 } from "@/lib/query/queries";
 
@@ -200,7 +201,7 @@ export function ToolInstallDialog({
               <CommandBox command={command} />
             </>
           ) : null}
-          <Terminal log={log} phase={phase} prompt={isWindows ? "PS>" : "$"} />
+          <Terminal log={log} phase={phase} prompt={isWindows ? "PS>" : "$"} tool={tool.id} />
           <PhaseProgress log={log} phase={phase} error={error} tool={tool} />
         </div>
 
@@ -273,11 +274,15 @@ function Terminal({
   log,
   phase,
   prompt,
+  tool,
 }: {
   log: ToolRunLog | null;
   phase: Phase;
   prompt: string;
+  tool: ToolInfo["id"];
 }) {
+  const input = useToolInput();
+  const [answer, setAnswer] = useState("");
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // Corps explicite : `scrollIntoView` renvoie une promesse dans les navigateurs récents.
@@ -291,7 +296,7 @@ function Terminal({
           <Icon name="terminal" size={13} />
         </span>
         Terminal intégré
-        <Badge>lecture seule</Badge>
+        <Badge>{log?.running ? "répond aux invites" : "lecture seule"}</Badge>
         <div className="grow" />
         <span className="inline-flex items-center gap-1.5 text-tx3">
           <StatusDot
@@ -353,6 +358,27 @@ function Terminal({
         )}
         <div ref={end} />
       </div>
+      {running && (
+        <form
+          className="flex h-8 shrink-0 items-center gap-2 border-t border-line px-2.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            input.mutate({ tool, text: answer }, { onSuccess: (sent) => sent && setAnswer("") });
+          }}
+        >
+          <span className="mono text-tiny text-tx3">›</span>
+          <input
+            aria-label="Réponse à la commande"
+            placeholder="Répondre à une invite (Entrée pour envoyer)…"
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
+            className="min-w-0 grow bg-transparent mono text-tiny text-tx outline-none placeholder:text-tx3"
+          />
+          {input.data === false && (
+            <span className="text-tiny text-amber">saisie impossible pour cette commande</span>
+          )}
+        </form>
+      )}
     </div>
   );
 }
