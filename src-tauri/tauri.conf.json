@@ -31,7 +31,7 @@
     "targets": "all",
     "createUpdaterArtifacts": true,
     "publisher": "Rémi Lhuillier",
-    "homepage": "https://github.com/cadence-app/desktop",
+    "homepage": "https://github.com/RemiSDV/cadence",
     "copyright": "© 2026 Rémi Lhuillier",
     "category": "DeveloperTool",
     "shortDescription": "Cockpit de projet logiciel adossé à GitHub",
@@ -56,7 +56,7 @@
   "plugins": {
     "updater": {
       "pubkey": "REMPLACER-PAR-LA-CLE-PUBLIQUE-DES-MISES-A-JOUR (voir docs/release.md)",
-      "endpoints": ["https://github.com/cadence-app/desktop/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/RemiSDV/cadence/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"
       }

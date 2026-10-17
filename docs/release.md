@@ -36,7 +36,7 @@ pnpm tauri signer generate -w ~/.tauri/cadence-updater.key
 ### 2. Point de terminaison de l'updater
 
 `plugins.updater.endpoints` vaut
-`https://github.com/cadence-app/desktop/releases/latest/download/latest.json`. Il doit désigner
+`https://github.com/RemiSDV/cadence/releases/latest/download/latest.json`. Il doit désigner
 le dépôt **public** qui héberge les releases (l'app interroge cette URL sans authentification).
 Si les releases sont publiées ailleurs, adaptez l'URL (et le lien `homepage` du bundle).
 
