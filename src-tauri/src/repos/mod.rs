@@ -360,11 +360,13 @@ impl RepoService {
                     continue; // détaché : l'IA n'y a pas créé de branche
                 };
                 let branch = branch.trim().to_string();
-                let dirty = git.run(&wt, &["status", "--porcelain"]).await.map_or(true, |s| !s.trim().is_empty());
+                // État illisible : traité comme sale (rien n'est supprimé).
+                let clean = git.run(&wt, &["status", "--porcelain"]).await.is_ok_and(|s| s.trim().is_empty());
+                let dirty = !clean;
                 let ahead = git
                     .run(&wt, &["rev-list", "--count", "@{upstream}..HEAD"])
                     .await
-                    .map_or(false, |n| n.trim() != "0");
+                    .is_ok_and(|n| n.trim() != "0");
                 if dirty || ahead {
                     continue;
                 }

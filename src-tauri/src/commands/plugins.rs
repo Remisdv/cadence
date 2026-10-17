@@ -5,7 +5,7 @@
 //! prochain appel avec son nouvel environnement. Un changement de réglages lui est notifié
 //! (`notifications/cadence/settings`) s'il tourne.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use secrecy::ExposeSecret;
 use serde::Serialize;
@@ -205,7 +205,7 @@ pub async fn plugin_uninstall(state: State<'_, AppState>, id: String, delete_sec
     install::uninstall(&state.plugins, &id, delete_secrets.then_some(state.secrets.as_ref()))?;
     if entry.source == PluginSource::Dev {
         let dir = state.plugins.plugin_dir(&id, &entry);
-        state.settings.update(|s| s.dev_plugins.retain(|d| PathBuf::from(d) != dir))?;
+        state.settings.update(|s| s.dev_plugins.retain(|d| Path::new(d) != dir))?;
     }
     tools_changed(&state).await;
     Ok(())

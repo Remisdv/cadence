@@ -273,7 +273,7 @@ async fn checks_out_a_tracked_repo_for_the_calling_session_only() {
     let path = PathBuf::from(done.structured_content.unwrap()["path"].as_str().unwrap());
     assert!(path.join("README.md").is_file());
     assert!(path.ends_with(PathBuf::from(".worktrees").join("me").join("app").join("issue-42")));
-    assert_eq!(f.gateway.context().granted("chat-9"), [path.clone()]);
+    assert_eq!(f.gateway.context().granted("chat-9"), std::slice::from_ref(&path));
     assert!(f.gateway.context().granted("chat-autre").is_empty(), "ouvert à la session appelante seulement");
 
     // Dépôt non suivi, ou sans `repo` : refus lisible par l'IA, rien n'est ouvert.

@@ -76,10 +76,10 @@ fn main() {
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines() {
             let Ok(line) = line else { break };
-            if let Ok(value) = serde_json::from_str::<Value>(&line) {
-                if tx.send(value).is_err() {
-                    break;
-                }
+            if let Ok(value) = serde_json::from_str::<Value>(&line)
+                && tx.send(value).is_err()
+            {
+                break;
             }
         }
     });
@@ -156,12 +156,13 @@ fn main() {
                     for n in 0..200 {
                         session.delta(&format!("vers {n}\n"));
                         std::thread::sleep(Duration::from_millis(50));
-                        if let Ok(m) = rx.try_recv() {
-                            if m["type"] == "control_request" && m["request"]["subtype"] == "interrupt" {
-                                emit(json!({ "type": "control_response", "response": { "subtype": "success", "request_id": m["request_id"], "response": {} } }));
-                                interrupted = true;
-                                break;
-                            }
+                        if let Ok(m) = rx.try_recv()
+                            && m["type"] == "control_request"
+                            && m["request"]["subtype"] == "interrupt"
+                        {
+                            emit(json!({ "type": "control_response", "response": { "subtype": "success", "request_id": m["request_id"], "response": {} } }));
+                            interrupted = true;
+                            break;
                         }
                     }
                     session.result(interrupted);

@@ -165,11 +165,9 @@ impl Gateway {
             let context = context.clone();
             let mut changes = context.host.subscribe_tools_changed();
             tokio::spawn(async move {
-                loop {
-                    match changes.recv().await {
-                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => context.notify_tools_changed().await,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
+                // Fermé : l'hôte a disparu ; en retard : une seule notification suffit.
+                while let Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) = changes.recv().await {
+                    context.notify_tools_changed().await;
                 }
             });
         }

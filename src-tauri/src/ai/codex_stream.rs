@@ -383,7 +383,7 @@ fn completed(item: &Value) -> Vec<AiEvent> {
                 .and_then(|r| r.get("content"))
                 .and_then(Value::as_array)
                 .and_then(|parts| parts.iter().find_map(|p| str_of(p, "text")))
-                .map(|t| truncate(t));
+                .map(truncate);
             vec![AiEvent::ToolCompleted {
                 call: id,
                 ok,
