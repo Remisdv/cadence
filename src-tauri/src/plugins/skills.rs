@@ -11,7 +11,10 @@ use crate::error::{AppError, AppResult};
 
 pub const FILE_NAME: &str = "SKILL.md";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Skill d'un plugin (frontmatter de `SKILL.md`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct SkillInfo {
     pub name: String,
     pub description: String,

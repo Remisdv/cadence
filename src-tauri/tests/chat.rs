@@ -66,7 +66,7 @@ async fn service(dir: PathBuf, tweak: impl FnOnce(&mut ChatConfig)) -> Fixture {
 
 impl Fixture {
     async fn send(&self, session: Option<&str>, text: &str) -> String {
-        let input = ChatSendInput { session: session.map(str::to_string), text: text.into(), ai: None };
+        let input = ChatSendInput { session: session.map(str::to_string), text: text.into(), ai: None, attachments: None };
         self.chat.send(input).await.unwrap().session
     }
 
@@ -201,7 +201,7 @@ async fn closes_idle_processes_caps_them_and_deletes_conversations() {
     assert!(!f.dir.join("sessions").join(&a).exists(), "dossier de travail supprimé");
     assert!(f.chat.detail(&a).await.is_err());
     assert_eq!(f.chat.rename(&b, "Renommée").await.unwrap().title, "Renommée");
-    assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None }).await.is_err());
+    assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None, attachments: None }).await.is_err());
     f.chat.shutdown().await;
 }
 

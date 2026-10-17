@@ -97,6 +97,8 @@ pub struct InstalledPluginView {
     pub setup: Vec<PluginSetupStep>,
     /// Boutons `[[actions]]` (IA réaffectable par action dans les réglages).
     pub actions: Vec<PluginActionInfo>,
+    /// Skills livrés aux IA (bouton Skills du composeur du chat).
+    pub skills: Vec<crate::plugins::skills::SkillInfo>,
     pub has_settings: bool,
     /// Page de l'interface sous `ui/` ; `None` = plugin sans interface.
     pub ui_entry: Option<String>,
@@ -253,6 +255,7 @@ impl PluginRegistry {
                     services: m.services,
                     setup: m.setup,
                     actions: m.actions,
+                    skills: m.skills,
                     enabled: entry.enabled,
                     source: entry.source,
                     status: if missing { PluginStatus::NeedsSetup } else { PluginStatus::Ok },
@@ -272,6 +275,7 @@ impl PluginRegistry {
                 services: vec![],
                 setup: vec![],
                 actions: vec![],
+                skills: vec![],
                 has_settings: false,
                 ui_entry: None,
                 enabled: entry.enabled,

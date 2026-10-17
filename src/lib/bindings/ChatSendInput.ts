@@ -9,4 +9,8 @@ session: string | null, text: string,
 /**
  * IA d'une nouvelle conversation (défaut : IA par défaut des réglages).
  */
-ai: AiId | null, };
+ai: AiId | null, 
+/**
+ * Fichiers joints (chemins absolus), copiés dans le dossier de travail de la conversation.
+ */
+attachments?: Array<string>, };

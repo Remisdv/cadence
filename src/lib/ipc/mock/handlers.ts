@@ -502,7 +502,14 @@ const handlers: Handlers = {
     if (!chat) fail("chat_send", `Conversation « ${id} » introuvable.`);
     if (chat.session.state === "running" || chat.session.state === "waiting-approval")
       fail("chat_send", "Un tour est déjà en cours dans cette conversation.");
-    recordMockChatEvent(state.chats, id, { type: "user-message", text });
+    // Comme le back : pièces jointes copiées dans `pieces-jointes/`, listées après le texte.
+    const joined = (input.attachments ?? []).map(
+      (p) => `- pieces-jointes/${p.split(/[\\/]/).pop()}`,
+    );
+    const message = joined.length
+      ? `${text}\n\nPièces jointes (copiées dans ton dossier de travail) :\n${joined.join("\n")}`
+      : text;
+    recordMockChatEvent(state.chats, id, { type: "user-message", text: message });
     void simulateTurn(state.chats, id, text);
     return { session: id };
   },

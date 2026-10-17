@@ -8,6 +8,7 @@ import type { PluginSetupStep } from "./PluginSetupStep";
 import type { PluginSource } from "./PluginSource";
 import type { PluginStatus } from "./PluginStatus";
 import type { PluginViewInfo } from "./PluginViewInfo";
+import type { SkillInfo } from "./SkillInfo";
 
 /**
  * Plugin installé, tel que le rail et la barre du plugin l'affichent.
@@ -24,7 +25,11 @@ setup: Array<PluginSetupStep>,
 /**
  * Boutons `[[actions]]` (IA réaffectable par action dans les réglages).
  */
-actions: Array<PluginActionInfo>, hasSettings: boolean, 
+actions: Array<PluginActionInfo>, 
+/**
+ * Skills livrés aux IA (bouton Skills du composeur du chat).
+ */
+skills: Array<SkillInfo>, hasSettings: boolean, 
 /**
  * Page de l'interface sous `ui/` ; `None` = plugin sans interface.
  */

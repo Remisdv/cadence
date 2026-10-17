@@ -13,15 +13,19 @@ export function MenuContent({
   children,
   align = "start",
   className,
+  onCloseAutoFocus,
 }: {
   children: ReactNode;
   align?: "start" | "end";
   className?: string;
+  /** Focus à la fermeture (par défaut : retour au déclencheur ; `preventDefault` pour l'éviter). */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   return (
     <DropdownMenu.Portal>
       <DropdownMenu.Content
         align={align}
+        onCloseAutoFocus={onCloseAutoFocus}
         sideOffset={6}
         collisionPadding={12}
         className={cn(

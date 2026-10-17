@@ -43,6 +43,7 @@ const plugin = (
   services: [],
   setup: [],
   actions: [],
+  skills: [],
   hasSettings: false,
   uiEntry: null,
   enabled: true,
@@ -61,6 +62,10 @@ export const mockPlugins: InstalledPluginView[] = [
     color: "blue",
     railIcon: "board",
     services: ["repos"],
+    skills: [
+      { name: "completer-issue", description: "Complète la description d'une issue." },
+      { name: "implementer-issue", description: "Implémente une issue dans son worktree." },
+    ],
     hasSettings: true,
     actions: [
       action("completer-description", "Compléter la description", "chat", "issue"),

@@ -18,7 +18,15 @@ import {
   DialogHeader,
 } from "@/components/ui/Dialog";
 import { Field, Input } from "@/components/ui/Field";
-import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/Menu";
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  MenuTrigger,
+} from "@/components/ui/Menu";
+import { pickPaths } from "@/lib/platform";
 import { aiTileClass } from "@/components/domain/AiCard";
 import { aiLabels, aiOrder } from "@/lib/domain/ai";
 import { toolIcons, toolOfAi } from "@/lib/domain/tools";
@@ -67,11 +75,12 @@ export default function ChatView({ view }: ViewProps<"chat">) {
   const n = plugins.length;
 
   const open = (id: string | null) => navigate(id ? { id: "chat", session: id } : { id: "chat" });
-  const onSend = async (text: string) => {
+  const onSend = async (text: string, attachments: string[]) => {
     const { session: id } = await send.mutateAsync({
       session: sessionId,
       text,
       ai: sessionId ? null : aiId,
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
     if (id !== sessionId) replace({ id: "chat", session: id });
   };
@@ -162,6 +171,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             }
             onSend={onSend}
             onStop={() => sessionId && interrupt.mutate(sessionId)}
+            plugins={plugins}
           />
         </div>
         <SessionPanel
@@ -326,6 +336,7 @@ function Composer({
   error,
   onSend,
   onStop,
+  plugins,
 }: {
   ai: AiId | null;
   /** IA proposées pour une nouvelle conversation ; vide = IA fixée (conversation existante). */
@@ -334,10 +345,28 @@ function Composer({
   running: boolean;
   sending: boolean;
   error?: string;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, attachments: string[]) => Promise<void>;
   onStop: () => void;
+  /** Plugins activés : leurs skills sont proposés par le bouton Skills. */
+  plugins: InstalledPluginView[];
 }) {
   const [text, setText] = useState("");
+  /** Fichiers joints (chemins absolus), copiés par Cadence dans le dossier de la conversation. */
+  const [files, setFiles] = useState<string[]>([]);
+  const withSkills = plugins.filter((p) => p.skills.length > 0);
+  const attach = async () => {
+    const picked = await pickPaths({
+      title: "Joindre des fichiers",
+      multiple: true,
+      directory: false,
+      filters: [],
+    });
+    setFiles((current) => [...new Set([...current, ...picked])]);
+  };
+  /** Insère en tête du message la demande d'utiliser un skill (comprise par les trois IA). */
+  const useSkill = (plugin: InstalledPluginView, skill: string) => {
+    setText((current) => `Utilise le skill « ${skill} » du plugin ${plugin.name}. ${current}`);
+  };
   const area = useRef<HTMLTextAreaElement>(null);
   const ai = aiId ? aiLabels[aiId].name : null;
   const canSend = text.trim().length > 0 && !running && !sending && ai !== null;
@@ -353,10 +382,13 @@ function Composer({
   const submit = async () => {
     if (!canSend) return;
     const value = text;
+    const joined = files;
     setText("");
+    setFiles([]);
     try {
-      await onSend(value);
+      await onSend(value, joined);
     } catch {
+      setFiles(joined);
       setText(value);
     }
   };
@@ -385,6 +417,28 @@ function Composer({
             placeholder={`Écrire à ${ai ?? "l'IA"}… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)`}
             className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-body leading-[1.55] text-tx outline-none placeholder:text-tx3"
           />
+          {files.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-3 pt-1">
+              {files.map((file) => (
+                <span
+                  key={file}
+                  title={file}
+                  className="inline-flex h-6 max-w-[240px] items-center gap-1.5 rounded-badge border border-line bg-p2 pr-1 pl-2 text-caption text-tx2"
+                >
+                  <Icon name="paperclip" size={11} className="shrink-0 text-tx3" />
+                  <span className="truncate">{file.split(/[\\/]/).pop()}</span>
+                  <button
+                    type="button"
+                    aria-label={`Retirer ${file.split(/[\\/]/).pop()}`}
+                    onClick={() => setFiles((current) => current.filter((f) => f !== file))}
+                    className="inline-flex size-4 items-center justify-center rounded-sm text-tx3 hover:bg-p3 hover:text-tx"
+                  >
+                    <Icon name="close" size={10} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-2 px-2.5 py-2">
             {choices.length > 1 ? (
               <Menu>
@@ -414,12 +468,62 @@ function Composer({
                 <AiChip ai={aiId} />
               </span>
             )}
+            {withSkills.length > 0 && (
+              <Menu>
+                <MenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Skills des plugins"
+                    className="inline-flex h-[30px] items-center gap-1.5 rounded-control border border-line px-2 text-body-sm text-tx2 hover:border-line2 hover:text-tx"
+                  >
+                    <Icon name="sparkle" size={13} />
+                    Skills
+                  </button>
+                </MenuTrigger>
+                <MenuContent
+                  className="max-h-[360px] w-[320px] overflow-y-auto"
+                  onCloseAutoFocus={(event) => {
+                    // Après le choix d'un skill, on continue d'écrire le message.
+                    event.preventDefault();
+                    // Après la fermeture du menu (Radix rend le focus en fin de démontage).
+                    setTimeout(() => {
+                      const el = area.current;
+                      if (!el) return;
+                      el.focus();
+                      el.setSelectionRange(el.value.length, el.value.length);
+                    }, 30);
+                  }}
+                >
+                  {withSkills.map((plugin, i) => (
+                    <div key={plugin.id}>
+                      {i > 0 && <MenuSeparator />}
+                      <MenuLabel>{plugin.name}</MenuLabel>
+                      {plugin.skills.map((skill) => (
+                        <MenuItem key={skill.name} onSelect={() => useSkill(plugin, skill.name)}>
+                          <span className="min-w-0">
+                            <span className="block truncate mono text-small text-tx">
+                              {skill.name}
+                            </span>
+                            {skill.description && (
+                              <span className="block truncate text-caption text-tx3">
+                                {skill.description}
+                              </span>
+                            )}
+                          </span>
+                        </MenuItem>
+                      ))}
+                    </div>
+                  ))}
+                </MenuContent>
+              </Menu>
+            )}
             <button
               type="button"
-              disabled
               aria-label="Joindre un fichier"
-              title="Pièces jointes : bientôt"
-              className="inline-flex size-[30px] items-center justify-center rounded-control border border-line text-tx3 disabled:opacity-50"
+              title="Joindre des fichiers : copiés dans le dossier de travail de la conversation"
+              disabled={running}
+              onClick={() => void attach()}
+              className="inline-flex size-[30px] items-center justify-center rounded-control border border-line text-tx3 hover:border-line2 hover:text-tx disabled:opacity-50"
             >
               <Icon name="paperclip" size={15} />
             </button>

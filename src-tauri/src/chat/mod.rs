@@ -75,6 +75,57 @@ pub struct ChatSendInput {
     pub text: String,
     /// IA d'une nouvelle conversation (défaut : IA par défaut des réglages).
     pub ai: Option<AiId>,
+    /// Fichiers joints (chemins absolus), copiés dans le dossier de travail de la conversation.
+    #[serde(default)]
+    #[ts(optional)]
+    pub attachments: Option<Vec<String>>,
+}
+
+/// Dossier des pièces jointes, dans le dossier de travail de la conversation.
+pub const ATTACHMENTS_DIR: &str = "pieces-jointes";
+/// Taille maximale d'une pièce jointe.
+const ATTACHMENT_MAX_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Copie les pièces jointes dans `<cwd>/pieces-jointes/` (noms dédoublonnés) ; renvoie leurs
+/// chemins relatifs au dossier de travail, à donner à l'IA.
+pub fn copy_attachments(cwd: &std::path::Path, files: &[String]) -> AppResult<Vec<String>> {
+    let dir = cwd.join(ATTACHMENTS_DIR);
+    let mut copied = Vec::new();
+    for file in files {
+        let source = std::path::Path::new(file.trim());
+        let meta = std::fs::metadata(source)
+            .map_err(|_| AppError::Validation(format!("Pièce jointe introuvable : {}", source.display())))?;
+        if !meta.is_file() {
+            return Err(AppError::Validation(format!("{} n'est pas un fichier.", source.display())));
+        }
+        if meta.len() > ATTACHMENT_MAX_BYTES {
+            return Err(AppError::Validation(format!("{} dépasse 50 Mo.", source.display())));
+        }
+        std::fs::create_dir_all(&dir)?;
+        let name = source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "fichier".into());
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+            _ => (name.clone(), String::new()),
+        };
+        let mut target = name.clone();
+        let mut n = 2;
+        while dir.join(&target).exists() {
+            target = format!("{stem}-{n}{ext}");
+            n += 1;
+        }
+        std::fs::copy(source, dir.join(&target))?;
+        copied.push(format!("{ATTACHMENTS_DIR}/{target}"));
+    }
+    Ok(copied)
+}
+
+/// Message envoyé à l'IA : le texte, puis la liste des pièces jointes copiées.
+pub fn with_attachments(text: &str, copied: &[String]) -> String {
+    if copied.is_empty() {
+        return text.to_string();
+    }
+    let list: Vec<String> = copied.iter().map(|p| format!("- {p}")).collect();
+    format!("{text}\n\nPièces jointes (copiées dans ton dossier de travail) :\n{}", list.join("\n"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -257,6 +308,9 @@ impl ChatService {
         if matches!(row.state, ChatState::Running | ChatState::WaitingApproval) {
             return Err(AppError::Validation("Un tour est déjà en cours dans cette conversation.".into()));
         }
+        let files = input.attachments.unwrap_or_default();
+        let copied = copy_attachments(&self.config.sessions_root.join(&id), &files)?;
+        let text = with_attachments(&text, &copied);
         let turn = self.store.next_turn(&id).await?;
         self.record(&id, turn, AiEvent::UserMessage { text: text.clone() }).await?;
         self.turn(&id, turn, &text, SessionMode::Chat, None).await?;
@@ -595,6 +649,27 @@ pub async fn run_idle_closer(service: Weak<ChatService>, period: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copies_attachments_into_the_session_folder() {
+        let root = crate::app_settings::temp_dir("chat-attachments");
+        let source = root.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("cours.pdf"), "pdf").unwrap();
+        std::fs::write(source.join("notes"), "sans extension").unwrap();
+        let cwd = root.join("sessions").join("c1");
+        let files = |names: &[&str]| names.iter().map(|n| source.join(n).display().to_string()).collect::<Vec<_>>();
+        let copied = copy_attachments(&cwd, &files(&["cours.pdf", "notes"])).unwrap();
+        assert_eq!(copied, ["pieces-jointes/cours.pdf", "pieces-jointes/notes"]);
+        assert_eq!(copy_attachments(&cwd, &files(&["cours.pdf"])).unwrap(), ["pieces-jointes/cours-2.pdf"], "pas d'écrasement");
+        assert!(cwd.join("pieces-jointes").join("cours-2.pdf").is_file());
+        assert!(copy_attachments(&cwd, &files(&["absent.txt"])).is_err());
+        assert!(copy_attachments(&cwd, &[source.display().to_string()]).is_err(), "pas un dossier");
+        let text = with_attachments("Résume", &copied);
+        assert!(text.starts_with("Résume\n\nPièces jointes") && text.ends_with("- pieces-jointes/notes"));
+        assert_eq!(with_attachments("Bonjour", &[]), "Bonjour");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn titles_come_from_the_first_line() {
