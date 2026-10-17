@@ -3,6 +3,7 @@
  */
 import type {
   AuthChanged,
+  CatalogUpdated,
   ChatEventPayload,
   ChatStatePayload,
   OpenViewRequest,
@@ -24,6 +25,8 @@ export interface Events {
   "plugin://install": PluginInstallEvent;
   /** `notifications/cadence/event` d'un serveur, relayée aux iframes du plugin. */
   "plugin://event": PluginEventPayload;
+  /** Catalogue relu : nombre de mises à jour disponibles (badge). */
+  "catalog://updated": CatalogUpdated;
   /** Une IA demande d'ouvrir une vue de plugin (`cadence__open_view`). */
   "ui://open-view": OpenViewRequest;
   /** Progression ou résultat d'une exécution de fond (`cadence__run_report`). */

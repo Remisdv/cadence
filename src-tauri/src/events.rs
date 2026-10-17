@@ -30,6 +30,15 @@ pub const CHAT_EVENT: &str = "chat://event";
 pub const CHAT_STATE: &str = "chat://state";
 /// `PluginEventPayload` : notification `notifications/cadence/event` d'un serveur de plugin.
 pub const PLUGIN_EVENT: &str = "plugin://event";
+/// `CatalogUpdated` : le catalogue a été relu ; nombre de mises à jour disponibles.
+pub const CATALOG_UPDATED: &str = "catalog://updated";
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CatalogUpdated {
+    pub updates: u32,
+}
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

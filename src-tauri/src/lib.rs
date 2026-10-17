@@ -137,6 +137,23 @@ pub fn run() {
                 Err(err) => tracing::error!(%err, "historique du chat illisible"),
             }
             app.manage(state);
+
+            // Catalogue : relu au lancement puis toutes les 6 h ; badge « mises à jour ».
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let state = handle.state::<state::AppState>();
+                    let url = state.settings.get().catalog_url.unwrap_or_else(|| plugins::catalog::DEFAULT_URL.to_string());
+                    match state.catalog.get(&url, false).await {
+                        Ok(fetched) => {
+                            let updates = plugins::catalog::view(&url, &fetched, &state.plugins).updates;
+                            events::emit(&handle, events::CATALOG_UPDATED, events::CatalogUpdated { updates });
+                        }
+                        Err(err) => tracing::info!(%err, "catalogue des plugins injoignable"),
+                    }
+                    tokio::time::sleep(plugins::catalog::MAX_AGE).await;
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -157,6 +174,9 @@ pub fn run() {
             commands::plugins::plugin_status,
             commands::plugins::plugin_restart,
             commands::plugins::plugin_call,
+            commands::plugins::catalog_get,
+            commands::plugins::plugin_install,
+            commands::plugins::plugin_update,
             commands::chat::chat_sessions,
             commands::chat::chat_session_get,
             commands::chat::chat_send,

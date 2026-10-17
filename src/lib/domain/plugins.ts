@@ -4,7 +4,13 @@
  */
 import type { IconName } from "@/components/icons/Icon";
 import { iconNames } from "@/components/icons/Icon";
-import type { InstalledPluginView, PluginCategory, PluginColor, PluginViewInfo } from "@/lib/types";
+import type {
+  CatalogEntryView,
+  InstalledPluginView,
+  PluginCategory,
+  PluginColor,
+  PluginViewInfo,
+} from "@/lib/types";
 
 /** Liste fixe du manifeste (`category`), dans l'ordre du rail. */
 export const pluginCategories: Record<PluginCategory, { label: string }> = {
@@ -177,4 +183,62 @@ export function parseSettingInput(field: SettingField, raw: string | boolean): u
     return Number.isNaN(n) ? text : n;
   }
   return text;
+}
+
+/** Carte du catalogue : entrée du catalogue en ligne, ou plugin installé qui n'y est pas
+ * (dossier de dev, archive locale). */
+export interface CatalogCard {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  authors: string[];
+  category: PluginCategory;
+  color: PluginColor;
+  railIcon: string;
+  official: boolean;
+  services: InstalledPluginView["services"];
+  /** Entrée du catalogue, si le plugin y est. */
+  entry: CatalogEntryView | null;
+  /** Plugin installé, s'il l'est. */
+  installed: InstalledPluginView | null;
+}
+
+/** Catalogue en ligne et plugins installés, fusionnés par id. */
+export function catalogCards(
+  entries: CatalogEntryView[],
+  installed: InstalledPluginView[],
+): CatalogCard[] {
+  const cards: CatalogCard[] = entries.map((e) => ({
+    id: e.id,
+    name: e.name,
+    version: e.version,
+    description: e.description,
+    authors: e.authors,
+    category: e.category,
+    color: e.color,
+    railIcon: e.railIcon,
+    official: e.official,
+    services: e.services,
+    entry: e,
+    installed: installed.find((p) => p.id === e.id) ?? null,
+  }));
+  for (const p of installed) {
+    if (entries.some((e) => e.id === p.id)) continue;
+    cards.push({
+      id: p.id,
+      name: p.name,
+      version: p.version,
+      description: p.description,
+      authors: [],
+      category: p.category,
+      color: p.color,
+      railIcon: p.railIcon,
+      official: false,
+      services: p.services,
+      entry: null,
+      installed: p,
+    });
+  }
+  return cards;
 }

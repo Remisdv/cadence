@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { mockPlugins, mockSettingsSchema, validateMockSettings } from "@/lib/ipc/mock/plugins";
 import type { InstalledPluginView } from "@/lib/types";
-import { homeView, kitIcon, moveInRail, railGroups, viewSections } from "./plugins";
+import { mockCatalogView } from "@/lib/ipc/mock/catalog";
+import { catalogCards, homeView, kitIcon, moveInRail, railGroups, viewSections } from "./plugins";
 
 const byId = (id: string) => mockPlugins.find((p) => p.id === id)!;
 
@@ -114,5 +115,19 @@ describe("schemaFields", () => {
     expect(parseSettingInput(fields[0]!, "")).toBeUndefined();
     expect(parseSettingInput(fields[0]!, "deux")).toBe("deux");
     expect(parseSettingInput(fields[3]!, true)).toBe(true);
+  });
+});
+
+describe("catalogCards", () => {
+  it("fusionne le catalogue et les plugins installés hors catalogue", () => {
+    const view = mockCatalogView(mockPlugins, false, "2026-10-17T08:00:00Z");
+    const cards = catalogCards(view.plugins, mockPlugins);
+    const docs = cards.find((c) => c.id === "documents")!;
+    expect(docs.entry?.updateAvailable).toBe(true);
+    expect(docs.installed?.version).toBe("0.1.0");
+    const exemple = cards.find((c) => c.id === "exemple")!;
+    expect(exemple.entry).toBeNull();
+    expect(cards.find((c) => c.id === "tests-couverture")!.installed).toBeNull();
+    expect(cards.find((c) => c.id === "mobile-preview")!.entry?.compatible).toBe(false);
   });
 });

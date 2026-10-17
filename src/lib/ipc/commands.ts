@@ -10,6 +10,7 @@ import type {
   AuthProvider,
   ApprovalDecision,
   AuthStatus,
+  CatalogView,
   ChatSendInput,
   ChatSendResult,
   ChatSessionDetail,
@@ -73,6 +74,11 @@ export interface Commands {
   /** Serveurs MCP des plugins installés qui en déclarent un ; changements par `plugin://state`. */
   plugin_status: { args: NoArgs; result: PluginProcessView[] };
   plugin_restart: { args: { plugin: string }; result: null };
+  /** Catalogue en ligne (cache de 6 h, `refresh` force la relecture ; hors ligne : le cache). */
+  catalog_get: { args: { refresh: boolean }; result: CatalogView };
+  /** Plugin du catalogue ; progression par `plugin://install`. */
+  plugin_install: { args: { id: string }; result: InstalledPluginView };
+  plugin_update: { args: { id: string }; result: InstalledPluginView };
   /** Pont de l'iframe : outil du plugin (outils `ui` compris), nom sans préfixe. */
   plugin_call: {
     args: { plugin: string; tool: string; args: Record<string, unknown> | null };

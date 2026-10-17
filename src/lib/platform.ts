@@ -34,6 +34,19 @@ export async function pickFile(title: string): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+/** Choix d'une archive de plugin (`.zip`) ; `null` si l'utilisateur annule. */
+export async function pickArchive(): Promise<string | null> {
+  if (!isTauri) return "C:/Users/moi/Téléchargements/tests-couverture-0.3.1.zip";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    title: "Installer un plugin depuis une archive",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Archive de plugin", extensions: ["zip"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
 /** Montre un dossier dans l'explorateur de fichiers (worktree d'un agent). */
 export async function revealPath(path: string): Promise<void> {
   if (isTauri) {

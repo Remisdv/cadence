@@ -28,6 +28,7 @@ import { CommandError } from "../errors";
 import { mockBus } from "./bus";
 import * as data from "./fixtures";
 import { versionReport } from "./versions";
+import { mockCatalogEntries, mockCatalogView } from "./catalog";
 import {
   answerApproval,
   mockChats,
@@ -67,6 +68,7 @@ const state = {
   processes: mockProcesses(scenario === "plugin-crash"),
   chats: mockChats(scenario !== "app"),
   counter: 0,
+  catalogFetchedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
 };
 let flowTimer: number | undefined;
 
@@ -140,6 +142,52 @@ function addPlugin(command: string, plugin: InstalledPluginView) {
   const previous = state.plugins.find((p) => p.id === plugin.id);
   if (previous) return Object.assign(previous, { ...plugin, enabled: previous.enabled });
   state.plugins.push(plugin);
+  return plugin;
+}
+
+/** Téléchargement et installation simulés d'un plugin du catalogue. */
+async function installFromMockCatalog(command: string, id: string) {
+  const entry = mockCatalogEntries.find((e) => e.id === id);
+  if (!entry) fail(command, `« ${id} » n'est pas au catalogue.`);
+  if (entry.minCadence && entry.minCadence > "0.3.0")
+    fail(command, `Nécessite Cadence ${entry.minCadence} ou plus récent.`);
+  const total = entry.size ?? 4_000_000;
+  for (let i = 1; i <= 8; i++) {
+    mockBus.emit<PluginInstallEvent>("plugin://install", {
+      id,
+      received: Math.round((total * i) / 8),
+      total,
+      phase: "downloading",
+    });
+    await delay(150);
+  }
+  mockBus.emit<PluginInstallEvent>("plugin://install", {
+    id,
+    received: total,
+    total,
+    phase: "extracting",
+  });
+  await delay(300);
+  stopProcess(id);
+  const existing = state.plugins.find((p) => p.id === id);
+  const plugin = existing
+    ? Object.assign(existing, { version: entry.version, source: "catalog" as const })
+    : addPlugin(command, {
+        ...mockInstalledPlugin(id, entry.version, "catalog"),
+        name: entry.name,
+        description: entry.description,
+        category: entry.category,
+        color: entry.color,
+        railIcon: entry.railIcon,
+        services: entry.services,
+        views: entry.views.map((v, i) => ({ ...v, section: null, hidden: false, home: i === 0 })),
+      });
+  mockBus.emit<PluginInstallEvent>("plugin://install", {
+    id,
+    received: 0,
+    total: 0,
+    phase: "done",
+  });
   return plugin;
 }
 
@@ -319,6 +367,15 @@ const handlers: Handlers = {
     if (!state.chats.delete(id)) fail("chat_session_delete", `Conversation « ${id} » introuvable.`);
     return null;
   },
+  catalog_get: ({ refresh }) => {
+    const offline = scenario === "offline";
+    if (refresh && !offline) state.catalogFetchedAt = new Date().toISOString();
+    const view = mockCatalogView(state.plugins, offline, state.catalogFetchedAt);
+    mockBus.emit("catalog://updated", { updates: view.updates });
+    return view;
+  },
+  plugin_install: ({ id }) => installFromMockCatalog("plugin_install", id),
+  plugin_update: ({ id }) => installFromMockCatalog("plugin_update", id),
   plugin_call: ({ plugin, tool, args }) => {
     if (!installed("plugin_call", plugin).enabled)
       fail("plugin_call", `Le plugin « ${plugin} » est désactivé.`);

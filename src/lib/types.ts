@@ -38,6 +38,11 @@ export type { InstallPhase } from "./bindings/InstallPhase";
 export type { PluginInstallEvent } from "./bindings/PluginInstallEvent";
 export type { PluginToolResult } from "./bindings/PluginToolResult";
 export type { PluginEventPayload } from "./bindings/PluginEventPayload";
+export type { CatalogView } from "./bindings/CatalogView";
+export type { CatalogEntryView } from "./bindings/CatalogEntryView";
+export type { CatalogViewInfo } from "./bindings/CatalogViewInfo";
+export type { CatalogActionInfo } from "./bindings/CatalogActionInfo";
+export type { CatalogUpdated } from "./bindings/CatalogUpdated";
 export type { OpenViewRequest } from "./bindings/OpenViewRequest";
 export type { RunReport } from "./bindings/RunReport";
 

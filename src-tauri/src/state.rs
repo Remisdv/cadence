@@ -22,6 +22,7 @@ use crate::{
     chat::ChatService,
     gateway::server::Gateway,
     plugins::{
+        catalog::Catalog,
         env::{self, HostPaths},
         host::{HostConfig, PluginEventSink, PluginHost, StateSink},
         registry::PluginRegistry,
@@ -64,6 +65,8 @@ pub struct AppState {
     pub plugin_settings: Arc<PluginSettingsStore>,
     /// Serveurs MCP des plugins, un processus par plugin.
     pub plugin_host: Arc<PluginHost>,
+    /// Catalogue en ligne des plugins (cache disque, hors ligne).
+    pub catalog: Catalog,
     /// Passerelle MCP des IA ; `None` si elle n'a pas pu démarrer.
     pub gateway: Option<Gateway>,
     /// Chat du cœur ; `None` si son historique n'a pas pu s'ouvrir.
@@ -114,6 +117,7 @@ impl AppState {
             plugins,
             plugin_settings,
             plugin_host,
+            catalog: Catalog::new(cache_dir.with_file_name("catalog")),
             gateway: None,
             chat: None,
             repos: RwLock::default(),

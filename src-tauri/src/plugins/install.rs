@@ -77,6 +77,8 @@ pub struct Prepared {
     root: PathBuf,
     /// Dossier temporaire à supprimer après coup.
     staging: PathBuf,
+    /// Provenance inscrite au registre (`file` pour une archive locale).
+    source: PluginSource,
 }
 
 impl Drop for Prepared {
@@ -235,7 +237,8 @@ fn prepare_zip_limited(
 
     let staging = registry.root().join(".tmp").join(format!("{id}-{version}-{}", nonce()));
     fs::create_dir_all(&staging)?;
-    let mut prepared = Prepared { id: id.clone(), version: version.clone(), root: staging.join(&id), staging };
+    let mut prepared =
+        Prepared { id: id.clone(), version: version.clone(), root: staging.join(&id), staging, source: PluginSource::File };
     fs::create_dir_all(&prepared.root)?;
 
     let mut written = 0u64;
@@ -298,6 +301,12 @@ fn make_binaries_executable(_dir: &Path, _m: &Manifest) -> AppResult<()> {
 }
 
 impl Prepared {
+    /// Provenance à inscrire au registre (catalogue).
+    pub fn with_source(mut self, source: PluginSource) -> Self {
+        self.source = source;
+        self
+    }
+
     /// Met le plugin en place (`<plugins>/<id>/<version>/`) et l'inscrit au registre. La version
     /// précédente est gardée pour un retour arrière, les plus anciennes sont supprimées.
     pub fn commit(self, registry: &PluginRegistry) -> AppResult<()> {
@@ -327,7 +336,7 @@ impl Prepared {
         let entry = InstalledEntry {
             version: self.version.clone(),
             previous: previous.clone(),
-            source: PluginSource::File,
+            source: self.source,
             dev_path: None,
             enabled: existing.as_ref().is_none_or(|e| e.enabled),
         };

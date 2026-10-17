@@ -83,6 +83,7 @@
   --text-title-sm: 14px;
   --text-title-md: 14.5px; /* titre de la barre du plugin (Cadence 2) */
   --text-title: 15px;
+  --text-title-lg: 17px; /* titre d'une fiche (catalogue, Cadence 2) */
   --text-kpi: 24px;
   --text-display-sm: 24px;
   --text-display: 27px;

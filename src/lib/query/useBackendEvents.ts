@@ -30,6 +30,9 @@ export function useBackendEvents() {
       subscribe("plugin://install", ({ phase }) => {
         if (phase === "done") void queryClient.invalidateQueries({ queryKey: keys.plugins });
       }),
+      subscribe("catalog://updated", () => {
+        void queryClient.invalidateQueries({ queryKey: keys.catalog(), refetchType: "none" });
+      }),
       subscribe("chat://event", ({ session, seq, turn, event }) => {
         const drafts = keys.chatDrafts(session);
         if (event.type === "message-delta") {

@@ -137,6 +137,33 @@ export function useInstallPlugin() {
   });
 }
 
+/** Catalogue en ligne, comparé aux plugins installés. */
+export const useCatalog = () =>
+  useQuery({
+    queryKey: keys.catalog(),
+    queryFn: () => call("catalog_get", { refresh: false }),
+    staleTime: 5 * 60_000,
+  });
+
+/** Relit le catalogue sur le réseau (« Actualiser »). */
+export function useRefreshCatalog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => call("catalog_get", { refresh: true }),
+    onSuccess: (view) => qc.setQueryData(keys.catalog(), view),
+  });
+}
+
+/** Installe ou met à jour un plugin du catalogue (progression par `plugin://install`). */
+export function useInstallFromCatalog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, update }: { id: string; update: boolean }) =>
+      update ? call("plugin_update", { id }) : call("plugin_install", { id }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.plugins }),
+  });
+}
+
 /** Désinstalle un plugin ; ses secrets ne sont supprimés que si `deleteSecrets`. */
 export function useUninstallPlugin() {
   const qc = useQueryClient();

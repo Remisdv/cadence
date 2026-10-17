@@ -16,6 +16,7 @@ use crate::{
     error::{AppError, AppResult},
     events,
     plugins::{
+        catalog::{self, CatalogView},
         install::{self, InstallPhase, PluginInstallEvent},
         process::PluginProcessView,
         registry::{InstalledPluginView, PluginSource},
@@ -242,6 +243,53 @@ pub async fn plugin_call(
         .collect::<Vec<_>>()
         .join("\n");
     Ok(PluginToolResult { is_error: result.is_error.unwrap_or(false), structured: result.structured_content, text })
+}
+
+fn catalog_url(state: &AppState) -> String {
+    state.settings.get().catalog_url.unwrap_or_else(|| catalog::DEFAULT_URL.to_string())
+}
+
+/// Catalogue en ligne comparé aux plugins installés. `refresh` force la relecture (sinon le
+/// cache de moins de 6 h sert) ; hors ligne, le dernier catalogue reçu.
+#[tauri::command]
+pub async fn catalog_get(app: AppHandle, state: State<'_, AppState>, refresh: bool) -> AppResult<CatalogView> {
+    let url = catalog_url(&state);
+    let fetched = state.catalog.get(&url, refresh).await?;
+    let view = catalog::view(&url, &fetched, &state.plugins);
+    events::emit(&app, events::CATALOG_UPDATED, events::CatalogUpdated { updates: view.updates });
+    Ok(view)
+}
+
+/// Installe un plugin du catalogue (progression par `plugin://install`).
+#[tauri::command]
+pub async fn plugin_install(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<InstalledPluginView> {
+    let url = catalog_url(&state);
+    let fetched = state.catalog.get(&url, false).await?;
+    let progress = app.clone();
+    let prepared = state
+        .catalog
+        .prepare_install(state.plugins.clone(), &fetched.catalog, &id, move |event| {
+            events::emit(&progress, events::PLUGIN_INSTALL, event)
+        })
+        .await?;
+    // Windows refuse de remplacer l'exécutable d'un serveur en cours d'exécution.
+    state.plugin_host.stop(&id).await;
+    let registry = state.plugins.clone();
+    tauri::async_runtime::spawn_blocking(move || prepared.commit(&registry)).await.map_err(interrupted)??;
+    let done = PluginInstallEvent { id: id.clone(), received: 0, total: 0, phase: InstallPhase::Done };
+    events::emit(&app, events::PLUGIN_INSTALL, done);
+    view(&state, &id)
+}
+
+/// Met à jour un plugin installé vers la version du catalogue (l'ancienne reste pour un
+/// retour arrière).
+#[tauri::command]
+pub async fn plugin_update(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<InstalledPluginView> {
+    let entry = state.plugins.entry(&id)?;
+    if entry.source == PluginSource::Dev {
+        return Err(AppError::Validation("Un plugin de développement se met à jour depuis son dossier.".into()));
+    }
+    plugin_install(app, state, id).await
 }
 
 /// Relance le serveur d'un plugin activé, même après un échec, et attend qu'il soit prêt.
