@@ -5,7 +5,7 @@
 import { create } from "zustand";
 
 /** Sections des réglages (V2-Settings.dc.html) ; `plugin` ouvre les réglages d'un plugin. */
-export type SettingsSection = "general" | "ai" | "repos" | "plugins" | "plugin" | "about";
+export type SettingsSection = "general" | "ai" | "tools" | "repos" | "plugins" | "plugin" | "about";
 
 /** Étapes de l'onboarding de Cadence 2 (V2-Onboarding-*.dc.html). */
 export type OnboardingStep = "welcome" | "ai" | "plugins" | "tools" | "setup" | "done";

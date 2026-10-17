@@ -12,6 +12,7 @@ export type { UserRef } from "./bindings/UserRef";
 
 // App et préférences de la machine (Cadence 2)
 export type { AppStatus } from "./bindings/AppStatus";
+export type { AppDirs } from "./bindings/AppDirs";
 export type { AiId } from "./bindings/AiId";
 export type { AiCliSettings } from "./bindings/AiCliSettings";
 export type { AiSettings } from "./bindings/AiSettings";

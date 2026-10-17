@@ -174,7 +174,8 @@ struct Detected {
     probes: BTreeMap<ToolId, Probe>,
 }
 
-fn configured_path(settings: &AppSettings, tool: ToolId) -> Option<String> {
+/// Chemin choisi à la main dans les réglages (« Localiser le binaire… »).
+pub fn configured_path(settings: &AppSettings, tool: ToolId) -> Option<String> {
     match tool.ai() {
         Some(ai) => settings.ai.get(ai).path.clone(),
         None => settings.tool_paths.get(&tool).cloned(),
@@ -221,6 +222,18 @@ fn status_of(tool: ToolId, probe: &Probe) -> ToolStatus {
         _ if probe.login == Some(detect::Login::NotConnected) => ToolStatus::NotConnected,
         _ => ToolStatus::Ready,
     }
+}
+
+/// `CADENCE_TOOLS` : chemin de chaque outil trouvé, chemins personnalisés compris (recherche
+/// synchrone dans le `PATH` et les emplacements usuels, sans lancer les binaires).
+pub fn located_paths(settings: &AppSettings) -> BTreeMap<String, String> {
+    ToolId::ALL
+        .into_iter()
+        .filter_map(|tool| {
+            let path = detect::locate(tool, configured_path(settings, tool).as_deref())?;
+            Some((tool.as_str().to_string(), path.display().to_string()))
+        })
+        .collect()
 }
 
 /// Demandeurs de chaque outil : service `repos`, plugins activés, IA choisies, prérequis.
@@ -713,9 +726,7 @@ mod tests {
 
     #[test]
     fn plugin_tools_are_listed_with_the_plugin() {
-        let p = plugin(&format!(
-            "{BASE}tools = [{{ id = \"node\", optional = true }}]\n"
-        ));
+        let p = plugin(&format!("{BASE}\n[[requires]]\ntool = \"node\"\noptional = true\n"));
         let map = requesters(
             &AppSettings::default(),
             &[p],

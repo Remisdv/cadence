@@ -63,12 +63,16 @@ impl PluginColor {
     }
 }
 
-/// Programme de la machine demandé par un plugin (registre d'outils, révision 1.2 du plan).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Programme de la machine demandé par un plugin (`[[requires]]`, registre d'outils).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolRequirement {
     pub id: ToolId,
     /// Optionnel : son absence ne bloque pas le plugin.
     pub optional: bool,
+    /// Le plugin a besoin d'un compte connecté (`gh auth status`…).
+    pub auth: bool,
+    /// Pourquoi, affiché à côté de l'outil.
+    pub reason: Option<String>,
 }
 
 /// Service de l'app activé par un plugin (`services = ["repos"]`).
@@ -208,7 +212,7 @@ pub struct Manifest {
     pub category: PluginCategory,
     pub color: PluginColor,
     pub services: Vec<PluginService>,
-    /// Programmes de la machine dont le plugin a besoin (`tools = ["node", { id = "gh", optional = true }]`).
+    /// Programmes de la machine dont le plugin a besoin (`[[requires]]`).
     pub tools: Vec<ToolRequirement>,
     pub server: Option<ServerSpec>,
     /// Fichier HTML de l'UI, sous `ui/` (obligatoire dès qu'il y a une section `[ui]`).
@@ -258,7 +262,7 @@ struct Raw {
     #[serde(default)]
     services: Vec<String>,
     #[serde(default)]
-    tools: Vec<RawTool>,
+    requires: Vec<RawRequire>,
     server: Option<RawServer>,
     ui: Option<RawUi>,
     #[serde(default)]
@@ -271,14 +275,13 @@ struct Raw {
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum RawTool {
-    Name(String),
-    Table {
-        id: String,
-        #[serde(default)]
-        optional: bool,
-    },
+struct RawRequire {
+    tool: String,
+    #[serde(default)]
+    optional: bool,
+    #[serde(default)]
+    auth: bool,
+    reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -517,15 +520,16 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
     }
 
     let mut tools: Vec<ToolRequirement> = Vec::new();
-    for t in raw.tools {
-        let (name, optional) = match t {
-            RawTool::Name(name) => (name, false),
-            RawTool::Table { id, optional } => (id, optional),
-        };
-        match ToolId::parse(&name) {
-            Some(id) if !tools.iter().any(|t| t.id == id) => tools.push(ToolRequirement { id, optional }),
-            Some(_) => {}
-            None => warnings.push(format!("Outil « {name} » inconnu, ignoré.")),
+    for r in raw.requires {
+        match ToolId::parse(&r.tool) {
+            Some(id) if !tools.iter().any(|t| t.id == id) => tools.push(ToolRequirement {
+                id,
+                optional: r.optional,
+                auth: r.auth,
+                reason: r.reason.filter(|s| !s.trim().is_empty()),
+            }),
+            Some(_) => warnings.push(format!("Outil « {} » déclaré deux fois.", r.tool)),
+            None => warnings.push(format!("Outil « {} » inconnu, ignoré.", r.tool)),
         }
     }
 
@@ -686,7 +690,15 @@ min_cadence = "0.3.0"
 category = "projet"
 color = "blue"
 services = ["repos"]
-tools = ["node", { id = "gh", optional = true }]
+
+[[requires]]
+tool = "node"
+
+[[requires]]
+tool = "gh"
+optional = true
+auth = true
+reason = "Réutiliser votre connexion GitHub existante"
 futur = "clé inconnue, ignorée"
 
 [server]
@@ -716,15 +728,13 @@ schema = "settings.schema.json"
         assert_eq!(m.category, PluginCategory::Projet);
         assert_eq!(m.color, PluginColor::Blue);
         assert_eq!(m.services, [PluginService::Repos]);
-        assert_eq!(
-            m.tools,
-            [
-                ToolRequirement { id: ToolId::Node, optional: false },
-                ToolRequirement { id: ToolId::Gh, optional: true },
-            ]
-        );
-        let unknown = parse(&GESTION_PROJET.replacen("\"node\",", "\"node\", \"ffmpeg\",", 1), "0.3.0").unwrap();
-        assert_eq!(unknown.tools.len(), 2);
+        assert_eq!(m.tools.len(), 2);
+        assert_eq!((m.tools[0].id, m.tools[0].optional), (ToolId::Node, false));
+        assert_eq!((m.tools[1].id, m.tools[1].optional, m.tools[1].auth), (ToolId::Gh, true, true));
+        assert_eq!(m.tools[1].reason.as_deref(), Some("Réutiliser votre connexion GitHub existante"));
+        let unknown =
+            parse(&GESTION_PROJET.replacen("tool = \"node\"", "tool = \"ffmpeg\"", 1), "0.3.0").unwrap();
+        assert_eq!(unknown.tools.len(), 1);
         assert!(unknown.warnings.iter().any(|w| w.contains("ffmpeg")));
         assert_eq!(m.views.len(), 3);
         assert_eq!(m.views[0].section.as_deref(), Some("Pilotage"));

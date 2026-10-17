@@ -1,13 +1,13 @@
 /**
- * Réglages (maquette V2-Settings.dc.html) : sections dans la barre contextuelle
- * (Application, Services, Plugins), section choisie à droite.
+ * Réglages (maquette V2-Settings.dc.html) : sections dans la barre contextuelle (Application,
+ * Outils, Services, Plugins), section choisie à droite.
  *
- * Socle 0.3.0 : préférences de la machine (`settings.json` v2), plugins installés (activation,
- * ordre du rail, réglages et secrets globaux) et compte GitHub de Cadence 1, repris par le
- * service Dépôts. Outils externes et IA par action viendront avec leurs étapes.
+ * Préférences de la machine (`settings.json` v2) : IA par défaut et par action, outils externes
+ * (registre d'outils), service Dépôts GitHub (compte, dépôts suivis), plugins installés
+ * (activation, ordre du rail, réglages et secrets globaux).
  */
-import { useState, type ReactNode } from "react";
-import type { AiId, CliAgentInfo, InstalledPluginView, PluginSecretInfo } from "@/lib/types";
+import { useState } from "react";
+import type { InstalledPluginView, PluginSecretInfo } from "@/lib/types";
 import type { ViewProps } from "@/views/registry";
 import {
   ContextBar,
@@ -23,22 +23,19 @@ import { Icon } from "@/components/icons/Icon";
 import { SettingRow } from "@/components/domain/Panels";
 import { NeutralTile, PluginTile } from "@/components/domain/PluginTile";
 import { SettingsForm } from "@/components/domain/SettingsForm";
-import { Avatar, initialsOf } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { Card } from "@/components/ui/Card";
-import { Input, Select } from "@/components/ui/Field";
-import { Kbd } from "@/components/ui/Kbd";
+import { Input } from "@/components/ui/Field";
+import { SectionLabel } from "@/components/ui/SectionLabel";
 import { Spinner } from "@/components/ui/Spinner";
-import { StatusDot } from "@/components/ui/StatusDot";
 import { Switch } from "@/components/ui/Switch";
-import { aiLabels, aiOrder } from "@/lib/domain/ai";
 import { moveInRail, pluginCategories } from "@/lib/domain/plugins";
-import { modKey } from "@/lib/hooks/usePlatform";
+import { blocksContinue, isRequested } from "@/lib/domain/tools";
 import {
   useAppSettings,
-  useAuthStatus,
+  useAppStatus,
   usePlugins,
   usePluginSecret,
   usePluginSettings,
@@ -47,10 +44,18 @@ import {
   useSavePluginSettings,
   useSetPluginEnabled,
   useSetPluginSecret,
-  useSignOut,
+  useTools,
 } from "@/lib/query/queries";
 import { useNavigation, type SettingsSection } from "@/stores/navigation";
 import { AboutSection, AppVersionLine } from "./AboutSection";
+import { AiSettings } from "./AiSettings";
+import { ReposSettings } from "./ReposSettings";
+import { SectionTitle } from "./SectionTitle";
+import { ToolsSettings } from "./ToolsSettings";
+
+/** URL du catalogue public, quand aucune autre n'est réglée. */
+const DEFAULT_CATALOG =
+  "https://github.com/RemiSDV/cadence-plugins/releases/download/catalog/catalog.json";
 
 export default function SettingsView({ view }: ViewProps<"settings">) {
   const section = view.section ?? "general";
@@ -60,21 +65,28 @@ export default function SettingsView({ view }: ViewProps<"settings">) {
   return (
     <>
       <SettingsBar section={section} plugin={view.plugin} plugins={plugins} />
-      <Page title="Réglages" subtitle="Application, IA de code, services et plugins" padding="none">
+      <Page
+        title="Réglages"
+        subtitle="Application, IA de code, outils, services et plugins"
+        padding="none"
+      >
         <div className="min-w-0 grow overflow-y-auto px-[26px] py-5">
-          <div className="max-w-[780px]">
-            {section === "general" && <GeneralSection />}
-            {section === "ai" && <AiSection />}
-            {section === "repos" && <ReposSection plugins={plugins} />}
-            {section === "plugins" && <PluginsSection />}
-            {section === "plugin" &&
-              (plugin ? (
-                <PluginSection key={plugin.id} plugin={plugin} />
-              ) : (
-                <Callout tone="warning">Le plugin « {view.plugin} » n'est pas installé.</Callout>
-              ))}
-            {section === "about" && <AboutSection />}
-          </div>
+          {section === "ai" && <AiSettings />}
+          {section === "tools" && <ToolsSettings />}
+          {section === "repos" && <ReposSettings plugins={plugins} />}
+          {section !== "ai" && section !== "tools" && section !== "repos" && (
+            <div className="max-w-[780px]">
+              {section === "general" && <GeneralSection />}
+              {section === "plugins" && <PluginsSection />}
+              {section === "plugin" &&
+                (plugin ? (
+                  <PluginSection key={plugin.id} plugin={plugin} />
+                ) : (
+                  <Callout tone="warning">Le plugin « {view.plugin} » n'est pas installé.</Callout>
+                ))}
+              {section === "about" && <AboutSection />}
+            </div>
+          )}
         </div>
       </Page>
     </>
@@ -97,6 +109,13 @@ function SettingsBar({
     navigate({ id: "settings", section: s, plugin: p });
   const repoUsers = plugins.filter((p) => p.enabled && p.services.includes("repos"));
   const enabled = plugins.filter((p) => p.enabled);
+  const tools = useTools().data;
+  const toFix = (tools?.tools ?? []).filter(
+    (t) =>
+      !t.ignored &&
+      (blocksContinue(t) ||
+        (isRequested(t) && (t.status === "not-connected" || t.status === "outdated"))),
+  ).length;
 
   return (
     <ContextBar
@@ -123,12 +142,23 @@ function SettingsBar({
           active={section === "ai"}
           onClick={() => go("ai")}
         />
+      </ContextBarSection>
+      <ContextBarSection title="Outils">
         <ContextBarItem
-          icon="rocket"
-          label="À propos"
-          active={section === "about"}
-          onClick={() => go("about")}
+          icon="wrench"
+          label="Outils externes"
+          active={section === "tools"}
+          onClick={() => go("tools")}
         />
+        {toFix > 0 && (
+          <ContextBarSubItems>
+            <ContextBarSubItem
+              leading={<StatusBullet />}
+              label={`${toFix} action${toFix > 1 ? "s" : ""} proposée${toFix > 1 ? "s" : ""}`}
+              onClick={() => go("tools")}
+            />
+          </ContextBarSubItems>
+        )}
       </ContextBarSection>
       <ContextBarSection title="Services">
         <ContextBarItem
@@ -175,24 +205,16 @@ function SettingsBar({
   );
 }
 
-function SectionTitle({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <>
-      <h2 className="font-display text-title font-semibold">{title}</h2>
-      {children && <p className="mt-[7px] text-body-sm leading-[1.6] text-tx2">{children}</p>}
-    </>
-  );
-}
-
 /* ---------- Général ---------- */
 
-const shortcuts: [string, ReactNode][] = [
-  ["Palette de commandes", <Kbd key="k">{modKey}K</Kbd>],
-  ["Fermer une fenêtre", <Kbd key="esc">Échap</Kbd>],
-  ["Ouvrir la ligne choisie", <Kbd key="enter">Entrée</Kbd>],
-];
-
 function GeneralSection() {
+  const settings = useAppSettings().data;
+  const dirs = useAppStatus().data?.dirs;
+  const save = useSaveAppSettings();
+  const [catalog, setCatalog] = useState<string | null>(null);
+  const current = settings?.catalogUrl ?? "";
+  const value = catalog ?? current;
+
   return (
     <>
       <SectionTitle title="Général">
@@ -200,201 +222,117 @@ function GeneralSection() {
         sont dans la section Plugins.
       </SectionTitle>
       <div className="mt-[18px]">
+        <SettingRow title="Langue de l'interface" control={<Badge tone="muted">Français</Badge>} />
         <SettingRow
           title="Thème"
           description="Cadence est dessinée pour un thème sombre unique, aux couleurs des maquettes."
           control={<Badge tone="muted">Sombre</Badge>}
         />
-        <SettingRow title="Langue de l'interface" control={<Badge tone="muted">Français</Badge>} />
-        {shortcuts.map(([label, keys]) => (
-          <SettingRow key={label} title={label} control={keys} />
-        ))}
-      </div>
-    </>
-  );
-}
-
-/* ---------- IA de code ---------- */
-
-function AiSection() {
-  const settings = useAppSettings();
-  const save = useSaveAppSettings();
-  const auth = useAuthStatus().data;
-  const detected: Partial<Record<AiId, CliAgentInfo>> = {
-    "claude-code": auth?.claudeCode,
-    codex: auth?.codex,
-  };
-  if (settings.isPending) return <LoadingState />;
-  if (settings.isError) return <ErrorState error={settings.error} />;
-  const s = settings.data;
-
-  return (
-    <>
-      <SectionTitle title="IA de code">
-        Cadence pilote les CLI installées avec vos abonnements. L'IA par défaut sert au chat et à
-        toutes les actions, sauf celles qu'un plugin ou vous réaffectez.
-      </SectionTitle>
-      <div className="mt-[18px]">
         <SettingRow
-          title="IA par défaut"
-          description="Lancée pour une nouvelle conversation et pour les actions des plugins."
+          title="Mises à jour de Cadence"
+          description="Version installée, recherche et installation des mises à jour signées."
           control={
-            <Select
+            <Button
+              variant="ghost"
               size="sm"
-              aria-label="IA par défaut"
-              value={s.defaultAi ?? ""}
-              disabled={save.isPending}
-              onChange={(e) => save.mutate({ defaultAi: e.target.value as AiId })}
-              className="w-[170px]"
+              onClick={() =>
+                useNavigation.getState().navigate({ id: "settings", section: "about" })
+              }
             >
-              {!s.defaultAi && <option value="">À choisir</option>}
-              {aiOrder.map((ai) => (
-                <option key={ai} value={ai}>
-                  {aiLabels[ai].name}
-                </option>
-              ))}
-            </Select>
+              À propos
+            </Button>
           }
         />
       </div>
-      <div className="mt-[18px] flex flex-col gap-3">
-        {aiOrder.map((ai) => (
-          <AiRow
-            key={ai}
-            ai={ai}
-            info={detected[ai]}
-            enabled={s.ai[ai === "claude-code" ? "claudeCode" : ai].enabled}
-            path={s.ai[ai === "claude-code" ? "claudeCode" : ai].path}
-            onEnabled={(enabled) => save.mutate({ ai: [{ ai, enabled }] })}
-          />
-        ))}
+
+      <SectionLabel className="mt-6">Plugins</SectionLabel>
+      <div className="mt-1">
+        <SettingRow
+          title="Catalogue"
+          description="Index des plugins publiés, régénéré par la CI du dépôt public. Vide : catalogue public."
+          control={
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                save.mutate({ catalogUrl: value.trim() }, { onSuccess: () => setCatalog(null) });
+              }}
+            >
+              <Input
+                size="sm"
+                mono
+                aria-label="URL du catalogue"
+                placeholder={DEFAULT_CATALOG}
+                value={value}
+                onChange={(e) => setCatalog(e.target.value)}
+                className="w-[340px] text-caption"
+              />
+              {catalog !== null && catalog !== current && (
+                <Button type="submit" size="sm" disabled={save.isPending}>
+                  Enregistrer
+                </Button>
+              )}
+            </form>
+          }
+        />
+        <DirRow
+          title="Dossier des plugins"
+          description="Archives vérifiées (SHA-256) et extraites par version."
+          value={dirs?.plugins}
+        />
+        <DirRow
+          title="Données des plugins"
+          description="Un dossier par plugin, transmis au serveur dans CADENCE_DATA_DIR."
+          value={dirs?.pluginsData}
+        />
       </div>
       {save.isError && (
         <Callout tone="danger" className="mt-3">
           {save.error.message}
         </Callout>
       )}
-    </>
-  );
-}
 
-function AiRow({
-  ai,
-  info,
-  enabled,
-  path,
-  onEnabled,
-}: {
-  ai: AiId;
-  info?: CliAgentInfo;
-  enabled: boolean;
-  path: string | null;
-  onEnabled: (enabled: boolean) => void;
-}) {
-  const ok = info?.status === "connected";
-  const state = !enabled
-    ? "Ignorée"
-    : !info
-      ? "Détection à venir"
-      : ok
-        ? "Connectée"
-        : info.status === "not-found"
-          ? "Introuvable"
-          : "À vérifier";
-  return (
-    <Card className="flex items-center gap-3 px-4 py-3">
-      <StatusDot
-        tone={
-          !enabled ? "neutral" : ok ? "green" : info?.status === "not-found" ? "neutral" : "amber"
-        }
-        size={8}
-      />
-      <div className="min-w-0 grow">
-        <div className="text-body font-medium">
-          {aiLabels[ai].name}
-          {info?.version && <span className="ml-2 mono text-caption text-tx3">{info.version}</span>}
-        </div>
-        <div className="truncate mono text-caption text-tx3">
-          {path ?? info?.binaryPath ?? "chemin détecté au lancement"}
-        </div>
+      <SectionLabel className="mt-6">Sessions de l'IA</SectionLabel>
+      <div className="mt-1">
+        <DirRow
+          title="Dossier des sessions"
+          description="Dossier neutre où chaque session d'IA est lancée. Jamais dans un de vos dépôts."
+          value={dirs?.sessions}
+        />
       </div>
-      {info?.authMethod && <Badge tone="muted">{info.authMethod}</Badge>}
-      <span className="text-caption text-tx2">{state}</span>
-      <Switch
-        checked={enabled}
-        onCheckedChange={onEnabled}
-        aria-label={`Proposer ${aiLabels[ai].name}`}
-      />
-    </Card>
+    </>
   );
 }
 
-/* ---------- Dépôts GitHub (compte de Cadence 1, repris par le service) ---------- */
-
-function ReposSection({ plugins }: { plugins: InstalledPluginView[] }) {
-  const auth = useAuthStatus().data;
-  const signOut = useSignOut();
-  const github = auth?.github;
-  const name = github?.name ?? github?.login ?? "Compte GitHub";
-  const users = plugins.filter((p) => p.services.includes("repos"));
+function DirRow({
+  title,
+  description,
+  value,
+}: {
+  title: string;
+  description: string;
+  value: string | undefined;
+}) {
   return (
-    <>
-      <SectionTitle title="Dépôts GitHub">
-        Service de l'app activé par les plugins qui le déclarent ({" "}
-        <span className="mono">services = ["repos"]</span>) : connexion GitHub, dépôts suivis par
-        plugin. Le jeton vit dans le trousseau du système, jamais dans l'interface.
-      </SectionTitle>
-      {users.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {users.map((p) => (
-            <span
-              key={p.id}
-              className="inline-flex h-[26px] items-center gap-1.5 rounded-control border border-line bg-p2 pr-2 pl-1 text-caption text-tx2"
-            >
-              <PluginTile color={p.color} icon={p.railIcon} size={18} />
-              {p.name}
-            </span>
-          ))}
-        </div>
-      )}
-      <Card className="mt-[18px] px-4 py-3.5">
-        <div className="flex items-center gap-3">
-          <Avatar size={26} initials={initialsOf(name)} src={github?.avatarUrl} />
-          <div className="min-w-0 grow">
-            <div className="truncate text-body font-semibold">{name}</div>
-            {github?.login && <div className="mono text-caption text-tx3">@{github.login}</div>}
-          </div>
-          <StatusDot tone={github?.status === "connected" ? "green" : "amber"} size={8} />
-          <span className="text-caption text-tx2">
-            {github?.status === "connected" ? "Connecté" : "Non connecté"}
-          </span>
-        </div>
-        {github && github.scopes.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            <span className="text-caption text-tx3">Portées du jeton :</span>
-            {github.scopes.map((s) => (
-              <Badge key={s} tone="muted" mono>
-                {s}
-              </Badge>
-            ))}
-          </div>
-        )}
-        <div className="mt-3.5 flex items-center gap-2.5 border-t border-line pt-3">
-          <span className="grow text-caption text-tx3">
-            Se déconnecter retire le jeton du trousseau et efface le cache local des dépôts.
-          </span>
-          <Button
-            variant="danger"
-            size="sm"
-            disabled={signOut.isPending}
-            onClick={() => signOut.mutate()}
-          >
-            Se déconnecter
-          </Button>
-        </div>
-      </Card>
-    </>
+    <SettingRow
+      title={title}
+      description={description}
+      control={
+        <Input
+          size="sm"
+          mono
+          readOnly
+          aria-label={title}
+          value={value ?? ""}
+          className="w-[340px] text-caption text-tx2"
+        />
+      }
+    />
   );
+}
+
+function StatusBullet() {
+  return <span className="ml-1 inline-block size-1.5 rounded-full bg-amber" />;
 }
 
 /* ---------- Plugins activés ---------- */
@@ -497,7 +435,11 @@ function PluginSection({ plugin }: { plugin: InstalledPluginView }) {
           <h2 className="font-display text-title font-semibold">{plugin.name}</h2>
           <div className="mono text-caption text-tx3">
             {plugin.id} · v{plugin.version} ·{" "}
-            {{ dev: "mode développement", file: "archive locale", catalog: "catalogue" }[plugin.source]}
+            {
+              { dev: "mode développement", file: "archive locale", catalog: "catalogue" }[
+                plugin.source
+              ]
+            }
           </div>
         </div>
         <span className="text-caption text-tx2">{plugin.enabled ? "Activé" : "Désactivé"}</span>

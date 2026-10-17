@@ -302,6 +302,22 @@ pub struct AppStatus {
     pub version: String,
     /// Adresse de la passerelle MCP locale (`http://127.0.0.1:<port>/mcp`), si elle tourne.
     pub gateway: Option<String>,
+    pub dirs: AppDirs,
+}
+
+/// Dossiers de l'app, affichés dans les réglages (lecture seule).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AppDirs {
+    /// Archives extraites des plugins, par version.
+    pub plugins: String,
+    /// Un dossier par plugin, transmis au serveur dans `CADENCE_DATA_DIR`.
+    pub plugins_data: String,
+    /// Dossier neutre où chaque session d'IA est lancée.
+    pub sessions: String,
+    /// Clones et worktrees du service Dépôts, sous la configuration de l'app.
+    pub repos: String,
 }
 
 /// Fichier `settings.json`, lu au démarrage et réécrit à chaque modification.

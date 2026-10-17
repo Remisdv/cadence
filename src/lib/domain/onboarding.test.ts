@@ -22,6 +22,7 @@ function plugin(patch: Partial<InstalledPluginView>): InstalledPluginView {
     secrets: [],
     services: [],
     setup: [],
+    actions: [],
     hasSettings: false,
     uiEntry: null,
     enabled: true,

@@ -1,7 +1,8 @@
 /**
- * Tableau des outils de la machine (maquette V2-Onboarding-Tools.dc.html, reprise dans
- * Réglages › Outils) : demandeur, état, version, et pour un outil manquant la commande exacte
- * que Cadence lancera, avec « Installer moi-même » et le lien officiel.
+ * Tableau des outils de la machine : variante `onboarding` (V2-Onboarding-Tools.dc.html :
+ * demandeur, état, version, et pour un outil manquant la commande exacte que Cadence lancera,
+ * avec « Installer moi-même » et le lien officiel) et variante `settings` (V2-Settings.dc.html,
+ * Outils externes : chemin de chaque outil, « Changer le chemin »).
  */
 import { useState } from "react";
 import type { InstalledPluginView, ToolInfo, ToolRequester } from "@/lib/types";
@@ -15,28 +16,40 @@ import { ToolInstallDialog } from "./ToolInstallDialog";
 import { aiTileClass } from "./AiCard";
 import { kitIcon, pluginTileClass } from "@/lib/domain/plugins";
 import { aiOfTool, preferredRecipe, requestLabel, toolIcons, toolStatus } from "@/lib/domain/tools";
-import { copyText, openExternal } from "@/lib/platform";
-import { useAppSettings, useSaveAppSettings } from "@/lib/query/queries";
+import { copyText, openExternal, pickFile } from "@/lib/platform";
+import { useAppSettings, useSaveAppSettings, useSetToolPath } from "@/lib/query/queries";
+import { shortPath } from "./AiCard";
 
-/** Colonnes de la maquette (1440px), resserrées à la largeur minimale de la fenêtre. */
-const cols = {
-  requested: "w-[210px] shrink-0 max-[1320px]:w-[132px]",
-  status: "w-[130px] shrink-0 max-[1320px]:w-[112px]",
-  version: "w-[70px] shrink-0 max-[1320px]:w-[58px]",
-  actions: "w-[186px] shrink-0 max-[1320px]:w-[164px]",
+type Variant = "onboarding" | "settings";
+
+/** Colonnes des maquettes (1440px), resserrées à la largeur minimale de la fenêtre. */
+const columns: Record<Variant, Record<"requested" | "status" | "version" | "actions", string>> = {
+  onboarding: {
+    requested: "w-[210px] shrink-0 max-[1320px]:w-[132px]",
+    status: "w-[130px] shrink-0 max-[1320px]:w-[112px]",
+    version: "w-[70px] shrink-0 max-[1320px]:w-[58px]",
+    actions: "w-[186px] shrink-0 max-[1320px]:w-[164px]",
+  },
+  settings: {
+    requested: "w-[210px] shrink-0 max-[1320px]:w-[132px]",
+    status: "w-[170px] shrink-0 max-[1320px]:w-[120px]",
+    version: "w-[100px] shrink-0 max-[1320px]:w-[64px]",
+    actions: "w-[260px] shrink-0 max-[1320px]:w-[210px]",
+  },
 };
 
 export interface ToolsTableProps {
   tools: ToolInfo[];
   plugins: InstalledPluginView[];
   platform: string;
-  /** Réglages : affiche aussi la colonne de chemin des outils non demandés. */
-  showUnrequested?: boolean;
+  variant?: Variant;
 }
 
-export function ToolsTable({ tools, plugins, platform }: ToolsTableProps) {
+export function ToolsTable({ tools, plugins, platform, variant = "onboarding" }: ToolsTableProps) {
   const settings = useAppSettings().data;
   const save = useSaveAppSettings();
+  const setPath = useSetToolPath();
+  const cols = columns[variant];
   const [dialog, setDialog] = useState<{ tool: ToolInfo; start: "install" | "login" } | null>(null);
 
   const setIgnored = (tool: ToolInfo, ignored: boolean) => {
@@ -55,11 +68,15 @@ export function ToolsTable({ tools, plugins, platform }: ToolsTableProps) {
     <div className="overflow-hidden rounded-card border border-line bg-panel">
       <div className="flex h-8 items-center gap-3 border-b border-line px-3.5 text-tiny font-semibold tracking-[0.06em] text-tx3 uppercase">
         <span className="w-7 shrink-0" />
-        <span className="grow">Outil</span>
-        <span className={cols.requested}>Demandé par</span>
+        <span className="grow">{variant === "settings" ? "Outil et chemin" : "Outil"}</span>
+        <span className={cols.requested}>
+          {variant === "settings" ? "Utilisé par" : "Demandé par"}
+        </span>
         <span className={cols.status}>État</span>
         <span className={cols.version}>Version</span>
-        <span className={cols.actions} />
+        <span className={cn("text-right", cols.actions)}>
+          {variant === "settings" ? "Actions" : ""}
+        </span>
       </div>
       {tools.map((tool) => (
         <ToolRow
@@ -67,11 +84,21 @@ export function ToolsTable({ tools, plugins, platform }: ToolsTableProps) {
           tool={tool}
           plugins={plugins}
           platform={platform}
+          variant={variant}
+          onChangePath={async () => {
+            const path = await pickFile(`Emplacement de ${tool.name}`);
+            if (path) setPath.mutate({ tool: tool.id, path });
+          }}
           onInstall={() => setDialog({ tool, start: "install" })}
           onLogin={() => setDialog({ tool, start: "login" })}
           onIgnore={(ignored) => setIgnored(tool, ignored)}
         />
       ))}
+      {setPath.error && (
+        <div className="border-t border-line px-3.5 py-2 text-caption text-red">
+          {setPath.error.message}
+        </div>
+      )}
       {dialog && (
         <ToolInstallDialog
           tool={tools.find((t) => t.id === dialog.tool.id) ?? dialog.tool}
@@ -89,17 +116,23 @@ function ToolRow({
   tool,
   plugins,
   platform,
+  variant,
   onInstall,
   onLogin,
   onIgnore,
+  onChangePath,
 }: {
   tool: ToolInfo;
   plugins: InstalledPluginView[];
   platform: string;
+  variant: Variant;
   onInstall: () => void;
   onLogin: () => void;
   onIgnore: (ignored: boolean) => void;
+  onChangePath: () => void;
 }) {
+  const cols = columns[variant];
+  const settingsView = variant === "settings";
   const status = toolStatus(tool);
   const ai = aiOfTool(tool.id);
   const missing = tool.status === "missing" || tool.status === "outdated";
@@ -107,12 +140,23 @@ function ToolRow({
   const blockedByNode = recipe?.needs === "node" && !recipe.available;
   const [copied, setCopied] = useState(false);
   const request = requestLabel(tool);
-  const subtitle =
-    ai && tool.account
-      ? tool.account.split(" · ")[0]
-      : tool.status === "not-connected" && tool.login
-        ? `À connecter avec ${tool.login.split(" ").slice(0, 2).join(" ")}`
-        : tool.description;
+  const subtitle = settingsView ? (
+    tool.path ? (
+      <span className="mono text-tiny text-tx2">{shortPath(tool.path)}</span>
+    ) : (
+      `absent du PATH${recipe ? ` · ${recipe.command}` : ""}`
+    )
+  ) : ai && tool.account ? (
+    tool.account.split(" · ")[0]
+  ) : tool.status === "not-connected" && tool.login ? (
+    `À connecter avec ${tool.login.split(" ").slice(0, 2).join(" ")}`
+  ) : (
+    tool.description
+  );
+  const statusLabel =
+    settingsView && tool.status === "ready" && tool.account?.startsWith("@")
+      ? `${status.label} · ${tool.account}`
+      : status.label;
 
   return (
     <div className={cn("border-b border-line last:border-b-0", tool.ignored && "opacity-60")}>
@@ -150,7 +194,7 @@ function ToolRow({
               tone={status.tone}
               icon={tool.status === "ready" ? "check" : missing ? "warning" : undefined}
             >
-              {status.label}
+              {statusLabel}
             </Badge>
           )}
         </div>
@@ -179,7 +223,7 @@ function ToolRow({
               >
                 {tool.status === "outdated" ? "Mettre à jour" : "Installer"}
               </Button>
-              {!tool.required && (
+              {!tool.required && !settingsView && (
                 <Button variant="quiet" size="compact" onClick={() => onIgnore(true)}>
                   Ignorer
                 </Button>
@@ -190,17 +234,22 @@ function ToolRow({
               <Button size="compact" icon="user" onClick={onLogin}>
                 Se connecter
               </Button>
-              {!tool.required && (
+              {!tool.required && !settingsView && (
                 <Button variant="quiet" size="compact" onClick={() => onIgnore(true)}>
                   Ignorer
                 </Button>
               )}
             </>
           ) : null}
+          {settingsView && !tool.ignored && (
+            <Button variant="ghost" size="compact" onClick={onChangePath}>
+              {tool.path ? "Changer le chemin" : "Localiser…"}
+            </Button>
+          )}
         </div>
       </div>
 
-      {missing && !tool.ignored && recipe && (
+      {!settingsView && missing && !tool.ignored && recipe && (
         <div className="mr-3.5 mb-3.5 ml-[54px] rounded-tile border border-line bg-p2 px-3.5 py-3">
           <div className="flex items-center gap-2">
             <SectionLabel className="grow">Commande que Cadence lancera</SectionLabel>

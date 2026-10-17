@@ -15,6 +15,7 @@ pub fn app_status(app: tauri::AppHandle, state: State<'_, AppState>) -> AppStatu
         onboarded: state.settings.get().onboarded,
         version: app.package_info().version.to_string(),
         gateway: state.gateway.as_ref().map(|g| g.url()),
+        dirs: state.dirs.clone(),
     }
 }
 

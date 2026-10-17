@@ -6,6 +6,7 @@
  * `?scenario=empty` : aucun plugin installé (rail réduit au chat, au catalogue et aux réglages).
  */
 import type {
+  ActionMode,
   AppSettings,
   InstalledPluginView,
   PluginProcessView,
@@ -21,6 +22,17 @@ const view = (
   extra: Partial<PluginViewInfo> = {},
 ): PluginViewInfo => ({ id, title, icon, section, hidden: false, home: false, ...extra });
 
+const action = (id: string, label: string, mode: ActionMode, context: string | null = null) => ({
+  id,
+  label,
+  skill: id,
+  mode,
+  context,
+  description: null,
+  icon: null,
+  confirm: null,
+});
+
 const plugin = (
   p: Pick<InstalledPluginView, "id" | "name" | "category" | "color" | "railIcon" | "views"> &
     Partial<InstalledPluginView>,
@@ -30,6 +42,7 @@ const plugin = (
   secrets: [],
   services: [],
   setup: [],
+  actions: [],
   hasSettings: false,
   uiEntry: null,
   enabled: true,
@@ -49,6 +62,14 @@ export const mockPlugins: InstalledPluginView[] = [
     railIcon: "board",
     services: ["repos"],
     hasSettings: true,
+    actions: [
+      action("completer-description", "Compléter la description", "chat", "issue"),
+      action("decouper-issue", "Découper l'issue", "chat", "issue"),
+      action("estimer", "Estimer", "background", "issue"),
+      action("implementer", "Implémenter", "background", "issue"),
+      action("preparer-revue", "Préparer la revue", "background", "pull-request"),
+      action("planifier-sprint", "Planifier le sprint", "chat", "version"),
+    ],
     views: [
       view("sprint", "Sprint en cours", "sprint", "Pilotage", { home: true }),
       view("roadmap", "Roadmap", "roadmap", "Pilotage"),
@@ -66,6 +87,11 @@ export const mockPlugins: InstalledPluginView[] = [
     category: "etudes",
     color: "green",
     railIcon: "library",
+    actions: [
+      action("poser-question", "Poser une question", "chat"),
+      action("generer-qcm", "Générer un QCM", "background", "document"),
+      action("flashcards", "Flashcards", "background", "document"),
+    ],
     views: [
       view("bibliotheque", "Bibliothèque", "library", "Cours", { home: true }),
       view("entrainement", "Entraînement", "play", "Réviser"),
@@ -228,7 +254,7 @@ export const mockAppSettings: AppSettings = {
     codex: { path: null, enabled: true },
     opencode: { path: null, enabled: false },
   },
-  actionAi: {},
+  actionAi: { "gestion-projet/implementer": "codex" },
   catalogUrl: null,
   devPlugins: ["C:/Users/moi/dev/cadence-plugins/plugins/journal"],
   toolPaths: {},

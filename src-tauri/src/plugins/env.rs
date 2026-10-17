@@ -9,13 +9,18 @@
 //! | `CADENCE_SETTINGS` | réglages globaux du plugin (JSON, défauts du schéma compris) |
 //! | `CADENCE_SECRET_<ID>` | chaque secret déclaré présent au trousseau |
 //! | `CADENCE_LOG` | `info` |
+//! | `CADENCE_TOOLS` | outils détectés : `{ "git": "<chemin>", … }` (JSON, chemins personnalisés compris) |
+//! | `CADENCE_GITHUB_TOKEN` | service `repos` : jeton GitHub du service, s'il est connecté |
+//! | `CADENCE_REPOS` | service `repos` : dépôts suivis par le plugin (`["owner/nom", …]`) |
 //!
 //! L'environnement hérité est filtré : seules passent les variables système utiles (chemins,
 //! dossiers de l'utilisateur, langue, proxys). Les jetons des IA (`ANTHROPIC_API_KEY`…) et
 //! tout le reste ne passent pas.
 
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -96,13 +101,26 @@ pub struct LaunchSpec {
     pub log_file: Option<PathBuf>,
 }
 
+/// Outils détectés sur la machine (`CADENCE_TOOLS`), relus à chaque lancement de serveur.
+pub type ToolPaths = Arc<dyn Fn() -> BTreeMap<String, String> + Send + Sync>;
+
+/// Dépôts suivis par un plugin (`CADENCE_REPOS`), relus à chaque lancement de serveur.
+pub type TrackedRepos = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+
+/// Entrée du trousseau qui garde le jeton GitHub du service `repos`.
+pub const GITHUB_ACCOUNT: &str = "github";
+
 /// Dossiers communs à tous les serveurs.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HostPaths {
     /// `<données>/plugins-data` : un sous-dossier par plugin.
     pub data_root: PathBuf,
     /// `<journaux>/plugins` : `<id>.log`.
     pub log_dir: PathBuf,
+    /// `None` : pas de `CADENCE_TOOLS` (tests).
+    pub tools: Option<ToolPaths>,
+    /// `None` : `CADENCE_REPOS` vide (tests).
+    pub repos: Option<TrackedRepos>,
 }
 
 /// Variables héritées gardées, dans l'ordre reçu ; `PATH` complété sur macOS.
@@ -192,11 +210,22 @@ pub fn launch_spec(
     }
 
     let data_dir = paths.data_root.join(plugin);
+    let mut env = server_env(std::env::vars(), registry.app_version(), &data_dir, &settings_value);
+    if let Some(tools) = &paths.tools {
+        env.push(("CADENCE_TOOLS".to_string(), serde_json::to_string(&tools()).unwrap_or_default()));
+    }
+    if m.services.contains(&manifest::PluginService::Repos) {
+        let repos = paths.repos.as_ref().map(|r| r(plugin)).unwrap_or_default();
+        env.push(("CADENCE_REPOS".to_string(), serde_json::to_string(&repos).unwrap_or_default()));
+        if let Some(token) = secret_store.get(GITHUB_ACCOUNT)? {
+            secrets.push(("CADENCE_GITHUB_TOKEN".to_string(), token));
+        }
+    }
     Ok(LaunchSpec {
         plugin: plugin.to_string(),
         program: server.binary(&dir, target),
         args: server.args.clone(),
-        env: server_env(std::env::vars(), registry.app_version(), &data_dir, &settings_value),
+        env,
         data_dir,
         secrets,
         idle_shutdown: (server.idle_shutdown_s > 0).then(|| Duration::from_secs(server.idle_shutdown_s.into())),
@@ -265,7 +294,14 @@ mod tests {
         let settings = PluginSettingsStore::new(root.join("config"));
         settings.write("journal", None, json!({ "rappel": true })).unwrap();
         let store = MemorySecrets::default();
-        let paths = HostPaths { data_root: root.join("plugins-data"), log_dir: root.join("logs") };
+        let tools: ToolPaths =
+            Arc::new(|| BTreeMap::from([("git".to_string(), "/usr/bin/git".to_string())]));
+        let paths = HostPaths {
+            data_root: root.join("plugins-data"),
+            log_dir: root.join("logs"),
+            tools: Some(tools),
+            repos: None,
+        };
 
         let spec = launch_spec(&registry, &settings, &store, &paths, "journal").unwrap();
         assert!(spec.program.starts_with(std::path::absolute(&dev).unwrap().join("bin")));
@@ -273,6 +309,7 @@ mod tests {
         assert_eq!(spec.idle_shutdown, Some(Duration::from_secs(600)));
         assert!(spec.secrets.is_empty(), "secret absent du trousseau : pas de variable");
         assert!(spec.env.iter().any(|(k, v)| k == "CADENCE_SETTINGS" && v == r#"{"rappel":true}"#));
+        assert!(spec.env.iter().any(|(k, v)| k == "CADENCE_TOOLS" && v == r#"{"git":"/usr/bin/git"}"#));
         assert_eq!(spec.log_file.as_deref(), Some(root.join("logs").join("journal.log").as_path()));
 
         store.set("plugin/journal/token", "s3cret").unwrap();

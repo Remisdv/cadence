@@ -191,6 +191,14 @@ async function installFromMockCatalog(command: string, id: string) {
         color: entry.color,
         railIcon: entry.railIcon,
         services: entry.services,
+        actions: entry.actions.map((a) => ({
+          ...a,
+          skill: a.id,
+          context: null,
+          description: null,
+          icon: null,
+          confirm: null,
+        })),
         views: entry.views.map((v, i) => ({ ...v, section: null, hidden: false, home: i === 0 })),
       });
   mockBus.emit<PluginInstallEvent>("plugin://install", {
@@ -207,6 +215,12 @@ const handlers: Handlers = {
     onboarded: state.settings.onboarded,
     version: "0.3.0-dev",
     gateway: "http://127.0.0.1:52417/mcp",
+    dirs: {
+      plugins: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins`,
+      pluginsData: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins-data`,
+      sessions: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\sessions`,
+      repos: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\repos`,
+    },
   }),
   app_settings_get: () => state.settings,
   app_settings_set: ({ patch }) => {

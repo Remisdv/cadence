@@ -17,7 +17,7 @@ use crate::{
         project::{ProjectState, Repo},
         settings::Config,
     },
-    app_settings::AppSettingsStore,
+    app_settings::{AppDirs, AppSettingsStore},
     error::{AppError, AppResult},
     chat::ChatService,
     gateway::server::Gateway,
@@ -60,6 +60,8 @@ pub struct AppState {
     pub settings: Arc<AppSettingsStore>,
     /// Registre d'outils : détection, installation, connexion (Git, gh, IA, Node.js).
     pub tools: Arc<ToolService>,
+    /// Dossiers de l'app, montrés dans les réglages.
+    pub dirs: AppDirs,
     /// Trousseau du système (secrets des plugins, jeton GitHub).
     pub secrets: Arc<dyn SecretStore>,
     /// Plugins installés, activation et ordre du rail.
@@ -100,7 +102,21 @@ impl AppState {
         let AppPaths { config_dir, data_dir, cache_dir, log_dir } = paths;
         let plugins = Arc::new(PluginRegistry::load(data_dir.join("plugins"), app_version));
         let plugin_settings = Arc::new(PluginSettingsStore::new(config_dir.join("plugins")));
-        let host_paths = HostPaths { data_root: data_dir.join("plugins-data"), log_dir: log_dir.join("plugins") };
+        let settings = Arc::new(AppSettingsStore::load(&config_dir));
+        let tool_paths: env::ToolPaths = {
+            let settings = settings.clone();
+            Arc::new(move || crate::tools::located_paths(&settings.get()))
+        };
+        let tracked: env::TrackedRepos = {
+            let settings = settings.clone();
+            Arc::new(move |plugin: &str| settings.get().tracked_repos.get(plugin).cloned().unwrap_or_default())
+        };
+        let host_paths = HostPaths {
+            data_root: data_dir.join("plugins-data"),
+            log_dir: log_dir.join("plugins"),
+            tools: Some(tool_paths),
+            repos: Some(tracked),
+        };
         let resolve = {
             let (plugins, plugin_settings, secrets) = (plugins.clone(), plugin_settings.clone(), secrets.clone());
             Arc::new(move |plugin: &str| env::launch_spec(&plugins, &plugin_settings, secrets.as_ref(), &host_paths, plugin))
@@ -116,7 +132,13 @@ impl AppState {
             sign_in: Mutex::default(),
             cli: RwLock::default(),
             tools: Arc::new(ToolService::new()),
-            settings: Arc::new(AppSettingsStore::load(&config_dir)),
+            dirs: AppDirs {
+                plugins: data_dir.join("plugins").display().to_string(),
+                plugins_data: data_dir.join("plugins-data").display().to_string(),
+                sessions: data_dir.join("sessions").display().to_string(),
+                repos: config_dir.join("repos").display().to_string(),
+            },
+            settings,
             secrets,
             plugins,
             plugin_settings,
