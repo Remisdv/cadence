@@ -236,6 +236,10 @@ const handlers: Handlers = {
     },
   }),
   app_settings_get: () => state.settings,
+  app_export_config: ({ path }) => {
+    if (!path.trim()) fail("app_export_config", "Chemin d'export vide.");
+    return null;
+  },
   app_settings_set: ({ patch }) => {
     const next = structuredClone(state.settings);
     if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
@@ -257,6 +261,7 @@ const handlers: Handlers = {
         fail("app_settings_set", "L'URL du catalogue doit commencer par https://.");
       next.catalogUrl = url || null;
     }
+    if (patch.pluginAutoUpdate !== undefined) next.pluginAutoUpdate = patch.pluginAutoUpdate;
     if (patch.devPlugins !== undefined)
       next.devPlugins = [...new Set(patch.devPlugins.map((d) => d.trim()).filter(Boolean))];
     for (const [plugin, repos] of Object.entries(patch.trackedRepos ?? {})) {

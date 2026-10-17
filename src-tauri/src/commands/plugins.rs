@@ -73,6 +73,11 @@ pub fn plugins_reorder(state: State<'_, AppState>, order: Vec<String>) -> AppRes
 }
 
 /// Schéma déclaré par le plugin (absent si le plugin n'en déclare pas).
+/// Réglages globaux d'un plugin (défauts du schéma compris), pour l'export.
+pub(crate) fn settings_value(state: &AppState, plugin: &str) -> AppResult<Value> {
+    Ok(state.plugin_settings.view(plugin, schema_of(state, plugin)?)?.value)
+}
+
 fn schema_of(state: &AppState, plugin: &str) -> AppResult<Option<Value>> {
     let manifest = state.plugins.manifest(plugin)?;
     let Some(relative) = manifest.settings_schema.as_deref() else { return Ok(None) };
@@ -279,7 +284,14 @@ pub async fn catalog_get(app: AppHandle, state: State<'_, AppState>, refresh: bo
 /// Installe un plugin du catalogue (progression par `plugin://install`).
 #[tauri::command]
 pub async fn plugin_install(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<InstalledPluginView> {
-    let url = catalog_url(&state);
+    install_from_catalog(&app, &state, &id).await
+}
+
+/// Installation (ou mise à jour) depuis le catalogue, aussi utilisée par les mises à jour
+/// automatiques.
+pub async fn install_from_catalog(app: &AppHandle, state: &AppState, id: &str) -> AppResult<InstalledPluginView> {
+    let id = id.to_string();
+    let url = catalog_url(state);
     let fetched = state.catalog.get(&url, false).await?;
     let progress = app.clone();
     let prepared = state
@@ -293,9 +305,29 @@ pub async fn plugin_install(app: AppHandle, state: State<'_, AppState>, id: Stri
     let registry = state.plugins.clone();
     tauri::async_runtime::spawn_blocking(move || prepared.commit(&registry)).await.map_err(interrupted)??;
     let done = PluginInstallEvent { id: id.clone(), received: 0, total: 0, phase: InstallPhase::Done };
-    events::emit(&app, events::PLUGIN_INSTALL, done);
-    tools_changed(&state).await;
-    view(&state, &id)
+    events::emit(app, events::PLUGIN_INSTALL, done);
+    tools_changed(state).await;
+    view(state, &id)
+}
+
+/// Plugins du catalogue (hors plugins de dev) dont une version compatible plus récente est
+/// publiée : installés d'office si le réglage `pluginAutoUpdate` est actif. Renvoie leurs ids.
+pub async fn auto_update(app: &AppHandle, state: &AppState, catalog: &CatalogView) -> Vec<String> {
+    if !state.settings.get().plugin_auto_update {
+        return Vec::new();
+    }
+    let mut updated = Vec::new();
+    for entry in catalog.plugins.iter().filter(|p| p.update_available && p.compatible) {
+        let dev = state.plugins.entry(&entry.id).is_ok_and(|e| e.source == PluginSource::Dev);
+        if dev {
+            continue;
+        }
+        match install_from_catalog(app, state, &entry.id).await {
+            Ok(_) => updated.push(entry.id.clone()),
+            Err(err) => tracing::warn!(plugin = entry.id, %err, "mise à jour automatique du plugin échouée"),
+        }
+    }
+    updated
 }
 
 /// Met à jour un plugin installé vers la version du catalogue (l'ancienne reste pour un

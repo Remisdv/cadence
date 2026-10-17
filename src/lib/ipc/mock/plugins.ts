@@ -260,6 +260,7 @@ export const mockAppSettings: AppSettings = {
   },
   actionAi: { "gestion-projet/implementer": "codex" },
   catalogUrl: null,
+  pluginAutoUpdate: false,
   devPlugins: ["C:/Users/moi/dev/cadence-plugins/plugins/journal"],
   toolPaths: {},
   ignoredTools: [],

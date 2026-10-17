@@ -176,8 +176,13 @@ pub fn run() {
                     let url = state.settings.get().catalog_url.unwrap_or_else(|| plugins::catalog::DEFAULT_URL.to_string());
                     match state.catalog.get(&url, false).await {
                         Ok(fetched) => {
-                            let updates = plugins::catalog::view(&url, &fetched, &state.plugins).updates;
-                            events::emit(&handle, events::CATALOG_UPDATED, events::CatalogUpdated { updates });
+                            let mut view = plugins::catalog::view(&url, &fetched, &state.plugins);
+                            let updated = commands::plugins::auto_update(&handle, &state, &view).await;
+                            if !updated.is_empty() {
+                                tracing::info!(?updated, "plugins mis à jour automatiquement");
+                                view = plugins::catalog::view(&url, &fetched, &state.plugins);
+                            }
+                            events::emit(&handle, events::CATALOG_UPDATED, events::CatalogUpdated { updates: view.updates });
                         }
                         Err(err) => tracing::info!(%err, "catalogue des plugins injoignable"),
                     }
@@ -190,6 +195,7 @@ pub fn run() {
             commands::app::app_status,
             commands::app::app_settings_get,
             commands::app::app_settings_set,
+            commands::app::app_export_config,
             commands::tools::tools_list,
             commands::tools::tool_install,
             commands::tools::tool_login,

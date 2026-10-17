@@ -59,6 +59,8 @@ export interface Commands {
   app_status: { args: NoArgs; result: AppStatus };
   app_settings_get: { args: NoArgs; result: AppSettings };
   app_settings_set: { args: { patch: AppSettingsPatch }; result: AppSettings };
+  /** Réglages, plugins installés et leurs réglages dans un fichier JSON (jamais de secret). */
+  app_export_config: { args: { path: string }; result: null };
   // Registre d'outils : rien ne s'installe sans clic, la commande exacte est affichée.
   /** Détection au premier appel puis cache ; `refresh` relance tout (« Revérifier »). */
   tools_list: { args: { refresh: boolean }; result: ToolsReport };

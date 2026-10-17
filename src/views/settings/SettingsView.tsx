@@ -36,6 +36,7 @@ import { blocksContinue, isRequested } from "@/lib/domain/tools";
 import {
   useAppSettings,
   useAppStatus,
+  useExportConfig,
   usePlugins,
   usePluginSecret,
   usePluginSettings,
@@ -46,6 +47,7 @@ import {
   useSetPluginSecret,
   useTools,
 } from "@/lib/query/queries";
+import { pickSavePath } from "@/lib/platform";
 import { useNavigation, type SettingsSection } from "@/stores/navigation";
 import { AboutSection, AppVersionLine } from "./AboutSection";
 import { AiSettings } from "./AiSettings";
@@ -207,6 +209,40 @@ function SettingsBar({
 
 /* ---------- Général ---------- */
 
+/** « Exporter la configuration » : réglages et plugins dans un fichier JSON, sans secret. */
+function ExportRow() {
+  const exportConfig = useExportConfig();
+  const [saved, setSaved] = useState<string | null>(null);
+  const run = async () => {
+    setSaved(null);
+    const date = new Date().toISOString().slice(0, 10);
+    const path = await pickSavePath("Exporter la configuration", `cadence-config-${date}.json`);
+    if (path) exportConfig.mutate(path, { onSuccess: () => setSaved(path) });
+  };
+  return (
+    <SettingRow
+      title="Exporter la configuration"
+      description={
+        exportConfig.error?.message ??
+        (saved
+          ? `Enregistrée dans ${saved}.`
+          : "Réglages, plugins installés et leurs réglages, en JSON. Les secrets et jetons restent au trousseau.")
+      }
+      control={
+        <Button
+          variant="ghost"
+          size="sm"
+          icon="download"
+          disabled={exportConfig.isPending}
+          onClick={() => void run()}
+        >
+          Exporter…
+        </Button>
+      }
+    />
+  );
+}
+
 function GeneralSection() {
   const settings = useAppSettings().data;
   const dirs = useAppStatus().data?.dirs;
@@ -243,6 +279,7 @@ function GeneralSection() {
             </Button>
           }
         />
+        <ExportRow />
       </div>
 
       <SectionLabel className="mt-6">Plugins</SectionLabel>
@@ -273,6 +310,18 @@ function GeneralSection() {
                 </Button>
               )}
             </form>
+          }
+        />
+        <SettingRow
+          title="Mettre à jour les plugins automatiquement"
+          description="Les nouvelles versions compatibles du catalogue s'installent d'elles-mêmes (vérifié toutes les 6 h). Les plugins de développement ne sont jamais touchés."
+          control={
+            <Switch
+              aria-label="Mettre à jour les plugins automatiquement"
+              checked={settings?.pluginAutoUpdate ?? false}
+              disabled={!settings || save.isPending}
+              onCheckedChange={(checked) => save.mutate({ pluginAutoUpdate: checked })}
+            />
           }
         />
         <DirRow

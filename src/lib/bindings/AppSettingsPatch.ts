@@ -14,7 +14,7 @@ actionAi?: Record<string, AiId | null>,
 /**
  * Chaîne vide = catalogue public.
  */
-catalogUrl?: string, devPlugins?: Array<string>, ignoredTools?: Array<ToolId>, 
+catalogUrl?: string, pluginAutoUpdate?: boolean, devPlugins?: Array<string>, ignoredTools?: Array<ToolId>, 
 /**
  * Liste complète des dépôts suivis d'un plugin ; liste vide = n'en suivre aucun.
  */

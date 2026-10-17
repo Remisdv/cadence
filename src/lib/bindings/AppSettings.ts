@@ -25,6 +25,10 @@ actionAi: { [key in string]: AiId },
  */
 catalogUrl: string | null, 
 /**
+ * Installer d'office les mises à jour des plugins du catalogue (relu toutes les 6 h).
+ */
+pluginAutoUpdate: boolean, 
+/**
  * Dossiers de plugins chargés en mode développement (non zippés).
  */
 devPlugins: Array<string>, 

@@ -49,6 +49,11 @@ export function useSaveAppSettings() {
   });
 }
 
+/** Exporte la configuration dans `path` (fichier JSON choisi par l'utilisateur). */
+export function useExportConfig() {
+  return useMutation({ mutationFn: (path: string) => call("app_export_config", { path }) });
+}
+
 /* ---------- Service Dépôts GitHub ---------- */
 
 /** Copie locale de chaque dépôt suivi : clonée par Cadence, désignée, ou pas encore clonée. */

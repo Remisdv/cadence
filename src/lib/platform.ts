@@ -23,6 +23,18 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** Emplacement d'un fichier à enregistrer ; `null` si l'utilisateur annule. */
+export async function pickSavePath(title: string, defaultName: string): Promise<string | null> {
+  if (!isTauri) return `C:/Users/moi/Documents/${defaultName}`;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({
+    title,
+    defaultPath: defaultName,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  return selected ?? null;
+}
+
 /** Sélecteur de fichier natif ; `null` si l'utilisateur annule. */
 export async function pickFile(title: string): Promise<string | null> {
   if (!isTauri) {

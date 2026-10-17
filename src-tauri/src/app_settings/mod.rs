@@ -123,6 +123,8 @@ pub struct AppSettings {
     pub action_ai: BTreeMap<String, AiId>,
     /// Catalogue des plugins ; `None` = catalogue public `RemiSDV/cadence-plugins`.
     pub catalog_url: Option<String>,
+    /// Installer d'office les mises à jour des plugins du catalogue (relu toutes les 6 h).
+    pub plugin_auto_update: bool,
     /// Dossiers de plugins chargés en mode développement (non zippés).
     pub dev_plugins: Vec<String>,
     /// Chemin choisi à la main pour un outil hors IA (Git, GitHub CLI, Node.js).
@@ -151,6 +153,7 @@ impl Default for AppSettings {
             ai: AiSettings::default(),
             action_ai: BTreeMap::new(),
             catalog_url: None,
+            plugin_auto_update: false,
             dev_plugins: Vec::new(),
             tool_paths: BTreeMap::new(),
             ignored_tools: Vec::new(),
@@ -211,6 +214,9 @@ impl AppSettings {
                 return Err(AppError::Validation("L'URL du catalogue doit commencer par https://.".into()));
             }
             self.catalog_url = Some(url.to_string()).filter(|u| !u.is_empty());
+        }
+        if let Some(auto) = patch.plugin_auto_update {
+            self.plugin_auto_update = auto;
         }
         if let Some(dirs) = patch.dev_plugins {
             let mut dirs: Vec<String> =
@@ -310,6 +316,7 @@ pub struct AppSettingsPatch {
     pub action_ai: Option<BTreeMap<String, Option<AiId>>>,
     /// Chaîne vide = catalogue public.
     pub catalog_url: Option<String>,
+    pub plugin_auto_update: Option<bool>,
     pub dev_plugins: Option<Vec<String>>,
     pub ignored_tools: Option<Vec<ToolId>>,
     /// Liste complète des dépôts suivis d'un plugin ; liste vide = n'en suivre aucun.
