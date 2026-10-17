@@ -32,6 +32,7 @@ use tokio::{
 use super::{
     claude_code::{Permissions, SessionMode},
     events::{AiErrorKind, AiEvent, ApprovalDecision},
+    grants::{self, DirGrants},
     opencode_stream::{OpencodeStream, sse_data},
     process::{Tail, TreeChild, random_secret},
     session::AiLaunch,
@@ -77,6 +78,7 @@ pub struct OpencodeSession {
 
 impl OpencodeSession {
     pub async fn start(launch: AiLaunch, events: mpsc::UnboundedSender<AiEvent>) -> AppResult<Self> {
+        let granted = launch.granted.clone();
         std::fs::create_dir_all(&launch.cwd)?;
         let password = random_secret();
         let config = staging::opencode_config(
@@ -171,11 +173,11 @@ impl OpencodeSession {
         let (ready_tx, ready_rx) = oneshot::channel();
         session.events_task = tokio::spawn(follow_events(
             session.http.clone(),
-            format!("{}/event", session.base),
+            session.base.clone(),
             session.password.clone(),
             session.session_id.clone(),
             session.shared.clone(),
-            events.clone(),
+            (events.clone(), granted),
             ready_tx,
         ));
         if tokio::time::timeout(REQUEST_TIMEOUT, ready_rx).await.is_err() {
@@ -289,16 +291,19 @@ impl OpencodeSession {
 }
 
 /// Lit `GET /event` et pousse les événements de la session ; `ready` part au premier événement.
+/// Une demande `external_directory` qui vise un worktree ouvert à la session est accordée
+/// d'office (`always`), sans carte d'approbation.
 async fn follow_events(
     http: reqwest::Client,
-    url: String,
+    base: String,
     password: String,
     session: String,
     shared: Arc<Shared>,
-    events: mpsc::UnboundedSender<AiEvent>,
+    (events, granted): (mpsc::UnboundedSender<AiEvent>, Option<DirGrants>),
     ready: oneshot::Sender<()>,
 ) {
     let mut ready = Some(ready);
+    let url = format!("{base}/event");
     let response = match http.get(&url).basic_auth(USER, Some(&password)).header("accept", "text/event-stream").send().await {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
@@ -324,6 +329,22 @@ async fn follow_events(
             }
             for event in stream.push(&event) {
                 match &event {
+                    AiEvent::ApprovalRequested { request, detail, .. }
+                        if granted.as_ref().is_some_and(|g| grants::opencode_covered(detail, &g())) =>
+                    {
+                        let reply = http
+                            .post(format!("{base}/permission/{request}/reply"))
+                            .basic_auth(USER, Some(&password))
+                            .json(&serde_json::json!({ "reply": "always" }))
+                            .send()
+                            .await;
+                        match reply {
+                            Ok(r) if r.status().is_success() => continue,
+                            Ok(r) => tracing::warn!(status = %r.status(), "accès au worktree non accordé à OpenCode"),
+                            Err(err) => tracing::warn!(%err, "accès au worktree non accordé à OpenCode"),
+                        }
+                        shared.approvals.lock().unwrap().insert(request.clone());
+                    }
                     AiEvent::ApprovalRequested { request, .. } => {
                         shared.approvals.lock().unwrap().insert(request.clone());
                     }

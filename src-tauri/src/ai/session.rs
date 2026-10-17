@@ -11,6 +11,7 @@ use super::{
     claude_code::{ClaudeLaunch, ClaudeSession, Permissions, SessionMode},
     codex::CodexSession,
     events::{AiEvent, ApprovalDecision},
+    grants::DirGrants,
     opencode::OpencodeSession,
     staging::SessionFiles,
 };
@@ -36,6 +37,8 @@ pub struct AiLaunch {
     /// Dossiers ouverts à la session en plus de son dossier neutre (worktrees du service
     /// Dépôts) : `--add-dir`, racine inscriptible de Codex, permission de chemin d'OpenCode.
     pub add_dirs: Vec<PathBuf>,
+    /// Worktrees ouverts depuis le lancement : leurs demandes d'accès sont accordées d'office.
+    pub granted: Option<DirGrants>,
 }
 
 /// Session vivante d'une des trois CLI.
@@ -71,6 +74,7 @@ impl AiSession {
                     mode: launch.mode,
                     permissions: launch.permissions,
                     add_dirs: launch.add_dirs,
+                    granted: launch.granted,
                 },
                 events,
             )?),

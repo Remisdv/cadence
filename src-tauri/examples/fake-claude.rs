@@ -6,7 +6,9 @@
 //! - « approbation » : demande `can_use_tool` (Write) et répond selon la décision ;
 //! - « long » : diffuse lentement, jusqu'à une interruption (`control_request interrupt`) ;
 //! - « plante » : écrit sur stderr et quitte (code 1) ;
-//! - « dossiers » : répond la liste des `--add-dir` reçus (« dossiers : a | b »).
+//! - « dossiers » : répond la liste des `--add-dir` reçus (« dossiers : a | b ») ;
+//! - « lis <chemin> » : demande `can_use_tool` (Read) et répond « lu : autorisé [dossiers
+//!   ajoutés] » ou « lu : refusé ».
 //!
 //! L'id de session vaut l'argument de `--resume` s'il y en a un, sinon `fake-1`.
 
@@ -94,6 +96,39 @@ fn main() {
                 if text.contains("plante") {
                     eprintln!("panique simulée");
                     std::process::exit(1);
+                }
+                if let Some(path) = text.strip_prefix("lis ") {
+                    let request = format!("lire-{}", session.turn);
+                    emit(json!({ "type": "control_request", "request_id": request, "request": {
+                        "subtype": "can_use_tool", "tool_name": "Read", "display_name": "Read", "description": path,
+                        "input": { "file_path": path },
+                        "permission_suggestions": [],
+                        "tool_use_id": "toolu_read" } }));
+                    let answer = loop {
+                        match rx.recv() {
+                            Ok(m) if m["type"] == "control_response" && m["response"]["request_id"] == request.as_str() => break m,
+                            Ok(_) => continue,
+                            Err(_) => return,
+                        }
+                    };
+                    let response = &answer["response"]["response"];
+                    let reply = if response["behavior"] == "allow" {
+                        let added: Vec<String> = response["updatedPermissions"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|u| u["type"] == "addDirectories")
+                            .flat_map(|u| u["directories"].as_array().cloned().unwrap_or_default())
+                            .filter_map(|d| d.as_str().map(str::to_string))
+                            .collect();
+                        format!("lu : autorisé [{}]", added.join(" | "))
+                    } else {
+                        "lu : refusé".to_string()
+                    };
+                    session.start_text();
+                    session.text(&reply);
+                    session.result(false);
+                    continue;
                 }
                 if text.contains("approbation") {
                     let request = format!("perm-{}", session.turn);

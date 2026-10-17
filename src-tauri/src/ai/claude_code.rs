@@ -13,6 +13,10 @@
 //!
 //! Chaque tour est une ligne `user` sur stdin ; les événements normalisés partent dans un
 //! canal, dans l'ordre. En fond, une seule entrée puis fermeture de stdin.
+//!
+//! Approbations (`--permission-prompt-tool stdio`, sauf en accès complet) : un outil de
+//! fichiers qui vise un worktree ouvert à la session est accordé d'office (`addDirectories`) ;
+//! le reste devient une carte dans le chat, ou est refusé en fond (personne pour répondre).
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -36,8 +40,12 @@ use tokio::{
 };
 
 use super::{
-    claude_stream::{ClaudeStream, PendingApproval, StreamItem, approval_response, interrupt_request, user_message},
+    claude_stream::{
+        ClaudeStream, PendingApproval, StreamItem, approval_response, background_denial, grant_response, interrupt_request,
+        user_message,
+    },
     events::{AiErrorKind, AiEvent, ApprovalDecision},
+    grants::{self, DirGrants},
     process::TreeChild,
     staging::SessionFiles,
 };
@@ -75,6 +83,8 @@ pub struct ClaudeLaunch {
     pub permissions: Permissions,
     /// Worktrees ouverts à la session (`--add-dir`).
     pub add_dirs: Vec<PathBuf>,
+    /// Worktrees ouverts depuis le lancement, accordés d'office pendant le tour.
+    pub granted: Option<DirGrants>,
 }
 
 /// Arguments de `claude` (hors binaire).
@@ -108,7 +118,7 @@ pub fn args(launch: &ClaudeLaunch) -> Vec<OsString> {
         (Permissions::Ask, SessionMode::Chat) => "default",
     };
     args.extend(["--permission-mode".into(), mode.into()]);
-    if launch.permissions == Permissions::Ask && launch.mode == SessionMode::Chat {
+    if launch.permissions != Permissions::Full {
         args.extend(["--permission-prompt-tool".into(), "stdio".into()]);
     }
     if let Some(resume) = &launch.resume {
@@ -125,7 +135,7 @@ pub fn args(launch: &ClaudeLaunch) -> Vec<OsString> {
 
 /// Session Claude Code vivante.
 pub struct ClaudeSession {
-    stdin: tokio::sync::Mutex<Option<ChildStdin>>,
+    stdin: Arc<tokio::sync::Mutex<Option<ChildStdin>>>,
     shared: Arc<Shared>,
     child: Arc<tokio::sync::Mutex<TreeChild>>,
     reader: JoinHandle<()>,
@@ -146,6 +156,16 @@ struct Shared {
 
 const STDERR_LINES: usize = 8;
 
+async fn write_line(stdin: &tokio::sync::Mutex<Option<ChildStdin>>, value: &Value) -> AppResult<()> {
+    let mut stdin = stdin.lock().await;
+    let pipe = stdin.as_mut().ok_or_else(|| AppError::Internal("entrée de Claude Code fermée".into()))?;
+    let mut line = value.to_string();
+    line.push('\n');
+    pipe.write_all(line.as_bytes()).await?;
+    pipe.flush().await?;
+    Ok(())
+}
+
 impl ClaudeSession {
     /// Lance `claude` ; les événements arrivent sur `events` dans l'ordre du flux.
     pub fn start(launch: ClaudeLaunch, events: mpsc::UnboundedSender<AiEvent>) -> AppResult<Self> {
@@ -162,7 +182,7 @@ impl ClaudeSession {
             command.env("CADENCE_MCP_TOKEN", token.expose_secret());
         }
         let mut child = TreeChild::spawn(command).map_err(|e| AppError::Internal(format!("Claude Code ne démarre pas : {e}")))?;
-        let stdin = child.stdin();
+        let stdin = Arc::new(tokio::sync::Mutex::new(child.stdin()));
         let stdout = child.stdout().ok_or_else(|| AppError::Internal("sortie de Claude Code absente".into()))?;
         let stderr = child.stderr();
 
@@ -184,13 +204,35 @@ impl ClaudeSession {
         }
 
         let reader = {
-            let shared = shared.clone();
+            let (shared, stdin) = (shared.clone(), stdin.clone());
+            let (granted, background) = (launch.granted.clone(), launch.mode == SessionMode::Background);
             tokio::spawn(async move {
                 let mut stream = ClaudeStream::default();
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    for item in stream.push_line(&line) {
+                    let items = stream.push_line(&line);
+                    // Réponses d'office : worktree accordé, ou refus en fond. Leur carte
+                    // d'approbation n'est pas montrée.
+                    let dirs = granted.as_ref().map(|g| g()).unwrap_or_default();
+                    let mut answered = Vec::new();
+                    for item in &items {
+                        let StreamItem::Approval(pending) = item else { continue };
+                        let dir = grants::claude_tool_path(&pending.tool, &pending.input)
+                            .and_then(|path| grants::covering(&path, &dirs));
+                        let response = match dir {
+                            Some(dir) => grant_response(pending, &dir),
+                            None if background => background_denial(pending),
+                            None => continue,
+                        };
+                        answered.push(pending.request_id.clone());
+                        if let Err(err) = write_line(&stdin, &response).await {
+                            tracing::warn!(%err, "réponse d'office non transmise à Claude Code");
+                        }
+                    }
+                    for item in items {
                         match item {
+                            StreamItem::Approval(pending) if answered.contains(&pending.request_id) => {}
+                            StreamItem::Event(AiEvent::ApprovalRequested { request, .. }) if answered.contains(&request) => {}
                             StreamItem::Approval(pending) => {
                                 shared.approvals.lock().unwrap().insert(pending.request_id.clone(), pending);
                             }
@@ -231,7 +273,7 @@ impl ClaudeSession {
         };
 
         Ok(Self {
-            stdin: tokio::sync::Mutex::new(stdin),
+            stdin,
             shared,
             child: Arc::new(tokio::sync::Mutex::new(child)),
             reader,
@@ -254,13 +296,7 @@ impl ClaudeSession {
     }
 
     async fn write(&self, value: &Value) -> AppResult<()> {
-        let mut stdin = self.stdin.lock().await;
-        let pipe = stdin.as_mut().ok_or_else(|| AppError::Internal("entrée de Claude Code fermée".into()))?;
-        let mut line = value.to_string();
-        line.push('\n');
-        pipe.write_all(line.as_bytes()).await?;
-        pipe.flush().await?;
-        Ok(())
+        write_line(&self.stdin, value).await
     }
 
     /// Nouveau tour (mis en file par la CLI si un tour est en cours).
@@ -336,6 +372,7 @@ mod tests {
             mode,
             permissions,
             add_dirs: Vec::new(),
+            granted: None,
         }
     }
 
@@ -357,10 +394,11 @@ mod tests {
         assert!(!chat.iter().any(|a| a.contains("CADENCE_MCP_TOKEN") && !a.contains("${")), "jeton jamais en argument");
 
         let background = strings(&launch(Permissions::Ask, SessionMode::Background, None));
-        assert!(!background.contains(&"--permission-prompt-tool".to_string()), "personne pour répondre en fond");
+        assert!(background.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]), "réponses d'office en fond");
         assert!(background.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]));
         let full = strings(&launch(Permissions::Full, SessionMode::Chat, None));
         assert!(full.windows(2).any(|w| w == ["--permission-mode", "bypassPermissions"]));
+        assert!(!full.contains(&"--permission-prompt-tool".to_string()), "rien à demander en accès complet");
         assert!(!full.contains(&"--add-dir".to_string()));
 
         let mut granted = launch(Permissions::Ask, SessionMode::Chat, None);

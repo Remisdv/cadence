@@ -241,6 +241,26 @@ async fn opens_granted_worktrees_to_the_cli_from_the_next_turn() {
     assert_eq!(f.replies(&id).await.last().unwrap(), &format!("dossiers [reprise] : {}", wt.display()));
     assert_eq!(f.chat.live_count().await, 1, "l'ancien processus est fermé");
 
+    // Pendant le tour, un accès au worktree est accordé d'office (pas de carte d'approbation) ;
+    // un autre dossier reste soumis à l'utilisateur.
+    let readme = wt.join("README.md");
+    f.send(Some(&id), &format!("lis {}", readme.display())).await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), &format!("lu : autorisé [{}]", wt.display()));
+    assert!(!f.events(&id).await.iter().any(|e| matches!(e, AiEvent::ApprovalRequested { .. })));
+    let outside = f.dir.join("ailleurs.txt");
+    f.send(Some(&id), &format!("lis {}", outside.display())).await;
+    f.wait(&id, ChatState::WaitingApproval).await;
+    let request = f
+        .events(&id)
+        .await
+        .into_iter()
+        .find_map(|e| if let AiEvent::ApprovalRequested { request, .. } = e { Some(request) } else { None })
+        .unwrap();
+    f.chat.approve(&id, &request, ApprovalDecision::Deny).await.unwrap();
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "lu : refusé");
+
     // Rien de nouveau : même processus.
     f.send(Some(&id), "encore").await;
     f.wait(&id, ChatState::Idle).await;
@@ -298,6 +318,16 @@ async fn runs_background_actions_in_a_queue_and_records_reports() {
         .await
         .unwrap();
     assert!(f.events(&first).await.iter().any(|e| matches!(e, AiEvent::Report { is_final: true, text, .. } if text == "Terminé")));
+
+    // En fond, personne pour répondre : un accès hors worktree est refusé d'office.
+    let denied = f
+        .chat
+        .start_action(ActionStart { prompt: format!("lis {}", f.dir.join("ailleurs.txt").display()), ..start(3) })
+        .await
+        .unwrap();
+    f.wait(&denied, ChatState::Idle).await;
+    assert_eq!(f.replies(&denied).await, ["lu : refusé"]);
+    assert!(!f.events(&denied).await.iter().any(|e| matches!(e, AiEvent::ApprovalRequested { .. })));
 
     // Suite dans le chat : la conversation reprend en mode conversation.
     f.send(Some(&first), "et ensuite ?").await;

@@ -11,7 +11,8 @@
 //!
 //! Worktrees ouverts par `cadence__repo_checkout` : la CLI les reçoit au lancement (`--add-dir`,
 //! racine inscriptible, permission de chemin). Un worktree ouvert en cours de route relance la
-//! session (reprise par `native_id`) au tour suivant ; ils disparaissent avec la conversation.
+//! session (reprise par `native_id`) au tour suivant ; pendant le tour, l'adaptateur accorde
+//! d'office les accès qui le visent. Ils disparaissent avec la conversation.
 
 pub mod store;
 
@@ -34,6 +35,7 @@ use crate::{
     ai::{
         claude_code::{Permissions, SessionMode},
         events::{AiErrorKind, AiEvent, ApprovalDecision},
+        grants::DirGrants,
         session::{AiLaunch, AiSession},
         staging::{self, StagedSkill},
     },
@@ -402,6 +404,11 @@ impl ChatService {
                     permissions: if mode == SessionMode::Background { Permissions::AutoEdit } else { Permissions::Ask },
                     title: row.title.clone(),
                     add_dirs: dirs.clone(),
+                    granted: self.gateway.as_ref().map(|g| {
+                        let (context, id) = (g.context.clone(), id.to_string());
+                        let granted: DirGrants = Arc::new(move || context.granted(&id));
+                        granted
+                    }),
                 },
                 tx,
             )

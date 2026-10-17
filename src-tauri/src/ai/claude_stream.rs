@@ -32,6 +32,8 @@ pub enum StreamItem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingApproval {
     pub request_id: String,
+    /// Outil demandé (`Read`, `Edit`, `Bash`…).
+    pub tool: String,
     pub input: Value,
     pub suggestions: Value,
 }
@@ -45,6 +47,23 @@ pub fn approval_response(pending: &PendingApproval, decision: ApprovalDecision) 
             json!({ "behavior": "allow", "updatedInput": pending.input, "updatedPermissions": pending.suggestions })
         }
     };
+    json!({ "type": "control_response", "response": { "subtype": "success", "request_id": pending.request_id, "response": response } })
+}
+
+/// Accord d'office d'un accès à un worktree ouvert à la session : le dossier rejoint les
+/// dossiers de travail de la session (plus de demande pour lui jusqu'à la fin du processus).
+pub fn grant_response(pending: &PendingApproval, dir: &std::path::Path) -> Value {
+    let update = json!({ "type": "addDirectories", "directories": [dir.display().to_string()], "destination": "session" });
+    let response = json!({ "behavior": "allow", "updatedInput": pending.input, "updatedPermissions": [update] });
+    json!({ "type": "control_response", "response": { "subtype": "success", "request_id": pending.request_id, "response": response } })
+}
+
+/// Refus d'office (exécution de fond : personne pour répondre).
+pub fn background_denial(pending: &PendingApproval) -> Value {
+    let response = json!({
+        "behavior": "deny",
+        "message": "Refusé : une tâche de fond ne peut pas demander d'autorisation. Seul le worktree rendu par cadence__repo_checkout est accessible."
+    });
     json!({ "type": "control_response", "response": { "subtype": "success", "request_id": pending.request_id, "response": response } })
 }
 
@@ -154,6 +173,7 @@ impl ClaudeStream {
                     event(&mut out, AiEvent::ApprovalRequested { request: request_id.clone(), kind, title, detail: input.clone() });
                     out.push(StreamItem::Approval(PendingApproval {
                         request_id,
+                        tool: tool.to_string(),
                         input,
                         suggestions: request.get("permission_suggestions").cloned().unwrap_or(json!([])),
                     }));

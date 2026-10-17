@@ -2,6 +2,7 @@
 //!
 //! - `events` : format d'événements normalisé (`AiEvent`) ;
 //! - `staging` : dossier de travail et fichiers de préparation d'une session ;
+//! - `grants` : worktrees ouverts en cours de session, accordés d'office ;
 //! - `claude_stream` : lecture du flux stream-json de Claude Code ;
 //! - `claude_code` : processus `claude` d'une session (tours, interruption, approbations) ;
 //! - `codex_stream`, `codex` : protocole et processus `codex app-server` ;
@@ -15,6 +16,7 @@ pub mod claude_stream;
 pub mod codex;
 pub mod codex_stream;
 pub mod events;
+pub mod grants;
 pub mod opencode;
 pub mod opencode_stream;
 pub mod process;
