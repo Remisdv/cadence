@@ -23,6 +23,14 @@ export interface ViewDef<K extends ViewId> {
 type Registry = { [K in ViewId]: ViewDef<K> };
 
 export const registry: Registry = {
+  // Cadence 2 : onboarding (Bienvenue → IA → Plugins → Outils → Configuration → Terminé)
+  onboarding: {
+    title: "Onboarding",
+    mockup: "V2-Onboarding-{Welcome,AI,Plugins,Tools,Setup,Repos}.dc.html, V2-Tool-Install.dc.html",
+    layout: "onboarding",
+    component: lazy(() => import("./onboarding/OnboardingView")),
+  },
+
   // Cadence 2 : coque
   chat: {
     title: "Chat",

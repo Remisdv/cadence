@@ -34,7 +34,7 @@ import { useNavigation } from "@/stores/navigation";
 import { PairingCode } from "./PairingCode";
 import { PatDialog } from "./PatDialog";
 
-const permissions: { scope: string; description: string; required: boolean }[] = [
+export const permissions: { scope: string; description: string; required: boolean }[] = [
   {
     scope: "repo",
     description: "Lire et écrire issues, PR, milestones, branches et releases",
@@ -81,10 +81,7 @@ export default function GithubView() {
               <Spinner />
             </Card>
           ) : connected && github ? (
-            <ConnectedCard
-              github={github}
-              onContinue={() => navigate({ id: "sprint" })}
-            />
+            <ConnectedCard github={github} onContinue={() => navigate({ id: "sprint" })} />
           ) : mode === "browser" && auth.data ? (
             <BrowserSignInCard
               sources={auth.data.githubSources}
@@ -127,8 +124,8 @@ export default function GithubView() {
             ))}
           </div>
           <Callout tone="info" className="mt-5">
-            Le jeton reste dans le trousseau du système : l'interface de Cadence ne le voit
-            jamais, et chaque écriture sur GitHub passe par le cœur de l'application.
+            Le jeton reste dans le trousseau du système : l'interface de Cadence ne le voit jamais,
+            et chaque écriture sur GitHub passe par le cœur de l'application.
           </Callout>
         </div>
       </div>
@@ -138,12 +135,17 @@ export default function GithubView() {
   );
 }
 
-function LinkButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+export function LinkButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return (
     <button type="button" className="text-clay hover:text-clay-hover" onClick={onClick}>
       {children}
     </button>
   );
+}
+
+/** Carte de connexion (onboarding de Cadence 1), ou contenu nu dans la carte du service. */
+function SignInFrame({ bare, children }: { bare: boolean; children: ReactNode }) {
+  return bare ? <div>{children}</div> : <Card className="px-6 py-[26px]">{children}</Card>;
 }
 
 /* ---------- Connexion par le navigateur ---------- */
@@ -162,14 +164,17 @@ const browserFailureLabel: Record<FailReason, string> = {
   error: "Connexion impossible",
 };
 
-function BrowserSignInCard({
+export function BrowserSignInCard({
   sources,
   onUseCode,
   onUsePat,
+  bare = false,
 }: {
   sources: GithubSources;
   onUseCode: () => void;
   onUsePat: () => void;
+  /** Sans cadre : posé dans la carte du service Dépôts GitHub (Cadence 2). */
+  bare?: boolean;
 }) {
   const { mutate: startWebFlow } = useStartWebFlow();
   const useGh = useSignInWithGhCli();
@@ -208,7 +213,7 @@ function BrowserSignInCard({
   };
 
   return (
-    <Card className="px-6 py-[26px]">
+    <SignInFrame bare={bare}>
       <div className="flex items-center gap-[9px] text-body-sm text-tx2">
         <Icon name="github" size={17} />
         github.com
@@ -328,13 +333,19 @@ function BrowserSignInCard({
           </>
         )}
       </div>
-    </Card>
+    </SignInFrame>
   );
 }
 
 /* ---------- Code d'appairage (device flow) ---------- */
 
-function DeviceFlowCard({ onUsePat }: { onUsePat: () => void }) {
+export function DeviceFlowCard({
+  onUsePat,
+  bare = false,
+}: {
+  onUsePat: () => void;
+  bare?: boolean;
+}) {
   const { mutate: startFlow } = useStartDeviceFlow();
   const [flow, setFlow] = useState<Flow>({ kind: "starting" });
   const [copied, setCopied] = useState(false);
@@ -385,7 +396,7 @@ function DeviceFlowCard({ onUsePat }: { onUsePat: () => void }) {
   };
 
   return (
-    <Card className="px-6 py-[26px]">
+    <SignInFrame bare={bare}>
       <div className="flex items-center gap-[9px] text-body-sm text-tx2">
         <Icon name="github" size={17} />
         github.com/login/device
@@ -433,7 +444,7 @@ function DeviceFlowCard({ onUsePat }: { onUsePat: () => void }) {
       <div className="mt-[18px] flex items-center gap-[9px] border-t border-line pt-4">
         <FlowStatus flow={flow} />
       </div>
-    </Card>
+    </SignInFrame>
   );
 }
 
@@ -553,7 +564,7 @@ function ConnectedCard({ github, onContinue }: { github: GithubAuth; onContinue:
 
 /* ---------- Permissions ---------- */
 
-function PermissionRow({
+export function PermissionRow({
   scope,
   description,
   required,

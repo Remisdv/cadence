@@ -4,6 +4,8 @@ import { cn } from "@/lib/cn";
 const sizes = {
   sm: { box: "size-[26px] rounded-lg", icon: 16, text: "text-[16px]" },
   md: { box: "size-8 rounded-field", icon: 19, text: "text-[19px]" },
+  /** Carte « Cadence » de la bienvenue (V2-Onboarding-Welcome). */
+  card: { box: "size-8 rounded-field", icon: 19, text: "text-title-lg" },
 };
 
 /** Logo Cadence : pastille clay + mot-symbole Space Grotesk. */

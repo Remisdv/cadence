@@ -4,8 +4,8 @@ import { useNavigation, type View } from "@/stores/navigation";
 import { isViewId, preloadShellViews } from "@/views/registry";
 
 /**
- * Choisit l'écran de départ : le chat global. L'onboarding de Cadence 2 (Bienvenue → IA →
- * plugins → outils → configuration) remplacera l'écran de départ tant que `onboarded` est faux.
+ * Choisit l'écran de départ : l'onboarding de Cadence 2 (Bienvenue → IA → plugins → outils →
+ * configuration) tant que `onboarded` est faux, le chat global ensuite.
  *
  * En dev, `?view=<id>&<param>=…` force un écran : `?view=settings&section=plugins`,
  * `?view=plugin&plugin=documents&page=flashcards`, `?view=issue&number=156`.
@@ -18,10 +18,10 @@ export function useBoot(): { ready: boolean; error: unknown } {
   useEffect(() => {
     if (ready || !status.isSuccess) return;
     const forced = import.meta.env.DEV ? forcedView() : null;
-    replace(forced ?? { id: "chat" });
+    replace(forced ?? (status.data.onboarded ? { id: "chat" } : { id: "onboarding" }));
     setReady(true);
     preloadShellViews();
-  }, [ready, status.isSuccess, replace]);
+  }, [ready, status.isSuccess, status.data, replace]);
 
   return { ready, error: status.error };
 }

@@ -7,8 +7,12 @@ import { create } from "zustand";
 /** Sections des réglages (V2-Settings.dc.html) ; `plugin` ouvre les réglages d'un plugin. */
 export type SettingsSection = "general" | "ai" | "repos" | "plugins" | "plugin" | "about";
 
+/** Étapes de l'onboarding de Cadence 2 (V2-Onboarding-*.dc.html). */
+export type OnboardingStep = "welcome" | "ai" | "plugins" | "tools" | "setup" | "done";
+
 export type View =
-  // Cadence 2 : coque (rail, barre contextuelle, contenu)
+  // Cadence 2 : onboarding plein écran, puis coque (rail, barre contextuelle, contenu)
+  | { id: "onboarding"; step?: OnboardingStep }
   | { id: "chat"; session?: string }
   | { id: "catalog"; plugin?: string }
   | { id: "plugin"; plugin: string; view: string; params?: Record<string, string> }

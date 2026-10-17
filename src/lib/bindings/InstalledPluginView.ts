@@ -3,6 +3,7 @@ import type { PluginCategory } from "./PluginCategory";
 import type { PluginColor } from "./PluginColor";
 import type { PluginSecretInfo } from "./PluginSecretInfo";
 import type { PluginService } from "./PluginService";
+import type { PluginSetupStep } from "./PluginSetupStep";
 import type { PluginSource } from "./PluginSource";
 import type { PluginStatus } from "./PluginStatus";
 import type { PluginViewInfo } from "./PluginViewInfo";
@@ -14,7 +15,11 @@ export type InstalledPluginView = { id: string, name: string, version: string, d
 /**
  * Icône du kit pour la tuile du rail.
  */
-railIcon: string, views: Array<PluginViewInfo>, secrets: Array<PluginSecretInfo>, services: Array<PluginService>, hasSettings: boolean, 
+railIcon: string, views: Array<PluginViewInfo>, secrets: Array<PluginSecretInfo>, services: Array<PluginService>, 
+/**
+ * Étapes `[[setup]]`, montrées par l'onboarding après les services.
+ */
+setup: Array<PluginSetupStep>, hasSettings: boolean, 
 /**
  * Page de l'interface sous `ui/` ; `None` = plugin sans interface.
  */

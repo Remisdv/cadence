@@ -83,11 +83,17 @@ export function preferredRecipe(tool: ToolInfo) {
   return tool.recipes.find((r) => r.available) ?? tool.recipes[0] ?? null;
 }
 
-/** Outils à installer d'un coup (« Tout installer ») : manquants, non ignorés, installables. */
+/**
+ * Outils à installer d'un coup (« Tout installer ») : manquants, non ignorés, installables ;
+ * Node.js en premier, puisque les recettes npm en dépendent.
+ */
 export const installable = (tools: ToolInfo[]) =>
-  tools.filter(
-    (t) => (t.status === "missing" || t.status === "outdated") && !t.ignored && preferredRecipe(t),
-  );
+  tools
+    .filter(
+      (t) =>
+        (t.status === "missing" || t.status === "outdated") && !t.ignored && preferredRecipe(t),
+    )
+    .sort((a, b) => Number(b.id === "node") - Number(a.id === "node"));
 
 /** « Demandé par » : requis s'il y en a un, sinon optionnel. */
 export function requestLabel(tool: ToolInfo): { label: string; tone: BadgeTone } {
@@ -103,13 +109,23 @@ export interface ToolRunLog {
   kind: ToolRunKind;
   /** Commande lancée, affichée en tête du journal. */
   command: string;
+  /** Journal de la commande précédente (l'installation, au-dessus de la connexion). */
+  previous: { command: string; lines: string[] } | null;
   lines: string[];
   running: boolean;
   result: ToolRunResult | null;
 }
 
-export function startLog(kind: ToolRunKind, command: string): ToolRunLog {
-  return { kind, command, lines: [], running: true, result: null };
+export function startLog(
+  kind: ToolRunKind,
+  command: string,
+  before: ToolRunLog | null = null,
+): ToolRunLog {
+  const previous =
+    before && before.kind === "install" && kind === "login"
+      ? { command: before.command, lines: before.lines }
+      : null;
+  return { kind, command, previous, lines: [], running: true, result: null };
 }
 
 export function applyRunEvent(log: ToolRunLog | undefined, event: ToolRunEvent): ToolRunLog {
@@ -141,9 +157,52 @@ export function loginUrl(lines: string[]): string | null {
   return null;
 }
 
+/** Paquet d'une recette (« winget install --id GitHub.cli … » → « GitHub.cli »). */
+export function recipePackage(command: string): string {
+  const parts = command.split(" ");
+  const id = parts.indexOf("--id");
+  if (id >= 0 && parts[id + 1]) return parts[id + 1]!;
+  const install = parts.findIndex((p) => p === "install" || p === "-S");
+  const after = parts.slice(install + 1).find((p) => !p.startsWith("-"));
+  return after ?? parts[0] ?? command;
+}
+
 /** Durée lisible (« 38 s », « 1 min 12 s »). */
 export function formatRunDuration(ms: number): string {
   const s = Math.round(ms / 1000);
   if (s < 60) return `${s} s`;
   return `${Math.floor(s / 60)} min ${s % 60} s`;
+}
+
+/** Dernier pourcentage du journal (barre de winget, npm…) ; `null` s'il n'y en a pas. */
+export function runProgress(lines: string[]): number | null {
+  const num = (text: string) => Number(text.replace(",", "."));
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    const percent = /(\d{1,3}(?:[.,]\d+)?)\s?%/.exec(line);
+    if (percent) return Math.min(100, Math.round(num(percent[1]!)));
+    // « 9,4 Mo / 13,8 Mo », « 12.1 MB / 40.0 MB »
+    const sizes = /([\d.,]+)\s?(?:[kKMG]o|[kKMG]B)\s*\/\s*([\d.,]+)\s?(?:[kKMG]o|[kKMG]B)/.exec(
+      line,
+    );
+    if (sizes && num(sizes[2]!) > 0)
+      return Math.min(100, Math.round((num(sizes[1]!) / num(sizes[2]!)) * 100));
+  }
+  return null;
+}
+
+/** « Demandé par le service Dépôts GitHub (optionnel) » pour l'en-tête d'installation. */
+export function requestSentence(tool: ToolInfo): string | null {
+  const first = tool.requestedBy[0];
+  if (!first) return null;
+  const who =
+    first.kind === "service"
+      ? `le service ${first.name}`
+      : first.kind === "ai"
+        ? "l'étape IA de code"
+        : first.kind === "tool"
+          ? `${first.name} (installation par npm)`
+          : `le plugin ${first.name}`;
+  const others = tool.requestedBy.length - 1;
+  return `Demandé par ${who}${first.optional ? " (optionnel)" : ""}${others > 0 ? ` et ${others} autre${others > 1 ? "s" : ""}` : ""}`;
 }

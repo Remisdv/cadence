@@ -6,7 +6,7 @@ import type { PluginColor } from "@/lib/types";
 /**
  * Tuile colorée d'un plugin (maquettes Cadence 2) : 26px dans le rail, 22px en tête de sa
  * barre, 18px dans les listes, 14px en sous-entrée, 13px dans une puce de contexte ; 34px
- * sur une carte du catalogue, 46px en tête de sa fiche.
+ * sur une carte du catalogue, 36px sur une carte de l'onboarding, 46px en tête de sa fiche.
  */
 const sizes = {
   13: { box: "size-[13px] rounded-[4px]", icon: 8 },
@@ -14,7 +14,9 @@ const sizes = {
   18: { box: "size-[18px] rounded-badge", icon: 11 },
   22: { box: "size-[22px] rounded-md", icon: 14 },
   26: { box: "size-[26px] rounded-control", icon: 16 },
+  30: { box: "size-[30px] rounded-field", icon: 16 },
   34: { box: "size-[34px] rounded-field", icon: 18 },
+  36: { box: "size-9 rounded-field", icon: 19 },
   46: { box: "size-[46px] rounded-field", icon: 22 },
 } as const;
 

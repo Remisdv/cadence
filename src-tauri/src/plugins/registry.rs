@@ -22,7 +22,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::manifest::{self, Manifest, PluginCategory, PluginColor, PluginSecretInfo, PluginService, PluginViewInfo};
+use super::manifest::{
+    self, Manifest, PluginCategory, PluginColor, PluginSecretInfo, PluginService, PluginSetupStep, PluginViewInfo,
+};
 use crate::error::{AppError, AppResult};
 
 /// Provenance d'un plugin installé.
@@ -91,6 +93,8 @@ pub struct InstalledPluginView {
     pub views: Vec<PluginViewInfo>,
     pub secrets: Vec<PluginSecretInfo>,
     pub services: Vec<PluginService>,
+    /// Étapes `[[setup]]`, montrées par l'onboarding après les services.
+    pub setup: Vec<PluginSetupStep>,
     pub has_settings: bool,
     /// Page de l'interface sous `ui/` ; `None` = plugin sans interface.
     pub ui_entry: Option<String>,
@@ -245,6 +249,7 @@ impl PluginRegistry {
                     views: m.views,
                     secrets: m.secrets,
                     services: m.services,
+                    setup: m.setup,
                     enabled: entry.enabled,
                     source: entry.source,
                     status: if missing { PluginStatus::NeedsSetup } else { PluginStatus::Ok },
@@ -262,6 +267,7 @@ impl PluginRegistry {
                 views: vec![],
                 secrets: vec![],
                 services: vec![],
+                setup: vec![],
                 has_settings: false,
                 ui_entry: None,
                 enabled: entry.enabled,

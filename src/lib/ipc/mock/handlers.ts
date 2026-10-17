@@ -69,8 +69,11 @@ const state = {
   claudeCode: scenario === "onboarding" ? data.claudeDetected : data.claudeConnected,
   codex: data.cliNotFound,
   project: scenario === "app" ? data.project : (null as ProjectState | null),
-  settings: { ...structuredClone(mockAppSettings), onboarded: scenario !== "onboarding" },
-  plugins: scenario === "empty" ? [] : structuredClone(mockPlugins),
+  settings:
+    scenario === "onboarding"
+      ? { ...structuredClone(mockAppSettings), onboarded: false, defaultAi: null, trackedRepos: {} }
+      : structuredClone(mockAppSettings),
+  plugins: scenario === "empty" || scenario === "onboarding" ? [] : structuredClone(mockPlugins),
   pluginSettings: {} as Record<string, Record<string, unknown>>,
   secrets: new Set<string>(),
   processes: mockProcesses(scenario === "plugin-crash"),
@@ -229,6 +232,13 @@ const handlers: Handlers = {
     }
     if (patch.devPlugins !== undefined)
       next.devPlugins = [...new Set(patch.devPlugins.map((d) => d.trim()).filter(Boolean))];
+    for (const [plugin, repos] of Object.entries(patch.trackedRepos ?? {})) {
+      const list = [...new Set(repos.map((r) => r.trim().replace(/\.git$/, "")))];
+      const bad = list.find((r) => !/^[\w.-]+\/[\w.-]+$/.test(r));
+      if (bad) fail("app_settings_set", `« ${bad} » n'est pas un dépôt owner/nom.`);
+      if (list.length) next.trackedRepos[plugin] = list;
+      else delete next.trackedRepos[plugin];
+    }
     if (patch.ignoredTools !== undefined)
       next.ignoredTools = [...new Set(patch.ignoredTools)].sort();
     state.settings = next;

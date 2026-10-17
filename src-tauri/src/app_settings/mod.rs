@@ -129,6 +129,8 @@ pub struct AppSettings {
     pub tool_paths: BTreeMap<ToolId, String>,
     /// Outils optionnels écartés (« Ignorer ») ; les IA, elles, passent par `ai.<id>.enabled`.
     pub ignored_tools: Vec<ToolId>,
+    /// Service `repos` : dépôts GitHub suivis (`owner/name`) par plugin.
+    pub tracked_repos: BTreeMap<String, Vec<String>>,
     #[serde(skip_serializing_if = "Legacy::is_empty")]
     #[ts(skip)]
     pub legacy: Legacy,
@@ -146,6 +148,7 @@ impl Default for AppSettings {
             dev_plugins: Vec::new(),
             tool_paths: BTreeMap::new(),
             ignored_tools: Vec::new(),
+            tracked_repos: BTreeMap::new(),
             legacy: Legacy::default(),
         }
     }
@@ -207,6 +210,26 @@ impl AppSettings {
             dirs.dedup();
             self.dev_plugins = dirs;
         }
+        for (plugin, repos) in patch.tracked_repos.into_iter().flatten() {
+            if !is_plugin_id(&plugin) {
+                return Err(AppError::Validation(format!("« {plugin} » n'est pas un identifiant de plugin.")));
+            }
+            let mut list: Vec<String> = Vec::new();
+            for repo in repos {
+                let repo = repo.trim().trim_end_matches(".git").to_string();
+                if !is_repo_name(&repo) {
+                    return Err(AppError::Validation(format!("« {repo} » n'est pas un dépôt owner/nom.")));
+                }
+                if !list.iter().any(|r| r.eq_ignore_ascii_case(&repo)) {
+                    list.push(repo);
+                }
+            }
+            if list.is_empty() {
+                self.tracked_repos.remove(&plugin);
+            } else {
+                self.tracked_repos.insert(plugin, list);
+            }
+        }
         if let Some(mut ignored) = patch.ignored_tools {
             ignored.sort();
             ignored.dedup();
@@ -214,6 +237,18 @@ impl AppSettings {
         }
         Ok(())
     }
+}
+
+fn is_plugin_id(id: &str) -> bool {
+    !id.is_empty() && id.split('-').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()))
+}
+
+/// `owner/name` d'un dépôt GitHub.
+fn is_repo_name(repo: &str) -> bool {
+    let ok = |part: &str| {
+        !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    matches!(repo.split_once('/'), Some((owner, name)) if ok(owner) && ok(name) && !name.contains('/'))
 }
 
 /// `<plugin>/<action>`, deux identifiants en minuscules et tirets.
@@ -252,6 +287,9 @@ pub struct AppSettingsPatch {
     pub catalog_url: Option<String>,
     pub dev_plugins: Option<Vec<String>>,
     pub ignored_tools: Option<Vec<ToolId>>,
+    /// Liste complète des dépôts suivis d'un plugin ; liste vide = n'en suivre aucun.
+    #[ts(optional, type = "Record<string, string[]>")]
+    pub tracked_repos: Option<BTreeMap<String, Vec<String>>>,
 }
 
 /// État de l'app au démarrage : choisit l'écran de départ.
@@ -411,6 +449,22 @@ mod tests {
     }
 
     #[test]
+    fn tracks_repos_per_plugin() {
+        let mut s = AppSettings::default();
+        let track = |repos: &[&str]| AppSettingsPatch {
+            tracked_repos: Some(BTreeMap::from([(
+                "gestion-projet".to_string(),
+                repos.iter().map(|r| r.to_string()).collect(),
+            )])),
+            ..Default::default()
+        };
+        s.apply(track(&["RemiSDV/cadence", " remisdv/cadence ", "RemiSDV/cadence-plugins.git"])).unwrap();
+        assert_eq!(s.tracked_repos["gestion-projet"], ["RemiSDV/cadence", "RemiSDV/cadence-plugins"]);
+        s.apply(track(&[])).unwrap();
+        assert!(s.tracked_repos.is_empty());
+    }
+
+    #[test]
     fn rejects_invalid_patches_without_writing() {
         let dir = temp_dir("app-settings-invalid");
         let store = AppSettingsStore::load(&dir);
@@ -421,6 +475,11 @@ mod tests {
             ..Default::default()
         };
         assert!(store.try_update(|s| s.apply(bad_key)).is_err());
+        let bad_repo = AppSettingsPatch {
+            tracked_repos: Some(BTreeMap::from([("gestion-projet".to_string(), vec!["pas-un-depot".to_string()])])),
+            ..Default::default()
+        };
+        assert!(store.try_update(|s| s.apply(bad_repo)).is_err());
         assert!(!dir.join("settings.json").exists());
         assert_eq!(store.get(), AppSettings::default());
     }

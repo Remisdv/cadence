@@ -35,4 +35,8 @@ toolPaths: { [key in ToolId]?: string },
 /**
  * Outils optionnels écartés (« Ignorer ») ; les IA, elles, passent par `ai.<id>.enabled`.
  */
-ignoredTools: Array<ToolId>, };
+ignoredTools: Array<ToolId>, 
+/**
+ * Service `repos` : dépôts GitHub suivis (`owner/name`) par plugin.
+ */
+trackedRepos: { [key in string]: Array<string> }, };

@@ -29,6 +29,7 @@ const plugin = (
   description: "",
   secrets: [],
   services: [],
+  setup: [],
   hasSettings: false,
   uiEntry: null,
   enabled: true,
@@ -232,6 +233,7 @@ export const mockAppSettings: AppSettings = {
   devPlugins: ["C:/Users/moi/dev/cadence-plugins/plugins/journal"],
   toolPaths: {},
   ignoredTools: [],
+  trackedRepos: { "gestion-projet": ["cadence-app/desktop"] },
 };
 
 /** Schéma de réglages de Gestion de projet (extrait des réglages de `.cadence/config.toml`). */

@@ -33,7 +33,11 @@ import {
 import { ActivityItem, Em } from "@/components/domain/ActivityItem";
 import { NeutralTile, PluginTile } from "@/components/domain/PluginTile";
 import { SettingsForm } from "@/components/domain/SettingsForm";
-import { mockPlugins, mockSettingsSchema } from "@/lib/ipc/mock/plugins";
+import { mockAppSettings, mockPlugins, mockSettingsSchema } from "@/lib/ipc/mock/plugins";
+import { mockToolsReport } from "@/lib/ipc/mock/tools";
+import { AiCard } from "@/components/domain/AiCard";
+import { CommandBox } from "@/components/domain/CommandBox";
+import { ToolsTable } from "@/components/domain/ToolsTable";
 import { TypeBadge, VersionBadge } from "@/components/domain/Badges";
 import { Burndown } from "@/components/domain/Burndown";
 import { DiffViewer, TextDiff } from "@/components/domain/Diff";
@@ -67,6 +71,36 @@ import { MeterList, StatCard, StatStrip } from "@/components/domain/Stats";
 import { OnboardingSteps, PipelineStages, StepTimeline } from "@/components/domain/Steps";
 import { issueTypes, statusOrder } from "@/lib/domain/issues";
 import { currentVersion, issues } from "@/lib/ipc/mock/fixtures";
+
+/** Machine des maquettes V2-Onboarding-AI / Tools (Git, gh manquant, Codex à connecter…). */
+function ToolsGallery() {
+  const report = mockToolsReport(mockAppSettings, mockPlugins);
+  const tool = (id: string) => report.tools.find((t) => t.id === id)!;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid max-w-[940px] grid-cols-3 gap-4">
+        {(["claude", "codex", "opencode"] as const).map((id) => (
+          <AiCard
+            key={id}
+            tool={tool(id)}
+            node={tool("node")}
+            platform={report.platform}
+            isDefault={id === "claude"}
+            onSetDefault={() => {}}
+          />
+        ))}
+      </div>
+      <CommandBox command="winget install --id GitHub.cli -e" className="max-w-[420px]" />
+      <div className="max-w-[916px]">
+        <ToolsTable
+          tools={report.tools.filter((t) => t.requestedBy.length > 0)}
+          plugins={mockPlugins}
+          platform={report.platform}
+        />
+      </div>
+    </div>
+  );
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -274,6 +308,10 @@ export default function DesignSystemView() {
               toast={{ id: -2, kind: "error", message: "Le serveur du plugin ne répond plus." }}
             />
           </div>
+        </Section>
+
+        <Section title="IA de code et outils (onboarding, Réglages › IA et Outils)">
+          <ToolsGallery />
         </Section>
 
         <Section title={`Icônes (${iconNames.length})`}>

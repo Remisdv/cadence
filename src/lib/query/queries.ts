@@ -84,7 +84,7 @@ function useToolRunMutation<A extends { tool: ToolId; command: string }>(
   return useMutation({
     mutationFn: run,
     onMutate: ({ tool, command }) => {
-      qc.setQueryData<ToolRunLog>(keys.toolRun(tool), startLog(kind, command));
+      qc.setQueryData<ToolRunLog>(keys.toolRun(tool), (prev) => startLog(kind, command, prev));
     },
     onSettled: (result, error, { tool }) => {
       // Le résultat est aussi poussé par `tool://install` ; une erreur de lancement, non.

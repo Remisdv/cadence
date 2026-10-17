@@ -6,6 +6,8 @@ import {
   installable,
   loginUrl,
   pairingCode,
+  recipePackage,
+  runProgress,
   startLog,
   toolStatus,
   toolsSummary,
@@ -104,5 +106,19 @@ describe("registre d'outils", () => {
     ];
     expect(pairingCode(lines)).toBe("A1B2-C3D4");
     expect(loginUrl(lines)).toBe("https://github.com/login/device");
+  });
+});
+
+describe("journal d'installation", () => {
+  it("lit la progression", () => {
+    expect(runProgress(["Téléchargement", "  ████░░  68 %", "Vérification"])).toBe(68);
+    expect(runProgress(["rien"])).toBeNull();
+    expect(runProgress(["  ███░░  9,4 Mo / 13,8 Mo"])).toBe(68);
+  });
+
+  it("nomme le paquet d'une recette", () => {
+    expect(recipePackage("winget install --id GitHub.cli -e --source winget")).toBe("GitHub.cli");
+    expect(recipePackage("npm install -g @openai/codex")).toBe("@openai/codex");
+    expect(recipePackage("pkexec apt-get install -y git")).toBe("git");
   });
 });
