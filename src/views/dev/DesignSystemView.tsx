@@ -59,6 +59,9 @@ import {
   TitledCard,
 } from "@/components/domain/Panels";
 import { SessionConsole } from "@/components/domain/SessionConsole";
+import { ChatThread } from "@/components/domain/ChatThread";
+import { buildThread } from "@/lib/domain/chat";
+import type { AiEvent } from "@/lib/types";
 import { MeterList, StatCard, StatStrip } from "@/components/domain/Stats";
 import { OnboardingSteps, PipelineStages, StepTimeline } from "@/components/domain/Steps";
 import { issueTypes, statusOrder } from "@/lib/domain/issues";
@@ -241,6 +244,21 @@ export default function DesignSystemView() {
           </div>
         </Section>
 
+        <Section title="Fil du chat : bulles, outils, commandes, approbation, erreur">
+          <Card className="p-5">
+            <ChatThread
+              items={buildThread(
+                sampleChat.map((event, i) => ({ seq: i + 1, turn: 1, at: "", event })),
+                { "m2:0": "Je relance les tests après votre accord" },
+              )}
+              ai="Claude Code"
+              model="claude-opus-5"
+              running
+              onApprove={() => {}}
+            />
+          </Card>
+        </Section>
+
         <Section title={`Icônes (${iconNames.length})`}>
           <div className="grid grid-cols-9 gap-2">
             {iconNames.map((name) => (
@@ -398,12 +416,7 @@ export default function DesignSystemView() {
                 ))}
               </Select>
             </Field>
-            <Field
-              label="Description"
-              htmlFor="ds-desc"
-              aside="facultative"
-              className="col-span-2"
-            >
+            <Field label="Description" htmlFor="ds-desc" aside="facultative" className="col-span-2">
               <Textarea id="ds-desc" rows={3} placeholder="Deux lignes suffisent." />
             </Field>
             <SwitchField
@@ -519,7 +532,10 @@ export default function DesignSystemView() {
                   Branche <Em mono>feat/142-github-device-flow</Em> créée, PR #88 ouverte en
                   brouillon.
                 </ActivityItem>
-                <ActivityItem badge={<Avatar initials="MB" size={21} tone="neutral" />} time="il y a 1 h">
+                <ActivityItem
+                  badge={<Avatar initials="MB" size={21} tone="neutral" />}
+                  time="il y a 1 h"
+                >
                   <Em>5 issues créées</Em> pour la version 0.2.0.
                 </ActivityItem>
               </div>
@@ -753,3 +769,43 @@ export default function DesignSystemView() {
     </Page>
   );
 }
+
+/** Fil d'exemple de la galerie (V2-Chat.dc.html). */
+const sampleChat: AiEvent[] = [
+  {
+    type: "user-message",
+    text: "Qu'est-ce que j'ai sur le feu cette semaine ? Je suis absent jeudi.",
+  },
+  {
+    type: "tool-started",
+    call: "t1",
+    source: { kind: "cadence", plugin: "gestion-projet", tool: "lister_issues" },
+    name: "mcp__cadence__gestion-projet__lister_issues",
+    input: { depots: "tous", assignee: "@rlhuillier" },
+  },
+  { type: "tool-completed", call: "t1", ok: true, summary: "7 issues · 3 dépôts", output: null },
+  {
+    type: "tool-started",
+    call: "t2",
+    source: { kind: "cadence", plugin: "documents", tool: "revisions_dues" },
+    name: "mcp__cadence__documents__revisions_dues",
+    input: { jours: 7 },
+  },
+  { type: "tool-completed", call: "t2", ok: false, summary: "Plugin indisponible", output: null },
+  { type: "command", call: "c1", command: "pnpm test", exitCode: 1, output: "1 test en échec" },
+  {
+    type: "message-completed",
+    message: "m1:0",
+    text: "Sans jeudi, il vous reste **4 jours**. Le rendu BDD est vendredi : [ouvrir l'issue](cadence:gestion-projet/issue?number=12).",
+  },
+  { type: "error", kind: "quota", message: "Limite d'utilisation de l'abonnement atteinte." },
+  { type: "turn-completed", ok: true, interrupted: false, error: null, durationMs: 12_400 },
+  { type: "user-message", text: "Relance les tests." },
+  {
+    type: "approval-requested",
+    request: "p1",
+    kind: "command",
+    title: "Bash : pnpm test",
+    detail: { command: "pnpm test" },
+  },
+];

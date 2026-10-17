@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { AiEvent, ChatEventRow } from "@/lib/types";
-import { buildThread, toolLabel } from "./chat";
+import {
+  buildThread,
+  compactArgs,
+  conversationGroup,
+  formatDuration,
+  groupTurns,
+  originPlugin,
+  parseCadenceLink,
+  toolLabel,
+} from "./chat";
 
 const rows = (events: AiEvent[]): ChatEventRow[] =>
   events.map((event, i) => ({ seq: i + 1, turn: 1, at: "2026-10-16T12:00:00Z", event }));
@@ -75,5 +84,45 @@ describe("buildThread", () => {
       exitCode: 1,
       output: "échec",
     });
+  });
+});
+
+describe("aides du chat", () => {
+  it("groupe les tours derrière chaque message", () => {
+    const turns = groupTurns(
+      buildThread(
+        rows([
+          { type: "user-message", text: "a" },
+          { type: "message-completed", message: "m:0", text: "b" },
+          { type: "user-message", text: "c" },
+        ]),
+      ),
+    );
+    expect(turns.map((t) => [t.user?.text, t.reply.length])).toEqual([
+      ["a", 1],
+      ["c", 0],
+    ]);
+  });
+
+  it("formate durées, arguments et liens cadence:", () => {
+    expect(formatDuration(12_300)).toBe("12 s");
+    expect(formatDuration(128_000)).toBe("2 min 08 s");
+    expect(compactArgs({ depots: "tous", n: 3 })).toBe("depots=tous n=3");
+    expect(parseCadenceLink("cadence:documents/document?doc=01J&page=12")).toEqual({
+      plugin: "documents",
+      view: "document",
+      params: { doc: "01J", page: "12" },
+    });
+    expect(parseCadenceLink("https://example.org")).toBeNull();
+    expect(originPlugin("action:gestion-projet/preparer-issue")).toBe("gestion-projet");
+    expect(originPlugin("user")).toBeNull();
+  });
+
+  it("range les conversations par jour", () => {
+    const now = new Date(2026, 9, 17, 12, 0);
+    expect(conversationGroup(new Date(2026, 9, 17, 9).toISOString(), now)).toBe("Aujourd'hui");
+    expect(conversationGroup(new Date(2026, 9, 16, 23).toISOString(), now)).toBe("Hier");
+    expect(conversationGroup(new Date(2026, 9, 13).toISOString(), now)).toBe("Cette semaine");
+    expect(conversationGroup(new Date(2026, 8, 1).toISOString(), now)).toBe("Plus ancien");
   });
 });

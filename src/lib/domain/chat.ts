@@ -204,3 +204,75 @@ export function buildThread(
 export function toolLabel(item: Extract<ChatItem, { kind: "tool" }>): string {
   return item.source.kind === "cadence" ? `${item.source.plugin} › ${item.source.tool}` : item.name;
 }
+
+/** Un tour affiché : le message de l'utilisateur, puis tout ce que l'IA a produit. */
+export interface ChatTurn {
+  key: string;
+  user: Extract<ChatItem, { kind: "user" }> | null;
+  reply: ChatItem[];
+}
+
+export function groupTurns(items: ChatItem[]): ChatTurn[] {
+  const turns: ChatTurn[] = [];
+  for (const item of items) {
+    if (item.kind === "user") turns.push({ key: item.key, user: item, reply: [] });
+    else if (turns.length === 0) turns.push({ key: item.key, user: null, reply: [item] });
+    else turns.at(-1)!.reply.push(item);
+  }
+  return turns;
+}
+
+/** `12 s`, `2 min 08 s`. */
+export function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} s`;
+  return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+}
+
+/** Arguments d'un outil sur une ligne : `dépôts=tous assignée=@moi`. */
+export function compactArgs(input: unknown): string {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return "";
+  return Object.entries(input as Record<string, unknown>)
+    .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
+    .join(" ");
+}
+
+/** Lien `cadence:<plugin>/<vue>?<paramètres>` (plan § 3.4) ; `null` pour un autre lien. */
+export function parseCadenceLink(
+  href: string,
+): { plugin: string; view: string; params: Record<string, string> } | null {
+  const m = /^cadence:([a-z0-9-]+)\/([a-z0-9-]+)(?:\?(.*))?$/.exec(href.trim());
+  if (!m) return null;
+  return {
+    plugin: m[1]!,
+    view: m[2]!,
+    params: Object.fromEntries(new URLSearchParams(m[3] ?? "")),
+  };
+}
+
+const DAY = 86_400_000;
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+/** Groupe de la colonne des conversations. */
+export function conversationGroup(iso: string, now = new Date()): string {
+  const days = Math.floor((startOfDay(now) - startOfDay(new Date(iso))) / DAY);
+  if (days <= 0) return "Aujourd'hui";
+  if (days === 1) return "Hier";
+  if (days < 7) return "Cette semaine";
+  return "Plus ancien";
+}
+
+/** Heure aujourd'hui (`11:20`), jour cette semaine (`mar.`), date sinon (`3 oct.`). */
+export function conversationTime(iso: string, now = new Date()): string {
+  const date = new Date(iso);
+  const group = conversationGroup(iso, now);
+  if (group === "Aujourd'hui" || group === "Hier")
+    return date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  if (group === "Cette semaine") return date.toLocaleDateString("fr-FR", { weekday: "short" });
+  return date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+}
+
+/** Plugin d'origine d'une conversation ouverte par une action (`action:<plugin>/<action>`). */
+export function originPlugin(origin: string): string | null {
+  return /^action:([a-z0-9-]+)\//.exec(origin)?.[1] ?? null;
+}
