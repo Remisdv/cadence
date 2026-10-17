@@ -60,6 +60,7 @@ import {
 } from "@/components/domain/Panels";
 import { SessionConsole } from "@/components/domain/SessionConsole";
 import { ChatThread } from "@/components/domain/ChatThread";
+import { ToastCard } from "@/components/ui/Toaster";
 import { buildThread } from "@/lib/domain/chat";
 import type { AiEvent } from "@/lib/types";
 import { MeterList, StatCard, StatStrip } from "@/components/domain/Stats";
@@ -257,6 +258,22 @@ export default function DesignSystemView() {
               onApprove={() => {}}
             />
           </Card>
+        </Section>
+
+        <Section title="Toasts (cadence.notify, messages du shell)">
+          <div className="flex max-w-[360px] flex-col gap-2">
+            <ToastCard
+              toast={{
+                id: -1,
+                kind: "success",
+                message: "Bonjour depuis le plugin Exemple",
+                source: "Exemple",
+              }}
+            />
+            <ToastCard
+              toast={{ id: -2, kind: "error", message: "Le serveur du plugin ne répond plus." }}
+            />
+          </div>
         </Section>
 
         <Section title={`Icônes (${iconNames.length})`}>

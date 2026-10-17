@@ -1,0 +1,179 @@
+/**
+ * Pont entre le shell et l'iframe d'un plugin (plan § 3.3).
+ *
+ * - Un message n'est accepté que s'il vient de l'iframe que le shell a créée pour ce plugin
+ *   (`event.source`) : l'identité du plugin vient de l'iframe, jamais du message.
+ * - Les réponses partent vers cette fenêtre précise (`postMessage(msg, "*")`, origine opaque).
+ * - `tools.call` ne vise que les outils du plugin lui-même : un nom préfixé est refusé.
+ *
+ * Le pont ne touche ni au DOM ni à l'IPC : tout passe par `HostApi`, ce qui le rend testable
+ * sans navigateur.
+ */
+import type { PluginSettingsView, PluginToolResult } from "@/lib/types";
+import { CommandError } from "@/lib/ipc/errors";
+import {
+  BridgeError,
+  PROTOCOL_VERSION,
+  asRequest,
+  codeOfKind,
+  type Envelope,
+  type HelloResult,
+  type SdkError,
+} from "./protocol";
+
+/** Fenêtre de l'iframe (son `contentWindow`). */
+export interface FrameTarget {
+  postMessage(message: unknown, targetOrigin: string): void;
+}
+
+export type NotifyKind = "info" | "success" | "warning" | "error";
+
+/** Ce que l'hôte sait faire pour un plugin (déjà lié à ce plugin). */
+export interface HostApi {
+  call(tool: string, args: Record<string, unknown> | null): Promise<PluginToolResult>;
+  navigate(view: string, params: Record<string, string>): void;
+  notify(message: string, kind: NotifyKind): void;
+  openExternal(url: string): void;
+  shortcut(key: string): void;
+  settingsGet(): Promise<PluginSettingsView>;
+  settingsSet(value: Record<string, unknown>): Promise<PluginSettingsView>;
+  secretSet(id: string, value: string): Promise<void>;
+  secretHas(id: string): Promise<boolean>;
+  storageGet(key: string): unknown;
+  storageSet(key: string, value: unknown): void;
+}
+
+export interface BridgeOptions {
+  frame: FrameTarget;
+  api: HostApi;
+  /** Réponse à `hello`, lue au moment de la poignée de main (route et thème à jour). */
+  hello: () => Omit<HelloResult, "methods">;
+}
+
+/** Message tel que reçu par `window.addEventListener("message")`. */
+export interface IncomingMessage {
+  source: unknown;
+  data: unknown;
+}
+
+const TOOL_NAME = /^[a-z0-9_]{1,40}$/;
+
+const object = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+function text(params: Record<string, unknown>, key: string): string {
+  const value = params[key];
+  if (typeof value !== "string" || !value.trim())
+    throw new BridgeError("invalid_params", `« ${key} » est obligatoire.`);
+  return value;
+}
+
+/** Résultat d'outil tel que le SDK le rend : `structuredContent`, sinon le texte (JSON si possible). */
+export function toolValue(result: PluginToolResult): unknown {
+  if (result.structured !== null && result.structured !== undefined) return result.structured;
+  try {
+    return JSON.parse(result.text);
+  } catch {
+    return result.text;
+  }
+}
+
+type Handler = (params: Record<string, unknown>) => unknown;
+
+export function createBridge({ frame, api, hello }: BridgeOptions) {
+  const handlers: Record<string, Handler> = {
+    hello: () => ({ ...hello(), methods: Object.keys(handlers) }),
+    "tools.call": async (params) => {
+      const tool = text(params, "tool");
+      if (tool.includes("__"))
+        throw new BridgeError(
+          "invalid_params",
+          "Un plugin n'appelle que ses propres outils : donnez le nom sans préfixe.",
+        );
+      if (!TOOL_NAME.test(tool))
+        throw new BridgeError("invalid_params", `« ${tool} » n'est pas un nom d'outil.`);
+      const args = params.args === undefined || params.args === null ? null : object(params.args);
+      const result = await api.call(tool, args);
+      if (result.isError)
+        throw new BridgeError("tool_error", result.text || "L'outil a échoué.", result.structured);
+      return toolValue(result);
+    },
+    "nav.go": (params) => {
+      const raw = object(params.params);
+      const view = text(params, "view");
+      api.navigate(view, Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v)])));
+      return null;
+    },
+    "ui.notify": (params) => {
+      const kinds: NotifyKind[] = ["info", "success", "warning", "error"];
+      const kind = kinds.includes(params.kind as NotifyKind) ? (params.kind as NotifyKind) : "info";
+      api.notify(text(params, "message"), kind);
+      return null;
+    },
+    "ui.open": (params) => {
+      const url = text(params, "url");
+      if (!/^(https?:\/\/|mailto:)/i.test(url))
+        throw new BridgeError("invalid_params", "Seuls les liens http(s) et mailto s'ouvrent.");
+      api.openExternal(url);
+      return null;
+    },
+    "ui.shortcut": (params) => {
+      api.shortcut(text(params, "key"));
+      return null;
+    },
+    "settings.get": () => api.settingsGet(),
+    "settings.set": async (params) => {
+      const current = await api.settingsGet();
+      return api.settingsSet({ ...current.value, ...object(params.patch) });
+    },
+    "secrets.set": async (params) => {
+      await api.secretSet(text(params, "id"), text(params, "value"));
+      return null;
+    },
+    "secrets.has": (params) => api.secretHas(text(params, "id")),
+    "storage.get": (params) => api.storageGet(text(params, "key")) ?? null,
+    "storage.set": (params) => {
+      api.storageSet(text(params, "key"), params.value ?? null);
+      return null;
+    },
+  };
+
+  const post = (message: Envelope) => frame.postMessage(message, "*");
+
+  /** Traite un message ; `false` s'il ne vient pas de l'iframe de ce plugin. */
+  async function handle(message: IncomingMessage): Promise<boolean> {
+    if (message.source !== frame) return false;
+    const request = asRequest(message.data);
+    if (!request) return true;
+    const handler = handlers[request.method];
+    try {
+      if (!handler)
+        throw new BridgeError(
+          "method_not_found",
+          `Méthode « ${request.method} » inconnue de cet hôte.`,
+        );
+      const result = await handler(object(request.params));
+      post({ cadence: PROTOCOL_VERSION, kind: "res", id: request.id, result: result ?? null });
+    } catch (err) {
+      post({ cadence: PROTOCOL_VERSION, kind: "res", id: request.id, error: toSdkError(err) });
+    }
+    return true;
+  }
+
+  /** Événement vers l'iframe (`route`, `theme`, événements du serveur du plugin). */
+  function emit(event: string, data?: unknown) {
+    post({ cadence: PROTOCOL_VERSION, kind: "evt", event, data });
+  }
+
+  return { handle, emit, methods: () => Object.keys(handlers) };
+}
+
+export type Bridge = ReturnType<typeof createBridge>;
+
+function toSdkError(err: unknown): SdkError {
+  if (err instanceof BridgeError) return { code: err.code, message: err.message, data: err.data };
+  if (err instanceof CommandError) return { code: codeOfKind(err.kind), message: err.message };
+  return { code: "internal", message: err instanceof Error ? err.message : String(err) };
+}

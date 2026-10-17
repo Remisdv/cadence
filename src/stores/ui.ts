@@ -1,8 +1,18 @@
-/** État d'interface transverse : modales globales, palette, bandeau de quota. */
+/** État d'interface transverse : modales globales, palette, bandeau de quota, toasts. */
 import { create } from "zustand";
 import type { RateLimitInfo } from "@/lib/types";
 
 export type GlobalDialog = "issue-create" | "version-close" | null;
+
+export type ToastKind = "info" | "success" | "warning" | "error";
+
+export interface Toast {
+  id: number;
+  message: string;
+  kind: ToastKind;
+  /** Qui l'a émis (nom d'un plugin), affiché en petit. */
+  source?: string;
+}
 
 interface UiState {
   dialog: GlobalDialog;
@@ -18,7 +28,13 @@ interface UiState {
 
   rateLimit: RateLimitInfo | null;
   setRateLimit: (info: RateLimitInfo) => void;
+
+  toasts: Toast[];
+  pushToast: (toast: Omit<Toast, "id">) => void;
+  dismissToast: (id: number) => void;
 }
+
+let nextToast = 1;
 
 export const useUiStore = create<UiState>((set) => ({
   dialog: null,
@@ -33,4 +49,10 @@ export const useUiStore = create<UiState>((set) => ({
 
   rateLimit: null,
   setRateLimit: (rateLimit) => set({ rateLimit }),
+
+  // Quatre toasts au plus : les plus anciens partent.
+  toasts: [],
+  pushToast: (toast) =>
+    set((s) => ({ toasts: [...s.toasts, { ...toast, id: nextToast++ }].slice(-4) })),
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
