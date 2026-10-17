@@ -8,7 +8,8 @@
 //! - `ui_only` : marqué `_meta["cadence/visibility"] = "ui"` ;
 //! - `env` : variables `CADENCE_*` reçues, dossier courant, fuite éventuelle de jetons d'IA ;
 //! - `grow` : ajoute l'outil `extra` et envoie `notifications/tools/list_changed` ;
-//! - `fail` : répond par une erreur MCP.
+//! - `fail` : répond par une erreur MCP ;
+//! - `emit` : envoie `notifications/cadence/event` (`event`, `data` repris des arguments).
 //!
 //! Arguments : `--crash-on-start` (quitte avant `initialize`), `--hang-on-start` (ne répond
 //! jamais). Écrit « fake-plugin prêt » sur stderr au démarrage.
@@ -24,8 +25,8 @@ use std::{
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, JsonObject, ListToolsResult, MetaObject,
-        PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, CustomNotification, JsonObject,
+        ListToolsResult, MetaObject, PaginatedRequestParams, ServerCapabilities, ServerConfig, ServerNotification, Tool,
     },
     service::RequestContext,
 };
@@ -72,6 +73,7 @@ impl ServerHandler for Fake {
             tool("env", "Variables d'environnement reçues.", json!({})),
             tool("grow", "Ajoute l'outil `extra`.", json!({})),
             tool("fail", "Répond par une erreur.", json!({})),
+            tool("emit", "Envoie un événement aux iframes du plugin.", json!({ "event": { "type": "string" } })),
         ];
         if self.grown.load(Ordering::SeqCst) {
             tools.push(tool("extra", "Ajouté par `grow`.", json!({})));
@@ -116,6 +118,12 @@ impl ServerHandler for Fake {
                 Ok(ok(json!({ "grown": true })))
             }
             "fail" => Err(ErrorData::invalid_params("échec demandé", None)),
+            "emit" => {
+                let params = json!({ "event": args.get("event").cloned().unwrap_or(json!("sync.updated")), "data": args.get("data") });
+                let notification = CustomNotification::new("notifications/cadence/event", Some(params));
+                let _ = context.peer.send_notification(ServerNotification::CustomNotification(notification)).await;
+                Ok(ok(json!({ "emitted": true })))
+            }
             other => Err(ErrorData::invalid_params(format!("outil inconnu : {other}"), None)),
         }
     }

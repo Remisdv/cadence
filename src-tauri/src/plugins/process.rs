@@ -583,8 +583,20 @@ impl ClientHandler for Handler {
     }
 
     async fn on_custom_notification(&self, notification: CustomNotification, _context: NotificationContext<RoleClient>) {
-        // `notifications/cadence/event` sera relayé aux iframes du plugin (étape « hôte d'iframe »).
-        tracing::debug!(method = notification.method, "notification de plugin");
+        if notification.method != "notifications/cadence/event" {
+            tracing::debug!(method = notification.method, "notification de plugin ignorée");
+            return;
+        }
+        let Some(process) = self.process.upgrade() else { return };
+        let params = notification.params.unwrap_or_default();
+        let Some(event) = params.get("event").and_then(|e| e.as_str()) else { return };
+        if let Some(events) = &process.shared.events {
+            events(super::host::PluginEventPayload {
+                plugin: process.id.clone(),
+                event: event.to_string(),
+                data: params.get("data").cloned(),
+            });
+        }
     }
 }
 

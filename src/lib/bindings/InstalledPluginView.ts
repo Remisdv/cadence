@@ -14,7 +14,11 @@ export type InstalledPluginView = { id: string, name: string, version: string, d
 /**
  * Icône du kit pour la tuile du rail.
  */
-railIcon: string, views: Array<PluginViewInfo>, secrets: Array<PluginSecretInfo>, services: Array<PluginService>, hasSettings: boolean, enabled: boolean, source: PluginSource, status: PluginStatus, 
+railIcon: string, views: Array<PluginViewInfo>, secrets: Array<PluginSecretInfo>, services: Array<PluginService>, hasSettings: boolean, 
+/**
+ * Page de l'interface sous `ui/` ; `None` = plugin sans interface.
+ */
+uiEntry: string | null, enabled: boolean, source: PluginSource, status: PluginStatus, 
 /**
  * Erreur du manifeste (statut `invalid`), ou avertissements en mode dev.
  */

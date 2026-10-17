@@ -92,6 +92,8 @@ pub struct InstalledPluginView {
     pub secrets: Vec<PluginSecretInfo>,
     pub services: Vec<PluginService>,
     pub has_settings: bool,
+    /// Page de l'interface sous `ui/` ; `None` = plugin sans interface.
+    pub ui_entry: Option<String>,
     pub enabled: bool,
     pub source: PluginSource,
     pub status: PluginStatus,
@@ -233,6 +235,7 @@ impl PluginRegistry {
                 InstalledPluginView {
                     rail_icon: m.rail_icon(),
                     has_settings: m.settings_schema.is_some(),
+                    ui_entry: m.ui_entry,
                     id: m.id,
                     name: m.name,
                     version: m.version,
@@ -260,6 +263,7 @@ impl PluginRegistry {
                 secrets: vec![],
                 services: vec![],
                 has_settings: false,
+                ui_entry: None,
                 enabled: entry.enabled,
                 source: entry.source,
                 status: PluginStatus::Invalid,

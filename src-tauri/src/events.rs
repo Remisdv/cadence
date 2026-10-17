@@ -28,6 +28,8 @@ pub const RUN_REPORT: &str = "run://report";
 pub const CHAT_EVENT: &str = "chat://event";
 /// `ChatStatePayload` : état d'une conversation.
 pub const CHAT_STATE: &str = "chat://state";
+/// `PluginEventPayload` : notification `notifications/cadence/event` d'un serveur de plugin.
+pub const PLUGIN_EVENT: &str = "plugin://event";
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

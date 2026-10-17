@@ -14,7 +14,7 @@ use cadence_lib::{
     error::AppError,
     plugins::{
         env::{LaunchSpec, server_env},
-        host::{HostConfig, PluginHost, run_idle_reaper},
+        host::{HostConfig, PluginEventPayload, PluginHost, run_idle_reaper},
         process::{PluginProcessView, PluginStateEvent, ProcessState},
     },
 };
@@ -43,6 +43,7 @@ fn fake_plugin() -> PathBuf {
 struct Fixture {
     host: Arc<PluginHost>,
     events: Arc<Mutex<Vec<PluginStateEvent>>>,
+    notices: Arc<Mutex<Vec<PluginEventPayload>>>,
     dir: PathBuf,
 }
 
@@ -80,8 +81,13 @@ impl Fixture {
         config.grace = ms(1000);
         config.start_timeout = Duration::from_secs(15);
         tweak(&mut config);
-        let host = Arc::new(PluginHost::new(config, resolve, Arc::new(move |e| sink.lock().unwrap().push(e))));
-        Self { host, events, dir }
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let relay = notices.clone();
+        let host = Arc::new(
+            PluginHost::new(config, resolve, Arc::new(move |e| sink.lock().unwrap().push(e)))
+                .with_plugin_events(Arc::new(move |e| relay.lock().unwrap().push(e))),
+        );
+        Self { host, events, notices, dir }
     }
 
     fn status(&self) -> PluginProcessView {
@@ -119,12 +125,12 @@ async fn starts_on_demand_calls_in_parallel_and_stops() {
 
     let tools = f.host.tools(PLUGIN).await.unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
-    assert_eq!(names, ["echo", "slow", "crash", "ui_only", "env", "grow", "fail"]);
+    assert_eq!(names, ["echo", "slow", "crash", "ui_only", "env", "grow", "fail", "emit"]);
     let ui_only = tools.iter().find(|t| t.name == "ui_only").unwrap();
     assert_eq!(ui_only.meta.as_ref().unwrap().0.get("cadence/visibility"), Some(&json!("ui")));
 
     let status = f.status();
-    assert_eq!((status.state, status.tools), (ProcessState::Ready, 7));
+    assert_eq!((status.state, status.tools), (ProcessState::Ready, 8));
     assert!(status.pid.is_some());
     assert_eq!(f.call("echo", json!({ "text": "bonjour" })).await.unwrap(), json!({ "echo": { "text": "bonjour" } }));
 
@@ -240,11 +246,25 @@ async fn stops_idle_servers_but_not_busy_ones() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn relays_plugin_events() {
+    let f = Fixture::new("events", &[], None, |_| {});
+    f.call("emit", json!({ "event": "sync.updated", "data": { "ids": [12] } })).await.unwrap();
+    let start = Instant::now();
+    while f.notices.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(ms(20)).await;
+    }
+    let notices = f.notices.lock().unwrap().clone();
+    let expected = PluginEventPayload { plugin: PLUGIN.into(), event: "sync.updated".into(), data: Some(json!({ "ids": [12] })) };
+    assert_eq!(notices, [expected]);
+    f.host.stop_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn rereads_tools_on_list_changed() {
     let f = Fixture::new("list-changed", &[], None, |_| {});
-    assert_eq!(f.host.tools(PLUGIN).await.unwrap().len(), 7);
+    assert_eq!(f.host.tools(PLUGIN).await.unwrap().len(), 8);
     f.call("grow", json!({})).await.unwrap();
-    f.wait("outil ajouté", |s| s.tools == 8).await;
+    f.wait("outil ajouté", |s| s.tools == 9).await;
     let tools = f.host.tools(PLUGIN).await.unwrap();
     assert!(tools.iter().any(|t| t.name == "extra"));
     assert_eq!(f.call("extra", json!({})).await.unwrap(), json!({ "ok": true }));

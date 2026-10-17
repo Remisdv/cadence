@@ -30,6 +30,7 @@ const plugin = (
   secrets: [],
   services: [],
   hasSettings: false,
+  uiEntry: null,
   enabled: true,
   source: "catalog",
   status: "ok",
@@ -119,6 +120,20 @@ export const mockPlugins: InstalledPluginView[] = [
     ],
   }),
   plugin({
+    id: "exemple",
+    name: "Exemple",
+    description: "Plugin de démonstration du SDK : vues, outils, événements, réglages.",
+    category: "outils",
+    color: "clay",
+    railIcon: "grid",
+    uiEntry: "index.html",
+    source: "dev",
+    views: [
+      view("accueil", "Accueil", "grid", null, { home: true }),
+      view("outils", "Outils", "wrench", null),
+    ],
+  }),
+  plugin({
     id: "minuteur",
     name: "Minuteur",
     description: "Sessions de travail minutées.",
@@ -190,6 +205,15 @@ export function mockProcesses(crashed: boolean): PluginProcessView[] {
       tools: 0,
       message: null,
       logPath: null,
+    },
+    {
+      plugin: "exemple",
+      state: "ready",
+      pid: 6001,
+      restarts: 0,
+      tools: 4,
+      message: null,
+      logPath: log("exemple"),
     },
   ];
 }

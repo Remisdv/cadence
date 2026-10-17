@@ -119,6 +119,7 @@ async fn exposes_plugin_and_core_tools_to_an_authorized_session() {
             "cadence__run_report",
             "fake__crash",
             "fake__echo",
+            "fake__emit",
             "fake__env",
             "fake__fail",
             "fake__grow",

@@ -36,6 +36,8 @@ export type { PluginStateEvent } from "./bindings/PluginStateEvent";
 export type { PluginProcessView } from "./bindings/PluginProcessView";
 export type { InstallPhase } from "./bindings/InstallPhase";
 export type { PluginInstallEvent } from "./bindings/PluginInstallEvent";
+export type { PluginToolResult } from "./bindings/PluginToolResult";
+export type { PluginEventPayload } from "./bindings/PluginEventPayload";
 export type { OpenViewRequest } from "./bindings/OpenViewRequest";
 export type { RunReport } from "./bindings/RunReport";
 

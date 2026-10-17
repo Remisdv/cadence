@@ -7,8 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use secrecy::ExposeSecret;
+use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, State};
+use ts_rs::TS;
 
 use crate::{
     error::{AppError, AppResult},
@@ -197,6 +199,49 @@ pub fn plugin_status(state: State<'_, AppState>) -> Vec<PluginProcessView> {
         .filter(|id| state.plugins.manifest(id).is_ok_and(|m| m.server.is_some()))
         .map(|id| state.plugin_host.status(&id))
         .collect()
+}
+
+/// Résultat d'un appel d'outil par l'interface d'un plugin (pont de l'iframe).
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginToolResult {
+    /// L'outil a répondu par une erreur (`isError`).
+    pub is_error: bool,
+    /// `structuredContent`, s'il y en a un.
+    #[ts(type = "unknown")]
+    pub structured: Option<Value>,
+    /// Texte des blocs `text` du résultat, mis bout à bout.
+    pub text: String,
+}
+
+/// Appelle un outil du plugin pour son interface (outils `ui` compris). Le nom est celui du
+/// serveur, sans préfixe : l'iframe ne peut viser que son propre plugin.
+#[tauri::command]
+pub async fn plugin_call(
+    state: State<'_, AppState>,
+    plugin: String,
+    tool: String,
+    args: Option<Value>,
+) -> AppResult<PluginToolResult> {
+    if !state.plugins.entry(&plugin)?.enabled {
+        return Err(AppError::Validation(format!("Le plugin « {plugin} » est désactivé.")));
+    }
+    let args = match args {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(map)) => Some(map),
+        Some(_) => return Err(AppError::Validation("Les arguments d'un outil doivent être un objet.".into())),
+    };
+    let result = state.plugin_host.call(&plugin, &tool, args).await?;
+    let content = serde_json::to_value(&result.content).unwrap_or_default();
+    let text = content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(PluginToolResult { is_error: result.is_error.unwrap_or(false), structured: result.structured_content, text })
 }
 
 /// Relance le serveur d'un plugin activé, même après un échec, et attend qu'il soit prêt.

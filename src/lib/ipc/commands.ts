@@ -27,6 +27,7 @@ import type {
   PrDetail,
   PrRow,
   PluginProcessView,
+  PluginToolResult,
   PluginSettingsView,
   ProjectState,
   Repo,
@@ -72,6 +73,11 @@ export interface Commands {
   /** Serveurs MCP des plugins installés qui en déclarent un ; changements par `plugin://state`. */
   plugin_status: { args: NoArgs; result: PluginProcessView[] };
   plugin_restart: { args: { plugin: string }; result: null };
+  /** Pont de l'iframe : outil du plugin (outils `ui` compris), nom sans préfixe. */
+  plugin_call: {
+    args: { plugin: string; tool: string; args: Record<string, unknown> | null };
+    result: PluginToolResult;
+  };
   // Chat du cœur (réponses par `chat://event` et `chat://state`)
   chat_sessions: { args: NoArgs; result: ChatSessionRow[] };
   chat_session_get: { args: { id: string }; result: ChatSessionDetail };

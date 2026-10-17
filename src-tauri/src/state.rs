@@ -23,7 +23,7 @@ use crate::{
     gateway::server::Gateway,
     plugins::{
         env::{self, HostPaths},
-        host::{HostConfig, PluginHost, StateSink},
+        host::{HostConfig, PluginEventSink, PluginHost, StateSink},
         registry::PluginRegistry,
         settings::PluginSettingsStore,
     },
@@ -89,6 +89,7 @@ impl AppState {
         secrets: Arc<dyn SecretStore>,
         tokens: Arc<dyn TokenStore>,
         plugin_events: StateSink,
+        plugin_notifications: PluginEventSink,
     ) -> Self {
         let AppPaths { config_dir, data_dir, cache_dir, log_dir } = paths;
         let plugins = Arc::new(PluginRegistry::load(data_dir.join("plugins"), app_version));
@@ -98,7 +99,9 @@ impl AppState {
             let (plugins, plugin_settings, secrets) = (plugins.clone(), plugin_settings.clone(), secrets.clone());
             Arc::new(move |plugin: &str| env::launch_spec(&plugins, &plugin_settings, secrets.as_ref(), &host_paths, plugin))
         };
-        let plugin_host = Arc::new(PluginHost::new(HostConfig::new(app_version), resolve, plugin_events));
+        let plugin_host = Arc::new(
+            PluginHost::new(HostConfig::new(app_version), resolve, plugin_events).with_plugin_events(plugin_notifications),
+        );
         Self {
             project: RwLock::default(),
             http: github::http_client(),

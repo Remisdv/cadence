@@ -25,6 +25,19 @@ use crate::error::AppResult;
 pub type Resolver = Arc<dyn Fn(&str) -> AppResult<LaunchSpec> + Send + Sync>;
 /// Reçoit chaque changement d'état d'un serveur.
 pub type StateSink = Arc<dyn Fn(PluginStateEvent) + Send + Sync>;
+/// Reçoit les `notifications/cadence/event` des serveurs (relayées aux iframes du plugin).
+pub type PluginEventSink = Arc<dyn Fn(PluginEventPayload) + Send + Sync>;
+
+/// Charge de `plugin://event` : notification `notifications/cadence/event` d'un serveur.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginEventPayload {
+    pub plugin: String,
+    pub event: String,
+    #[ts(type = "unknown")]
+    pub data: Option<serde_json::Value>,
+}
 
 /// Délais de l'hôte (valeurs du plan par défaut ; raccourcis dans les tests).
 #[derive(Debug, Clone)]
@@ -63,6 +76,7 @@ pub(crate) struct Shared {
     pub(crate) config: HostConfig,
     pub(crate) resolve: Resolver,
     pub(crate) sink: StateSink,
+    pub(crate) events: Option<PluginEventSink>,
 }
 
 pub struct PluginHost {
@@ -72,7 +86,15 @@ pub struct PluginHost {
 
 impl PluginHost {
     pub fn new(config: HostConfig, resolve: Resolver, sink: StateSink) -> Self {
-        Self { shared: Arc::new(Shared { config, resolve, sink }), processes: Mutex::default() }
+        Self { shared: Arc::new(Shared { config, resolve, sink, events: None }), processes: Mutex::default() }
+    }
+
+    /// Relaie les `notifications/cadence/event` des serveurs (à appeler avant tout lancement).
+    pub fn with_plugin_events(mut self, events: PluginEventSink) -> Self {
+        if let Some(shared) = Arc::get_mut(&mut self.shared) {
+            shared.events = Some(events);
+        }
+        self
     }
 
     pub fn config(&self) -> &HostConfig {

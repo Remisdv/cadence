@@ -11,7 +11,7 @@ describe("railGroups", () => {
     expect(groups.map((g) => g.label)).toEqual(["Projet", "Études", "Données", "Outils"]);
     // Ordre reçu gardé dans la catégorie ; le minuteur désactivé n'apparaît pas.
     expect(groups[1]!.plugins.map((p) => p.id)).toEqual(["bibliographie", "documents"]);
-    expect(groups[3]!.plugins.map((p) => p.id)).toEqual(["journal"]);
+    expect(groups[3]!.plugins.map((p) => p.id)).toEqual(["exemple", "journal"]);
   });
 
   it("écarte un plugin invalide et n'affiche pas de catégorie vide", () => {
@@ -51,6 +51,7 @@ describe("moveInRail", () => {
       "documents",
       "explorateur-sql",
       "journal",
+      "exemple",
       "minuteur",
     ]);
     expect(moveInRail(mockPlugins, "documents", -1)).toBeNull();

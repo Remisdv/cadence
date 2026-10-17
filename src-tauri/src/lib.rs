@@ -21,6 +21,7 @@ pub mod events;
 pub mod gateway;
 pub mod plugins;
 pub mod project_config;
+pub mod protocol;
 pub mod secrets;
 pub mod state;
 pub mod store;
@@ -47,6 +48,14 @@ pub fn run() {
         // le front (Réglages › À propos) ; `process` sert au redémarrage qui suit.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Fichiers `ui/` des plugins, servis à leur iframe (plan § 2.7).
+        .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let state = app.state::<state::AppState>();
+                responder.respond(protocol::respond(&state.plugins, &request));
+            });
+        })
         .setup(|app| {
             let paths = state::AppPaths {
                 config_dir: app.path().app_config_dir()?,
@@ -60,7 +69,10 @@ pub fn run() {
             let handle = app.handle().clone();
             let plugin_events: plugins::host::StateSink =
                 Arc::new(move |event| events::emit(&handle, events::PLUGIN_STATE, event));
-            let mut state = state::AppState::new(paths, &version, secrets, tokens, plugin_events);
+            let handle = app.handle().clone();
+            let plugin_notifications: plugins::host::PluginEventSink =
+                Arc::new(move |event| events::emit(&handle, events::PLUGIN_EVENT, event));
+            let mut state = state::AppState::new(paths, &version, secrets, tokens, plugin_events, plugin_notifications);
             tauri::async_runtime::spawn(plugins::host::run_idle_reaper(Arc::downgrade(&state.plugin_host)));
 
             // Passerelle MCP des IA, sur un port libre de 127.0.0.1.
@@ -144,6 +156,7 @@ pub fn run() {
             commands::plugins::plugin_uninstall,
             commands::plugins::plugin_status,
             commands::plugins::plugin_restart,
+            commands::plugins::plugin_call,
             commands::chat::chat_sessions,
             commands::chat::chat_session_get,
             commands::chat::chat_send,

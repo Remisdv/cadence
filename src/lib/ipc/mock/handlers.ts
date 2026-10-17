@@ -17,6 +17,7 @@ import type {
   CliAgentInfo,
   InstalledPluginView,
   IssueRow,
+  PluginEventPayload,
   PluginInstallEvent,
   PluginProcessView,
   PluginStateEvent,
@@ -65,6 +66,7 @@ const state = {
   secrets: new Set<string>(),
   processes: mockProcesses(scenario === "plugin-crash"),
   chats: mockChats(scenario !== "app"),
+  counter: 0,
 };
 let flowTimer: number | undefined;
 
@@ -316,6 +318,39 @@ const handlers: Handlers = {
   chat_session_delete: ({ id }) => {
     if (!state.chats.delete(id)) fail("chat_session_delete", `Conversation « ${id} » introuvable.`);
     return null;
+  },
+  plugin_call: ({ plugin, tool, args }) => {
+    if (!installed("plugin_call", plugin).enabled)
+      fail("plugin_call", `Le plugin « ${plugin} » est désactivé.`);
+    if (plugin !== "exemple")
+      fail("plugin_call", `Le plugin « ${plugin} » n'a pas de serveur en mode mock.`);
+    const result = (structured: unknown) => ({
+      isError: false,
+      structured,
+      text: JSON.stringify(structured),
+    });
+    switch (tool) {
+      case "compteur": {
+        state.counter += Number(args?.pas ?? 1);
+        // Le serveur prévient les iframes du plugin (notifications/cadence/event).
+        setTimeout(() =>
+          mockBus.emit<PluginEventPayload>("plugin://event", {
+            plugin,
+            event: "compteur.change",
+            data: { valeur: state.counter },
+          }),
+        );
+        return result({ valeur: state.counter });
+      }
+      case "heure":
+        return result({ iso: new Date().toISOString() });
+      case "echo":
+        return result({ echo: args ?? {} });
+      case "erreur":
+        return { isError: true, structured: null, text: "L'outil a échoué (exprès)." };
+      default:
+        fail("plugin_call", `exemple__${tool} : outil inconnu.`);
+    }
   },
   plugin_status: () =>
     state.processes.filter((p) => state.plugins.some((plugin) => plugin.id === p.plugin)),

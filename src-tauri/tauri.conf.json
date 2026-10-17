@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https://avatars.githubusercontent.com; connect-src ipc: http://ipc.localhost",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https://avatars.githubusercontent.com; connect-src ipc: http://ipc.localhost; frame-src cadence-plugin: http://cadence-plugin.localhost",
       "devCsp": null
     }
   },

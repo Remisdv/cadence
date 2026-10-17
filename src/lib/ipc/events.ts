@@ -6,6 +6,7 @@ import type {
   ChatEventPayload,
   ChatStatePayload,
   OpenViewRequest,
+  PluginEventPayload,
   PluginInstallEvent,
   PluginStateEvent,
   RateLimitInfo,
@@ -21,6 +22,8 @@ export interface Events {
   "auth://changed": AuthChanged;
   "plugin://state": PluginStateEvent;
   "plugin://install": PluginInstallEvent;
+  /** `notifications/cadence/event` d'un serveur, relayée aux iframes du plugin. */
+  "plugin://event": PluginEventPayload;
   /** Une IA demande d'ouvrir une vue de plugin (`cadence__open_view`). */
   "ui://open-view": OpenViewRequest;
   /** Progression ou résultat d'une exécution de fond (`cadence__run_report`). */
