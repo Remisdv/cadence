@@ -46,6 +46,7 @@ const plugin = (
   skills: [],
   hasSettings: false,
   uiEntry: null,
+  uiDevUrl: null,
   enabled: true,
   source: "catalog",
   status: "ok",

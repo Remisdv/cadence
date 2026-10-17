@@ -16,11 +16,13 @@ const isWindows = typeof navigator !== "undefined" && /windows/i.test(navigator.
  * `public/mock-plugins/<id>/` en mode mock.
  */
 export function pluginUrl(
-  plugin: Pick<InstalledPluginView, "id" | "version" | "uiEntry">,
+  plugin: Pick<InstalledPluginView, "id" | "version" | "uiEntry" | "uiDevUrl">,
   path = "",
 ): string {
   const file = path || plugin.uiEntry || "index.html";
   if (isMockIpc) return `/mock-plugins/${plugin.id}/${file}`;
+  // Plugin de dev avec `ui.dev_url` : son serveur de dev local (rechargement à chaud).
+  if (plugin.uiDevUrl) return `${plugin.uiDevUrl}/${path}`;
   const base = isWindows ? "http://cadence-plugin.localhost" : "cadence-plugin://localhost";
   return `${base}/${plugin.id}/${plugin.version}/${path}`;
 }
@@ -34,7 +36,7 @@ export async function mockFrameDocument(
   plugin: Pick<InstalledPluginView, "id" | "version" | "uiEntry">,
 ) {
   const [page, sdk] = await Promise.all([
-    fetch(pluginUrl(plugin)).then((r) => r.text()),
+    fetch(pluginUrl({ ...plugin, uiDevUrl: null })).then((r) => r.text()),
     fetch("/mock-plugins/cadence-sdk.js").then((r) => r.text()),
   ]);
   return page.replace(

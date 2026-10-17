@@ -33,7 +33,11 @@ skills: Array<SkillInfo>, hasSettings: boolean,
 /**
  * Page de l'interface sous `ui/` ; `None` = plugin sans interface.
  */
-uiEntry: string | null, enabled: boolean, source: PluginSource, status: PluginStatus, 
+uiEntry: string | null, 
+/**
+ * Plugin de dev avec `ui.dev_url` : l'iframe charge son serveur de dev (rechargement à chaud).
+ */
+uiDevUrl: string | null, enabled: boolean, source: PluginSource, status: PluginStatus, 
 /**
  * Erreur du manifeste (statut `invalid`), ou avertissements en mode dev.
  */

@@ -102,6 +102,8 @@ pub struct InstalledPluginView {
     pub has_settings: bool,
     /// Page de l'interface sous `ui/` ; `None` = plugin sans interface.
     pub ui_entry: Option<String>,
+    /// Plugin de dev avec `ui.dev_url` : l'iframe charge son serveur de dev (rechargement à chaud).
+    pub ui_dev_url: Option<String>,
     pub enabled: bool,
     pub source: PluginSource,
     pub status: PluginStatus,
@@ -244,6 +246,7 @@ impl PluginRegistry {
                     rail_icon: m.rail_icon(),
                     has_settings: m.settings_schema.is_some(),
                     ui_entry: m.ui_entry,
+                    ui_dev_url: m.ui_dev_url.filter(|_| entry.source == PluginSource::Dev),
                     id: m.id,
                     name: m.name,
                     version: m.version,
@@ -278,6 +281,7 @@ impl PluginRegistry {
                 skills: vec![],
                 has_settings: false,
                 ui_entry: None,
+                ui_dev_url: None,
                 enabled: entry.enabled,
                 source: entry.source,
                 status: PluginStatus::Invalid,

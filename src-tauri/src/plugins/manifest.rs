@@ -233,6 +233,9 @@ pub struct Manifest {
     pub server: Option<ServerSpec>,
     /// Fichier HTML de l'UI, sous `ui/` (obligatoire dès qu'il y a une section `[ui]`).
     pub ui_entry: Option<String>,
+    /// `ui.dev_url` : serveur de dev local de l'UI (`http://localhost:<port>`), utilisé
+    /// seulement quand le plugin est chargé en mode développement.
+    pub ui_dev_url: Option<String>,
     pub views: Vec<PluginViewInfo>,
     pub secrets: Vec<PluginSecretInfo>,
     pub setup: Vec<PluginSetupStep>,
@@ -312,6 +315,8 @@ struct RawServer {
 #[derive(Deserialize)]
 struct RawUi {
     entry: Option<String>,
+    /// Serveur de dev de l'UI (Vite…), servi à la place de `ui/` pour un plugin de dev.
+    dev_url: Option<String>,
     #[serde(default)]
     views: Vec<RawView>,
 }
@@ -389,6 +394,15 @@ fn is_bin_name(bin: &str) -> bool {
 }
 
 /// Chemin relatif sous le dossier du plugin, sans `..` ni racine.
+/// `http://localhost:<port>` ou `http://127.0.0.1:<port>`, chemin facultatif.
+fn is_local_dev_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://localhost:").or_else(|| url.strip_prefix("http://127.0.0.1:")) else {
+        return false;
+    };
+    let port = rest.split('/').next().unwrap_or_default();
+    !port.is_empty() && port.parse::<u16>().is_ok()
+}
+
 fn is_relative_path(path: &str) -> bool {
     let p = Path::new(path);
     !path.is_empty() && !p.is_absolute() && p.components().all(|c| matches!(c, std::path::Component::Normal(_)))
@@ -554,8 +568,8 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         Some(srv) => Some(parse_server(srv)?),
     };
 
-    let (ui_entry, raw_views) = match raw.ui {
-        None => (None, Vec::new()),
+    let (ui_entry, ui_dev_url, raw_views) = match raw.ui {
+        None => (None, None, Vec::new()),
         Some(ui) => {
             let entry = ui.entry.filter(|e| !e.trim().is_empty()).ok_or_else(|| invalid("`ui.entry` absent."))?;
             // Accepté depuis la racine du plugin (`ui/index.html`, forme du dépôt de plugins) ou
@@ -564,7 +578,16 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
             if !is_relative_path(&entry) {
                 return Err(invalid(format!("`ui.entry` « {entry} » doit être un chemin relatif sous `ui/`.")));
             }
-            (Some(entry), ui.views)
+            let dev_url = ui.dev_url.map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty());
+            let dev_url = match dev_url {
+                Some(url) if is_local_dev_url(&url) => Some(url),
+                Some(url) => {
+                    warnings.push(format!("`ui.dev_url` « {url} » ignoré : seul http://localhost:<port> ou http://127.0.0.1:<port> est admis."));
+                    None
+                }
+                None => None,
+            };
+            (Some(entry), dev_url, ui.views)
         }
     };
 
@@ -658,6 +681,7 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         tools,
         server,
         ui_entry,
+        ui_dev_url,
         views,
         secrets,
         setup,
@@ -859,6 +883,16 @@ mode = "background"
         assert_eq!(m.ui_entry.as_deref(), Some("index.html"));
         let rooted = parse(&GESTION_PROJET.replacen("entry = \"index.html\"", "entry = \"ui/index.html\"", 1), "0.3.0").unwrap();
         assert_eq!(rooted.ui_entry.as_deref(), Some("index.html"), "forme du dépôt de plugins");
+        assert_eq!(m.ui_dev_url, None);
+        let dev = |url: &str| {
+            let toml = GESTION_PROJET.replacen("entry = \"index.html\"", &format!("entry = \"index.html\"\ndev_url = \"{url}\""), 1);
+            parse(&toml, "0.3.0").unwrap()
+        };
+        assert_eq!(dev("http://localhost:5174/").ui_dev_url.as_deref(), Some("http://localhost:5174"));
+        assert_eq!(dev("http://127.0.0.1:5174/ui").ui_dev_url.as_deref(), Some("http://127.0.0.1:5174/ui"));
+        let distant = dev("https://exemple.org");
+        assert_eq!(distant.ui_dev_url, None, "jamais une page distante");
+        assert!(distant.warnings.iter().any(|w| w.contains("ui.dev_url")));
         assert_eq!(m.setup[0].view, "issue");
         assert!(m.setup[0].required);
         assert_eq!(m.actions.len(), 2);
