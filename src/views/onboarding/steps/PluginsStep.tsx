@@ -52,20 +52,21 @@ export function PluginsStep({ onNext, onBack }: StepProps) {
   // Plugins écartés parce qu'ils demandent une version plus récente de Cadence.
   const incompatible = all.length - cards.length;
 
-  // Sélection de départ : ce qui est déjà activé, sinon les plugins officiels.
+  // Sélection de départ : ce qui est déjà activé, sinon les plugins officiels, hors outils de
+  // référence pour les auteurs (le plugin Exemple, catégorie Outils).
   const selected =
     picked ??
     new Set(
       cards.some((c) => c.installed?.enabled)
         ? cards.filter((c) => c.installed?.enabled).map((c) => c.id)
-        : cards.filter((c) => c.official).map((c) => c.id),
+        : cards.filter((c) => c.official && c.category !== "outils").map((c) => c.id),
     );
 
   const frame = (children: ReactNode) => (
     <OnboardingFrame
       step={stepIndex("plugins")}
       title="Choisir vos plugins"
-      intro="Rien n'est livré d'office : même les deux plugins officiels s'installent depuis le catalogue. Chaque plugin déclare sa catégorie, qui fixe sa place dans le rail de l'app. Tout reste activable ou retirable ensuite."
+      intro="Rien n'est livré d'office : même les plugins officiels s'installent depuis le catalogue. Chaque plugin déclare sa catégorie, qui fixe sa place dans le rail de l'app. Tout reste activable ou retirable ensuite."
     >
       {children}
     </OnboardingFrame>
