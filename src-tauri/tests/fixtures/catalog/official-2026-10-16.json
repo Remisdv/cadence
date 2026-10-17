@@ -1,0 +1,52 @@
+{
+  "api": 1,
+  "plugins": [
+    {
+      "id": "documents",
+      "name": "Documents",
+      "version": "0.2.0",
+      "description": "Cours PDF, Word, PowerPoint et Markdown rangés par matière et chapitre : réponses citées (document + page), QCM, questions ouvertes corrigées et flashcards.",
+      "authors": [
+        "Rémi Lhuillier"
+      ],
+      "category": "etudes",
+      "requires": [],
+      "icon_url": "https://raw.githubusercontent.com/Remisdv/cadence-plugins/documents-v0.2.0/plugins/documents/icon.svg",
+      "url": "https://github.com/Remisdv/cadence-plugins/releases/download/documents-v0.2.0/documents-0.2.0.zip",
+      "sha256": "799a02963e0ad03de35c6f1fbb88dbe8dcb4227203f060f8ed6fa7cbd513930d",
+      "min_cadence": "0.3.0"
+    },
+    {
+      "id": "gestion-projet",
+      "name": "Gestion de projet",
+      "version": "0.2.0",
+      "description": "Issues GitHub, kanban, roadmap, sprints, versions et pull requests de vos dépôts suivis, avec des skills pour compléter, implémenter et livrer.",
+      "authors": [
+        "Rémi Lhuillier"
+      ],
+      "category": "projet",
+      "requires": [
+        {
+          "tool": "git",
+          "min_version": null,
+          "optional": false,
+          "auth": false,
+          "reason": "Cloner les dépôts et préparer les worktrees",
+          "service": "repos"
+        },
+        {
+          "tool": "gh",
+          "min_version": null,
+          "optional": true,
+          "auth": true,
+          "reason": "Réutiliser votre connexion GitHub existante",
+          "service": "repos"
+        }
+      ],
+      "icon_url": "https://raw.githubusercontent.com/Remisdv/cadence-plugins/gestion-projet-v0.2.0/plugins/gestion-projet/icon.svg",
+      "url": "https://github.com/Remisdv/cadence-plugins/releases/download/gestion-projet-v0.2.0/gestion-projet-0.2.0.zip",
+      "sha256": "79f6e49509df40e1d144e785088e84c9de6c2a0f6d9847d276a8fedd6f0e24fb",
+      "min_cadence": "0.3.0"
+    }
+  ]
+}

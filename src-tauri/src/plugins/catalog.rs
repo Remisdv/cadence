@@ -85,6 +85,18 @@ pub struct RawEntry {
     pub actions: Vec<RawAction>,
     #[serde(default)]
     pub tools: Vec<String>,
+    /// Outils de la machine (`[[requires]]` des manifestes, écrit par `scripts/catalog.ts`).
+    #[serde(default)]
+    pub requires: Vec<RawRequire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawRequire {
+    pub tool: String,
+    #[serde(default)]
+    pub optional: bool,
+    /// Service de Cadence qui déclare l'outil (`repos`).
+    pub service: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -234,7 +246,18 @@ pub fn entry_view(raw: &RawEntry, registry: &PluginRegistry) -> CatalogEntryView
         color: enum_value(raw.color.as_deref()).unwrap_or_else(|| PluginColor::derived(&raw.id)),
         rail_icon,
         official: raw.official,
-        services: raw.services.iter().filter_map(|s| enum_value(Some(s))).collect(),
+        services: {
+            // Un outil déclaré par un service (`requires[].service`) signale ce service.
+            let mut services: Vec<PluginService> = Vec::new();
+            for name in raw.services.iter().map(String::as_str).chain(raw.requires.iter().filter_map(|r| r.service.as_deref())) {
+                if let Some(service) = enum_value(Some(name))
+                    && !services.contains(&service)
+                {
+                    services.push(service);
+                }
+            }
+            services
+        },
         views: raw
             .views
             .iter()
@@ -512,6 +535,20 @@ mod tests {
             "actions": [{ "id": "r", "label": "Résumer", "mode": "background" }]
         }))
         .unwrap()
+    }
+
+    /// Catalogue publié par `RemiSDV/cadence-plugins` (release `catalog` du 16/10/2026).
+    #[test]
+    fn reads_the_official_catalog() {
+        let raw: RawCatalog =
+            serde_json::from_str(include_str!("../../tests/fixtures/catalog/official-2026-10-16.json")).unwrap();
+        let registry = PluginRegistry::load(crate::app_settings::temp_dir("catalog-official"), "0.3.0");
+        let views: Vec<CatalogEntryView> = raw.plugins.iter().map(|e| entry_view(e, &registry)).collect();
+        let gp = views.iter().find(|v| v.id == "gestion-projet").expect("gestion-projet au catalogue");
+        assert_eq!(gp.category, PluginCategory::Projet);
+        assert_eq!(gp.services, [PluginService::Repos], "service déduit de requires[].service");
+        assert!(gp.compatible, "{:?}", gp.incompatibility);
+        assert!(views.iter().any(|v| v.id == "documents" && v.category == PluginCategory::Etudes));
     }
 
     #[test]

@@ -116,6 +116,14 @@ pub struct PluginSecretInfo {
 pub const TARGETS: [&str; 4] =
     ["x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"];
 
+/// Nom court de chaque cible, utilisé par le dépôt de plugins (`bin/windows-x86_64/`).
+pub const SHORT_TARGETS: [&str; 4] = ["windows-x86_64", "macos-aarch64", "macos-x86_64", "linux-x86_64"];
+
+/// Cible sous sa forme longue, qu'elle soit donnée courte ou longue.
+pub fn canonical_target(target: &str) -> Option<&'static str> {
+    TARGETS.iter().zip(SHORT_TARGETS).find(|(long, short)| **long == target || *short == target).map(|(long, _)| *long)
+}
+
 /// Cible de la machine courante, `None` hors des quatre cibles prises en charge.
 pub fn current_target() -> Option<&'static str> {
     if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
@@ -148,9 +156,17 @@ pub struct ServerSpec {
 
 impl ServerSpec {
     /// `bin/<cible>/<bin>[.exe]` dans le dossier du plugin.
+    /// Dossier long (`x86_64-pc-windows-msvc`) ou court (`windows-x86_64`, celui des archives
+    /// du dépôt de plugins) : le premier qui contient le binaire, le long à défaut.
     pub fn binary(&self, dir: &Path, target: &str) -> PathBuf {
         let name = if target.contains("windows") { format!("{}.exe", self.bin) } else { self.bin.clone() };
-        dir.join("bin").join(target).join(name)
+        let long = canonical_target(target).unwrap_or(target);
+        let short = TARGETS.iter().position(|t| *t == long).map(|i| SHORT_TARGETS[i]);
+        let long_path = dir.join("bin").join(long).join(&name);
+        match short.map(|s| dir.join("bin").join(s).join(&name)) {
+            Some(short_path) if !long_path.is_file() && short_path.is_file() => short_path,
+            _ => long_path,
+        }
     }
 }
 
@@ -542,6 +558,9 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         None => (None, Vec::new()),
         Some(ui) => {
             let entry = ui.entry.filter(|e| !e.trim().is_empty()).ok_or_else(|| invalid("`ui.entry` absent."))?;
+            // Accepté depuis la racine du plugin (`ui/index.html`, forme du dépôt de plugins) ou
+            // depuis `ui/` (`index.html`) ; gardé relatif à `ui/`.
+            let entry = entry.strip_prefix("ui/").map(str::to_string).unwrap_or(entry);
             if !is_relative_path(&entry) {
                 return Err(invalid(format!("`ui.entry` « {entry} » doit être un chemin relatif sous `ui/`.")));
             }
@@ -587,8 +606,13 @@ pub fn parse(text: &str, app_version: &str) -> AppResult<Manifest> {
         if !is_item_id(&step.id) || setup.iter().any(|known: &PluginSetupStep| known.id == step.id) {
             return Err(invalid(format!("Étape de configuration « {} » : identifiant invalide ou en double.", step.id)));
         }
-        if !views.iter().any(|v| v.id == step.view) {
-            return Err(invalid(format!("Étape de configuration « {} » : la vue « {} » n'existe pas.", step.id, step.view)));
+        // La vue d'une étape est une route de l'interface du plugin, pas forcément une vue du
+        // rail (contrat du dépôt de plugins) : il suffit que le plugin ait une interface.
+        if ui_entry.is_none() || !is_item_id(&step.view) {
+            return Err(invalid(format!(
+                "Étape de configuration « {} » : la route « {} » demande une section [ui].",
+                step.id, step.view
+            )));
         }
         setup.push(PluginSetupStep { id: step.id, title: step.title, view: step.view, required: step.required });
     }
@@ -655,15 +679,17 @@ fn parse_server(srv: RawServer) -> AppResult<ServerSpec> {
                 return Err(invalid("`server.targets` est vide."));
             }
             let mut seen = HashSet::new();
+            let mut targets = Vec::new();
             for t in &list {
-                if !TARGETS.contains(&t.as_str()) {
+                let Some(long) = canonical_target(t) else {
                     return Err(invalid(format!("`server.targets` : cible « {t} » inconnue ({}).", TARGETS.join(", "))));
-                }
-                if !seen.insert(t.as_str()) {
+                };
+                if !seen.insert(long) {
                     return Err(invalid(format!("`server.targets` : cible « {t} » en double.")));
                 }
+                targets.push(long.to_string());
             }
-            list
+            targets
         }
     };
     Ok(ServerSpec {
@@ -676,6 +702,20 @@ fn parse_server(srv: RawServer) -> AppResult<ServerSpec> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Manifestes du dépôt officiel : `CADENCE_PLUGINS_REPO=<chemin de cadence-plugins>
+    /// cargo test --lib -- --ignored parses_the_official_manifests`.
+    #[test]
+    #[ignore]
+    fn parses_the_official_manifests() {
+        let repo = std::path::PathBuf::from(std::env::var("CADENCE_PLUGINS_REPO").expect("CADENCE_PLUGINS_REPO"));
+        for entry in std::fs::read_dir(repo.join("plugins")).unwrap() {
+            let path = entry.unwrap().path().join(FILE_NAME);
+            let text = std::fs::read_to_string(&path).unwrap();
+            let m = parse(&text, "0.3.0").unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            println!("{} {} · tools {:?} · services {:?} · avertissements {:?}", m.id, m.version, m.tools, m.services, m.warnings);
+        }
+    }
     use super::*;
 
     const GESTION_PROJET: &str = r#"
@@ -808,7 +848,17 @@ mode = "background"
         assert_eq!(server.idle_shutdown_s, DEFAULT_IDLE_SHUTDOWN_S);
         assert!(server.binary(Path::new("p"), TARGETS[0]).ends_with("bin/x86_64-pc-windows-msvc/cadence-gestion-projet.exe"));
         assert!(server.binary(Path::new("p"), TARGETS[3]).ends_with("bin/x86_64-unknown-linux-gnu/cadence-gestion-projet"));
+        // Archive du dépôt de plugins : dossiers aux noms courts.
+        let root = crate::app_settings::temp_dir("manifest-short-target");
+        std::fs::create_dir_all(root.join("bin").join("linux-x86_64")).unwrap();
+        std::fs::write(root.join("bin").join("linux-x86_64").join("cadence-gestion-projet"), "").unwrap();
+        assert!(server.binary(&root, TARGETS[3]).ends_with("bin/linux-x86_64/cadence-gestion-projet"));
+        assert_eq!(canonical_target("macos-aarch64"), Some("aarch64-apple-darwin"));
+        assert_eq!(canonical_target("riscv64"), None);
+        let _ = std::fs::remove_dir_all(&root);
         assert_eq!(m.ui_entry.as_deref(), Some("index.html"));
+        let rooted = parse(&GESTION_PROJET.replacen("entry = \"index.html\"", "entry = \"ui/index.html\"", 1), "0.3.0").unwrap();
+        assert_eq!(rooted.ui_entry.as_deref(), Some("index.html"), "forme du dépôt de plugins");
         assert_eq!(m.setup[0].view, "issue");
         assert!(m.setup[0].required);
         assert_eq!(m.actions.len(), 2);
@@ -837,7 +887,7 @@ mode = "background"
             (with("bin = \"cadence-gestion-projet\"", "bin = \"srv\"\ntargets = []"), "aucune cible"),
             (with("entry = \"index.html\"", "entry = \"../index.html\""), "entrée hors de ui/"),
             (with("entry = \"index.html\"", ""), "entrée absente"),
-            (with("view = \"issue\"", "view = \"absente\""), "vue de setup inconnue"),
+            (with("view = \"issue\"", "view = \"Pas une route\""), "route de setup invalide"),
             (with("mode = \"chat\"", "mode = \"auto\""), "mode inconnu"),
             (with("skill = \"preparer-issue\"", "skill = \"Préparer\""), "nom de skill"),
             (with("id = \"rapport_version\"", "id = \"preparer-issue\""), "action en double"),

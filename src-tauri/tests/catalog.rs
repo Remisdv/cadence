@@ -158,3 +158,54 @@ async fn refuses_a_tampered_or_mismatched_archive() {
     assert!(registry.entry("journal").is_err(), "rien d'inscrit");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Catalogue réel de `RemiSDV/cadence-plugins` : chaque plugin publié se télécharge, son
+/// empreinte et son manifeste sont validés, puis il s'installe (réseau, ignoré par défaut).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "réseau : release `catalog` de RemiSDV/cadence-plugins"]
+async fn installs_every_plugin_of_the_official_catalog() {
+    let dir = std::env::temp_dir().join(format!("cadence-official-catalog-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let catalog = Catalog::new(dir.join("cache"));
+    let fetched = catalog.get(cadence_lib::plugins::catalog::DEFAULT_URL, true).await.unwrap();
+    assert!(fetched.error.is_none(), "{:?}", fetched.error);
+    let registry = Arc::new(PluginRegistry::load(dir.join("plugins"), "0.3.0"));
+    assert!(!fetched.catalog.plugins.is_empty());
+    for entry in &fetched.catalog.plugins {
+        let prepared = catalog
+            .prepare_install(registry.clone(), &fetched.catalog, &entry.id, |_| {})
+            .await
+            .unwrap_or_else(|e| panic!("{} : {e}", entry.id));
+        prepared.commit(&registry).unwrap();
+        let manifest = registry.manifest(&entry.id).unwrap_or_else(|e| panic!("{} : {e}", entry.id));
+        // Page d'entrée servie par le protocole `cadence-plugin` (`<id>/<version>/`).
+        let page = cadence_lib::protocol::resolve(&registry, &format!("/{}/{}/", manifest.id, manifest.version));
+        assert!(page.is_some_and(|p| p.is_file()), "interface de {} introuvable", manifest.id);
+        println!("{} {} installé · {} vues · {} actions · {} skills", manifest.id, manifest.version, manifest.views.len(), manifest.actions.len(), manifest.skills.len());
+    }
+
+    // Serveurs MCP réels, lancés par l'hôte avec l'environnement de Cadence.
+    use cadence_lib::{
+        plugins::{
+            env::{HostPaths, launch_spec},
+            host::{HostConfig, PluginHost},
+            settings::PluginSettingsStore,
+        },
+        secrets::MemorySecrets,
+    };
+    let settings = Arc::new(PluginSettingsStore::new(dir.join("config")));
+    let secrets = Arc::new(MemorySecrets::default());
+    let paths = HostPaths { data_root: dir.join("plugins-data"), log_dir: dir.join("logs"), tools: None, repos: None };
+    let resolve = {
+        let (registry, settings, secrets) = (registry.clone(), settings.clone(), secrets.clone());
+        Arc::new(move |plugin: &str| launch_spec(&registry, &settings, secrets.as_ref(), &paths, plugin))
+    };
+    let host = PluginHost::new(HostConfig::new("0.3.0"), resolve, Arc::new(|_| {}));
+    for entry in &fetched.catalog.plugins {
+        let tools = host.tools(&entry.id).await.unwrap_or_else(|e| panic!("serveur de {} : {e}", entry.id));
+        println!("{} : {} outils ({})", entry.id, tools.len(), tools.iter().take(6).map(|t| t.name.to_string()).collect::<Vec<_>>().join(", "));
+        assert!(!tools.is_empty(), "{} n'expose aucun outil", entry.id);
+    }
+    host.stop_all().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}

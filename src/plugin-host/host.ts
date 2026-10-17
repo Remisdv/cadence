@@ -3,7 +3,7 @@
  * `HostApi` branchée sur l'IPC, la navigation et les toasts.
  */
 import { call, isMockIpc } from "@/lib/ipc/transport";
-import { openExternal } from "@/lib/platform";
+import { openExternal, pickPaths } from "@/lib/platform";
 import type { AiId, InstalledPluginView } from "@/lib/types";
 import { navigate } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
@@ -81,6 +81,30 @@ export function hostApi(plugin: Pick<InstalledPluginView, "id" | "name">): HostA
       await call("plugin_secret_set", { plugin: id, secret, value });
     },
     secretHas: (secret) => call("plugin_secret_has", { plugin: id, secret }),
+    pickFiles: (options) => pickPaths(options),
+    reposList: async () => (await call("app_settings_get")).trackedRepos[id] ?? [],
+    reposSet: async (update) => {
+      const current = (await call("app_settings_get")).trackedRepos[id] ?? [];
+      const next = update(current);
+      const saved = await call("app_settings_set", { patch: { trackedRepos: { [id]: next } } });
+      return saved.trackedRepos[id] ?? [];
+    },
+    toolStatus: async (tool, ensure) => {
+      const report = await call("tools_list", { refresh: false });
+      const info = report.tools.find((t) => t.id === tool);
+      const status = {
+        installed: info !== undefined && info.status !== "missing",
+        version: info?.version ?? null,
+        authenticated: info?.login ? info.status === "ready" : null,
+      };
+      if (ensure && info && info.status !== "ready")
+        useUiStore.getState().pushToast({
+          message: `${plugin.name} a besoin de ${info.name} : installez-le ou connectez-le dans Réglages › Outils externes.`,
+          kind: "warning",
+          source: plugin.name,
+        });
+      return status;
+    },
     runAction: async (action, context, ai) => {
       const result = await call("action_run", {
         input: { plugin: id, action, context, ...(ai ? { ai: ai as AiId } : {}) },

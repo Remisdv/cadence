@@ -25,6 +25,10 @@ function setup(overrides: Partial<HostApi> = {}) {
     storageGet: (key) => store.get(key),
     storageSet: (key, value) => store.set(key, value),
     runAction: vi.fn(async () => ({ runId: "c1", sessionId: null, mode: "background" })),
+    pickFiles: vi.fn(async () => ["C:/cours.pdf"]),
+    reposList: vi.fn(async () => ["RemiSDV/cadence"]),
+    reposSet: vi.fn(async (update: (r: string[]) => string[]) => update(["RemiSDV/cadence"])),
+    toolStatus: vi.fn(async () => ({ installed: true, version: "2.47.1", authenticated: null })),
     ...overrides,
   };
   const bridge = createBridge({
@@ -144,6 +148,57 @@ describe("pont de l'iframe", () => {
     expect(await request("actions.run", { id: "resumer", ai: "gpt" })).toMatchObject({
       error: { code: "invalid_params" },
     });
+  });
+
+  it("parle aussi la variante du SDK publié (@cadence/plugin-sdk)", async () => {
+    const { bridge, sent, frame } = setup();
+    const ask = async (id: string, method: string, params: unknown) => {
+      await bridge.handle({
+        source: frame,
+        data: { channel: "cadence", api: 1, kind: "request", id, method, params },
+      });
+      return sent.find((m) => (m as unknown as { id?: string }).id === id) as unknown;
+    };
+    expect(await ask("h", "hello", { api: 1, sdk: "1.0.0" })).toMatchObject({
+      channel: "cadence",
+      kind: "response",
+      ok: true,
+      result: { api: 1, plugin: { id: "exemple" }, route: { view: "accueil" } },
+    });
+    expect(await ask("t", "tool.call", { tool: "lister", args: {} })).toMatchObject({
+      ok: true,
+      result: { structuredContent: { valeur: 1 }, isError: false },
+    });
+    expect(await ask("a", "action.run", { action: "resumer", context: null })).toMatchObject({
+      ok: true,
+      result: { runId: "c1" },
+    });
+    expect(await ask("r", "repos.list", {})).toMatchObject({
+      result: [{ fullName: "RemiSDV/cadence", owner: "RemiSDV", name: "cadence" }],
+    });
+    expect(await ask("x", "inconnue", {})).toMatchObject({
+      ok: false,
+      error: { code: "method_not_found" },
+    });
+    // Les événements suivent la variante de l'iframe.
+    bridge.emit("run", { runId: "c1", text: "fini", final: true, data: null });
+    bridge.emit("sync.updated", { ids: [1] });
+    expect(sent.slice(-2)).toEqual([
+      {
+        channel: "cadence",
+        api: 1,
+        kind: "event",
+        topic: "run",
+        data: { runId: "c1", status: "succeeded", message: "fini", result: "fini" },
+      },
+      {
+        channel: "cadence",
+        api: 1,
+        kind: "event",
+        topic: "event",
+        data: { name: "sync.updated", data: { ids: [1] } },
+      },
+    ]);
   });
 
   it("fusionne les réglages et pousse les événements", async () => {

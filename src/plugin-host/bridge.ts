@@ -8,6 +8,10 @@
  *
  * Le pont ne touche ni au DOM ni à l'IPC : tout passe par `HostApi`, ce qui le rend testable
  * sans navigateur.
+ *
+ * Deux variantes de l'enveloppe sont comprises : celle du cœur (`{ cadence: 1, kind: "req" }`)
+ * et celle du SDK publié `@cadence/plugin-sdk` (`published.ts`) ; chaque réponse part dans la
+ * variante de la requête, les événements dans celle de la dernière poignée de main.
  */
 import type { PluginSettingsView, PluginToolResult } from "@/lib/types";
 import { CommandError } from "@/lib/ipc/errors";
@@ -20,6 +24,12 @@ import {
   type HelloResult,
   type SdkError,
 } from "./protocol";
+import {
+  asPublishedRequest,
+  publishedEvent,
+  publishedHandlers,
+  publishedResponse,
+} from "./published";
 
 /** Fenêtre de l'iframe (son `contentWindow`). */
 export interface FrameTarget {
@@ -46,6 +56,21 @@ export interface HostApi {
     context: Record<string, unknown> | null,
     ai: string | null,
   ): Promise<{ runId: string; sessionId: string | null; mode: string }>;
+  pickFiles(options: {
+    title?: string;
+    multiple: boolean;
+    directory: boolean;
+    filters: { name: string; extensions: string[] }[];
+  }): Promise<string[]>;
+  /** Dépôts suivis par le plugin (service `repos`). */
+  reposList(): Promise<string[]>;
+  /** Modifie la liste des dépôts suivis ; renvoie la nouvelle liste. */
+  reposSet(update: (repos: string[]) => string[]): Promise<string[]>;
+  /** État d'un outil externe ; `ensure` propose son installation s'il manque. */
+  toolStatus(
+    tool: string,
+    ensure: boolean,
+  ): Promise<{ installed: boolean; version: string | null; authenticated: boolean | null }>;
 }
 
 export interface BridgeOptions {
@@ -154,12 +179,34 @@ export function createBridge({ frame, api, hello }: BridgeOptions) {
   };
 
   const post = (message: Envelope) => frame.postMessage(message, "*");
+  const published = publishedHandlers(api, hello);
+  /** Variante parlée par l'iframe (fixée par sa dernière requête). */
+  let dialect: "core" | "published" = "core";
+
+  async function handlePublished(id: string, method: string, params: unknown) {
+    dialect = "published";
+    const handler = published[method];
+    try {
+      if (!handler)
+        throw new BridgeError("method_not_found", `Méthode « ${method} » inconnue de cet hôte.`);
+      const result = await handler(object(params));
+      frame.postMessage(publishedResponse(id, { result }), "*");
+    } catch (err) {
+      frame.postMessage(publishedResponse(id, { error: toSdkError(err) }), "*");
+    }
+  }
 
   /** Traite un message ; `false` s'il ne vient pas de l'iframe de ce plugin. */
   async function handle(message: IncomingMessage): Promise<boolean> {
     if (message.source !== frame) return false;
+    const publishedRequest = asPublishedRequest(message.data);
+    if (publishedRequest) {
+      await handlePublished(publishedRequest.id, publishedRequest.method, publishedRequest.params);
+      return true;
+    }
     const request = asRequest(message.data);
     if (!request) return true;
+    dialect = "core";
     const handler = handlers[request.method];
     try {
       if (!handler)
@@ -177,6 +224,12 @@ export function createBridge({ frame, api, hello }: BridgeOptions) {
 
   /** Événement vers l'iframe (`route`, `theme`, événements du serveur du plugin). */
   function emit(event: string, data?: unknown) {
+    if (dialect === "published") {
+      const translated = publishedEvent(event, data);
+      if (translated)
+        frame.postMessage({ channel: "cadence", api: 1, kind: "event", ...translated }, "*");
+      return;
+    }
     post({ cadence: PROTOCOL_VERSION, kind: "evt", event, data });
   }
 
