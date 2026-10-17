@@ -142,7 +142,11 @@ function addPlugin(command: string, plugin: InstalledPluginView) {
 }
 
 const handlers: Handlers = {
-  app_status: () => ({ onboarded: state.settings.onboarded, version: "0.3.0-dev" }),
+  app_status: () => ({
+    onboarded: state.settings.onboarded,
+    version: "0.3.0-dev",
+    gateway: "http://127.0.0.1:52417/mcp",
+  }),
   app_settings_get: () => state.settings,
   app_settings_set: ({ patch }) => {
     const next = structuredClone(state.settings);

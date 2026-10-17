@@ -183,7 +183,12 @@ function ReplyItem({
     case "assistant":
       return (
         <div className="max-w-[720px]">
-          <Markdown source={item.text} onLink={onLink} className="gap-2.5 leading-[1.65] text-tx" />
+          <Markdown
+            source={item.text}
+            onLink={onLink}
+            breaks
+            className="gap-2.5 leading-[1.65] text-tx"
+          />
           {item.streaming && (
             <span
               aria-hidden="true"

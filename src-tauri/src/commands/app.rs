@@ -11,7 +11,11 @@ use crate::{
 /// Écran de départ : onboarding de Cadence 2 tant qu'il n'est pas terminé.
 #[tauri::command]
 pub fn app_status(app: tauri::AppHandle, state: State<'_, AppState>) -> AppStatus {
-    AppStatus { onboarded: state.settings.get().onboarded, version: app.package_info().version.to_string() }
+    AppStatus {
+        onboarded: state.settings.get().onboarded,
+        version: app.package_info().version.to_string(),
+        gateway: state.gateway.as_ref().map(|g| g.url()),
+    }
 }
 
 #[tauri::command]

@@ -15,7 +15,8 @@ type Block =
   | { kind: "quote"; text: string }
   | { kind: "code"; text: string };
 
-export function parseMarkdown(source: string): Block[] {
+/** `breaks` : un simple retour à la ligne reste une ligne (messages du chat). */
+export function parseMarkdown(source: string, { breaks = false } = {}): Block[] {
   const blocks: Block[] = [];
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   let i = 0;
@@ -64,7 +65,7 @@ export function parseMarkdown(source: string): Block[] {
       ) {
         para.push(lines[i++]!.trim());
       }
-      blocks.push({ kind: "paragraph", text: para.join(" ") });
+      blocks.push({ kind: "paragraph", text: para.join(breaks ? "\n" : " ") });
     }
   }
   return blocks;
@@ -121,12 +122,14 @@ export function Markdown({
   source,
   className,
   onLink,
+  breaks,
 }: {
   source: string;
   className?: string;
   onLink?: LinkHandler;
+  breaks?: boolean;
 }) {
-  const blocks = parseMarkdown(source);
+  const blocks = parseMarkdown(source, { breaks });
   const inline = (text: string) => inlineWith(text, onLink);
   return (
     <div className={cn("flex flex-col gap-3 text-body leading-[1.72] text-tx2", className)}>
@@ -139,7 +142,11 @@ export function Markdown({
               </p>
             );
           case "paragraph":
-            return <p key={i}>{inline(b.text)}</p>;
+            return (
+              <p key={i} className={cn(breaks && "whitespace-pre-line")}>
+                {inline(b.text)}
+              </p>
+            );
           case "quote":
             return (
               <p key={i} className="border-l-2 border-line2 pl-3">

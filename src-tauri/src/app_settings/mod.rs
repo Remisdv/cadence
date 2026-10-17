@@ -249,6 +249,8 @@ pub struct AppStatus {
     pub onboarded: bool,
     /// Version de Cadence (semver).
     pub version: String,
+    /// Adresse de la passerelle MCP locale (`http://127.0.0.1:<port>/mcp`), si elle tourne.
+    pub gateway: Option<String>,
 }
 
 /// Fichier `settings.json`, lu au démarrage et réécrit à chaque modification.

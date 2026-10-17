@@ -23,6 +23,7 @@ import { aiLabels } from "@/lib/domain/ai";
 import { formatDuration, parseCadenceLink, type ChatItem } from "@/lib/domain/chat";
 import {
   useAppSettings,
+  useAppStatus,
   useApproveChat,
   useChatThread,
   useDeleteChat,
@@ -396,6 +397,7 @@ function SessionPanel({
   plugins: InstalledPluginView[];
 }) {
   const status = usePluginStatus().data ?? [];
+  const gateway = useAppStatus().data?.gateway ?? null;
   const duration = items.reduce((sum, i) => sum + (i.kind === "turn" ? i.durationMs : 0), 0);
   const cost = items.reduce((sum, i) => sum + (i.kind === "turn" ? (i.costUsd ?? 0) : 0), 0);
   const withTools = plugins.map((p) => ({
@@ -414,7 +416,11 @@ function SessionPanel({
             value={ai ? `${ai}${session?.model ? ` · ${session.model}` : ""}` : "—"}
           />
           <PanelRow label="Dossier" value={session ? `sessions/${session.id}/` : "—"} mono />
-          <PanelRow label="Passerelle MCP" value="127.0.0.1 · locale" mono />
+          <PanelRow
+            label="Passerelle MCP"
+            value={gateway ? gateway.replace(/^https?:\/\//, "").replace(/\/mcp$/, "") : "arrêtée"}
+            mono
+          />
           <PanelRow label="Durée" value={duration > 0 ? formatDuration(duration) : "—"} />
           <PanelRow label="Coût estimé" value={cost > 0 ? `${cost.toFixed(2)} $` : "—"} last />
         </div>

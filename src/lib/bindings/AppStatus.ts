@@ -7,4 +7,8 @@ export type AppStatus = { onboarded: boolean,
 /**
  * Version de Cadence (semver).
  */
-version: string, };
+version: string, 
+/**
+ * Adresse de la passerelle MCP locale (`http://127.0.0.1:<port>/mcp`), si elle tourne.
+ */
+gateway: string | null, };
