@@ -145,7 +145,7 @@ function emitState(process: PluginProcessView) {
   });
 }
 
-/** Le serveur d'un plugin s'arrête (désactivation, secret ou réglage changé, désinstallation). */
+/** Le serveur d'un plugin s'arrête (désactivation, secret changé, désinstallation). */
 function stopProcess(plugin: string) {
   const process = state.processes.find((p) => p.plugin === plugin);
   if (!process || process.state === "stopped") return;

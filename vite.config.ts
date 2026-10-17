@@ -4,12 +4,29 @@ import process from "node:process";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { rmSync } from "node:fs";
+import type { Plugin } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
+/** `public/mock-plugins` (SDK de référence et plugin exemple) ne sert qu'en mode mock : retiré du build. */
+function dropMockPlugins(): Plugin {
+  let outDir = "dist";
+  return {
+    name: "cadence-drop-mock-plugins",
+    apply: "build",
+    configResolved(config) {
+      outDir = config.build.outDir;
+    },
+    closeBundle() {
+      rmSync(`${outDir}/mock-plugins`, { recursive: true, force: true });
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(() => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), dropMockPlugins()],
 
   resolve: {
     alias: {

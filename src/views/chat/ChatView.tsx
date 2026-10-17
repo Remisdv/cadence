@@ -525,11 +525,16 @@ function SessionPanel({
               <PluginTile color={plugin.color} icon={plugin.railIcon} size={18} />
               <span className="grow text-tx2">{plugin.name}</span>
               <span className="mono text-tiny text-tx3">
-                {tools?.state === "ready"
-                  ? tools.tools
-                  : tools?.state === "failed"
-                    ? "en échec"
-                    : "—"}
+                {/* `plugin_status` ne liste que les plugins qui ont un serveur. */}
+                {!tools
+                  ? "—"
+                  : tools.state === "ready"
+                    ? tools.tools
+                    : tools.state === "failed"
+                      ? "en échec"
+                      : tools.state === "starting"
+                        ? "démarre…"
+                        : "au 1er appel"}
               </span>
             </div>
           ))}

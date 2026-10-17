@@ -1,8 +1,9 @@
 //! Plugins installés : liste du rail, activation, ordre, réglages et secrets globaux,
 //! installation (archive locale, dossier de dev), désinstallation, serveurs MCP.
 //!
-//! Un changement d'activation, de secret ou de réglage arrête le serveur du plugin : il
-//! redémarre au prochain appel avec son nouvel environnement.
+//! Un changement d'activation ou de secret arrête le serveur du plugin : il redémarre au
+//! prochain appel avec son nouvel environnement. Un changement de réglages lui est notifié
+//! (`notifications/cadence/settings`) s'il tourne.
 
 use std::path::{Path, PathBuf};
 
@@ -83,11 +84,15 @@ pub async fn plugin_settings_set(state: State<'_, AppState>, plugin: String, val
     let schema = schema_of(&state, &plugin)?;
     let view = state.plugin_settings.write(&plugin, schema, value)?;
     if view.errors.is_empty() {
-        // `CADENCE_SETTINGS` n'est lu qu'au démarrage (la notification `cadence/settings` viendra).
-        state.plugin_host.stop(&plugin).await;
+        // Serveur en marche : il reçoit les nouveaux réglages ; sinon `CADENCE_SETTINGS` au lancement.
+        let params = serde_json::json!({ "settings": view.value });
+        state.plugin_host.notify(&plugin, SETTINGS_NOTIFICATION, params).await;
     }
     Ok(view)
 }
+
+/// Notification au serveur d'un plugin : réglages globaux modifiés, `{ "settings": {…} }`.
+pub const SETTINGS_NOTIFICATION: &str = "notifications/cadence/settings";
 
 /// Le secret doit être déclaré par le manifeste du plugin installé.
 fn declared_account(state: &AppState, plugin: &str, secret: &str) -> AppResult<String> {
