@@ -5,7 +5,8 @@
 //! - par défaut : répond « écho : <message> » (deltas mot à mot, message complet, résultat) ;
 //! - « approbation » : demande `can_use_tool` (Write) et répond selon la décision ;
 //! - « long » : diffuse lentement, jusqu'à une interruption (`control_request interrupt`) ;
-//! - « plante » : écrit sur stderr et quitte (code 1).
+//! - « plante » : écrit sur stderr et quitte (code 1) ;
+//! - « dossiers » : répond la liste des `--add-dir` reçus (« dossiers : a | b »).
 //!
 //! L'id de session vaut l'argument de `--resume` s'il y en a un, sinon `fake-1`.
 
@@ -64,6 +65,8 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let resume = args.iter().position(|a| a == "--resume").and_then(|i| args.get(i + 1)).cloned();
     let resumed = resume.is_some();
+    let add_dirs: Vec<String> =
+        args.windows(2).filter(|w| w[0] == "--add-dir").map(|w| w[1].clone()).collect();
     let id = resume.unwrap_or_else(|| "fake-1".into());
     let mut session = Session { id, turn: 0 };
 
@@ -129,7 +132,13 @@ fn main() {
                     session.result(interrupted);
                     continue;
                 }
-                let reply = if resumed { format!("écho [reprise {}] : {text}", session.id) } else { format!("écho : {text}") };
+                let reply = if text.contains("dossiers") {
+                    format!("dossiers{} : {}", if resumed { " [reprise]" } else { "" }, add_dirs.join(" | "))
+                } else if resumed {
+                    format!("écho [reprise {}] : {text}", session.id)
+                } else {
+                    format!("écho : {text}")
+                };
                 for word in reply.split_inclusive(' ') {
                     session.delta(word);
                 }

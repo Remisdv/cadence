@@ -7,7 +7,7 @@
 //!   --plugin-dir <prép>/plugin --append-system-prompt-file <prép>/CADENCE.md
 //!   --settings <prép>/settings.json --allowedTools mcp__cadence
 //!   --permission-mode default|acceptEdits|bypassPermissions [--permission-prompt-tool stdio]
-//!   [--resume <id>] [--model <alias>]
+//!   [--resume <id>] [--model <alias>] [--add-dir <worktree>]…
 //! cwd = <données>/sessions/<id>/ ; env : CADENCE_MCP_TOKEN, sans ANTHROPIC_API_KEY
 //! ```
 //!
@@ -73,6 +73,8 @@ pub struct ClaudeLaunch {
     pub model: Option<String>,
     pub mode: SessionMode,
     pub permissions: Permissions,
+    /// Worktrees ouverts à la session (`--add-dir`).
+    pub add_dirs: Vec<PathBuf>,
 }
 
 /// Arguments de `claude` (hors binaire).
@@ -114,6 +116,9 @@ pub fn args(launch: &ClaudeLaunch) -> Vec<OsString> {
     }
     if let Some(model) = &launch.model {
         args.extend(["--model".into(), model.into()]);
+    }
+    for dir in &launch.add_dirs {
+        path("--add-dir", dir, &mut args);
     }
     args
 }
@@ -330,6 +335,7 @@ mod tests {
             model: Some("haiku".into()),
             mode,
             permissions,
+            add_dirs: Vec::new(),
         }
     }
 
@@ -355,5 +361,13 @@ mod tests {
         assert!(background.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]));
         let full = strings(&launch(Permissions::Full, SessionMode::Chat, None));
         assert!(full.windows(2).any(|w| w == ["--permission-mode", "bypassPermissions"]));
+        assert!(!full.contains(&"--add-dir".to_string()));
+
+        let mut granted = launch(Permissions::Ask, SessionMode::Chat, None);
+        granted.add_dirs = vec![PathBuf::from("/repos/.worktrees/me/app/issue-42"), PathBuf::from("/repos/me/site")];
+        let granted = strings(&granted);
+        let dirs: Vec<&str> = granted.windows(2).filter(|w| w[0] == "--add-dir").map(|w| w[1].as_str()).collect();
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs[0].ends_with("issue-42") && dirs[1].ends_with("site"));
     }
 }

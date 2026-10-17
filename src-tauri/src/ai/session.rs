@@ -33,6 +33,9 @@ pub struct AiLaunch {
     pub permissions: Permissions,
     /// Titre de la conversation (OpenCode le garde avec sa session).
     pub title: String,
+    /// Dossiers ouverts à la session en plus de son dossier neutre (worktrees du service
+    /// Dépôts) : `--add-dir`, racine inscriptible de Codex, permission de chemin d'OpenCode.
+    pub add_dirs: Vec<PathBuf>,
 }
 
 /// Session vivante d'une des trois CLI.
@@ -67,6 +70,7 @@ impl AiSession {
                     model: launch.model,
                     mode: launch.mode,
                     permissions: launch.permissions,
+                    add_dirs: launch.add_dirs,
                 },
                 events,
             )?),

@@ -8,6 +8,10 @@
 //! Un processus inactif depuis 15 min est fermé (la conversation reste reprenable) ; 4
 //! processus vivants au plus (le plus ancien inactif est fermé). Une interruption qui n'a pas
 //! abouti en 5 s tue le processus.
+//!
+//! Worktrees ouverts par `cadence__repo_checkout` : la CLI les reçoit au lancement (`--add-dir`,
+//! racine inscriptible, permission de chemin). Un worktree ouvert en cours de route relance la
+//! session (reprise par `native_id`) au tour suivant ; ils disparaissent avec la conversation.
 
 pub mod store;
 
@@ -146,6 +150,8 @@ struct Live {
     turn: Arc<AtomicU32>,
     last_used: Instant,
     mode: SessionMode,
+    /// Worktrees ouverts à la CLI à son lancement.
+    dirs: Vec<PathBuf>,
     /// Place dans la file des exécutions de fond, rendue à la fermeture du processus.
     _permit: Option<OwnedSemaphorePermit>,
 }
@@ -346,13 +352,20 @@ impl ChatService {
         mode: SessionMode,
         permit: Option<OwnedSemaphorePermit>,
     ) -> AppResult<(Arc<AiSession>, Arc<AtomicU32>)> {
+        let dirs = self.granted(id);
         let mut live = self.live.lock().await;
         if let Some(entry) = live.get_mut(id) {
-            if entry.session.is_alive() {
+            // Un tour en cours garde son processus ; sinon, un worktree ouvert depuis le
+            // lancement relance la CLI (reprise de la session native) pour qu'elle le reçoive.
+            if entry.session.is_alive() && (entry.dirs == dirs || entry.session.is_running()) {
                 entry.last_used = Instant::now();
                 return Ok((entry.session.clone(), entry.turn.clone()));
             }
-            live.remove(id);
+            if let Some(entry) = live.remove(id)
+                && entry.session.is_alive()
+            {
+                self.close_now(id, entry.session).await;
+            }
         }
         // Plafond de processus vivants : le plus ancien inactif part.
         while live.len() >= self.config.max_live {
@@ -388,6 +401,7 @@ impl ChatService {
                     mode,
                     permissions: if mode == SessionMode::Background { Permissions::AutoEdit } else { Permissions::Ask },
                     title: row.title.clone(),
+                    add_dirs: dirs.clone(),
                 },
                 tx,
             )
@@ -395,9 +409,24 @@ impl ChatService {
         );
         live.insert(
             id.to_string(),
-            Live { session: session.clone(), turn: turn.clone(), last_used: Instant::now(), mode, _permit: permit },
+            Live { session: session.clone(), turn: turn.clone(), last_used: Instant::now(), mode, dirs, _permit: permit },
         );
         Ok((session, turn))
+    }
+
+    /// Worktrees ouverts à la conversation (`cadence__repo_checkout`).
+    fn granted(&self, id: &str) -> Vec<PathBuf> {
+        self.gateway.as_ref().map(|g| g.context.granted(id)).unwrap_or_default()
+    }
+
+    /// Ferme le processus et attend sa fin : la session native est libre pour une reprise.
+    /// Le jeton de passerelle reste valide (la conversation continue).
+    async fn close_now(&self, id: &str, session: Arc<AiSession>) {
+        tracing::info!(session = id, "worktree ouvert : la CLI est relancée avec ce dossier");
+        match Arc::try_unwrap(session) {
+            Ok(session) => session.close(self.config.close_grace).await,
+            Err(shared) => shared.kill().await,
+        }
     }
 
     fn spawn_close(&self, id: &str, session: Arc<AiSession>) {
@@ -448,6 +477,9 @@ impl ChatService {
         self.store.get(id).await?;
         if let Some(entry) = self.live.lock().await.remove(id) {
             self.spawn_close(id, entry.session);
+        }
+        if let Some(gateway) = &self.gateway {
+            gateway.context.forget_grants(id);
         }
         self.store.delete(id).await?;
         let dir = self.config.sessions_root.join(id);

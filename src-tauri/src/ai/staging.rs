@@ -155,8 +155,8 @@ impl SessionFiles {
 /// Surcharges de configuration d'un fil Codex (`thread/start.config`) : la passerelle, jeton lu
 /// dans `CADENCE_MCP_TOKEN`, outils pré-approuvés (sinon Codex demande pour chaque outil
 /// sans `readOnlyHint`, et refuse en fond).
-pub fn codex_config(gateway_url: Option<&str>) -> serde_json::Value {
-    match gateway_url {
+pub fn codex_config(gateway_url: Option<&str>, add_dirs: &[PathBuf]) -> serde_json::Value {
+    let mut config = match gateway_url {
         Some(url) => json!({ "mcp_servers": { "cadence": {
             "url": url,
             "bearer_token_env_var": "CADENCE_MCP_TOKEN",
@@ -164,7 +164,29 @@ pub fn codex_config(gateway_url: Option<&str>) -> serde_json::Value {
             "tool_timeout_sec": 600
         } } }),
         None => json!({}),
+    };
+    if !add_dirs.is_empty() {
+        // Racines inscriptibles du bac à sable `workspace-write`, en plus du dossier neutre.
+        let roots: Vec<String> = add_dirs.iter().map(|d| d.display().to_string()).collect();
+        config["sandbox_workspace_write"] = json!({ "writable_roots": roots });
     }
+    config
+}
+
+/// Règles `permission.external_directory` d'OpenCode : les worktrees ouverts à la session
+/// sont autorisés (le reste suit la règle par défaut, `ask`).
+fn external_directories(add_dirs: &[PathBuf]) -> serde_json::Value {
+    let mut rules = serde_json::Map::new();
+    rules.insert("*".into(), json!("ask"));
+    for dir in add_dirs {
+        let native = dir.display().to_string();
+        let slashes = native.replace('\\', "/");
+        for base in [native, slashes] {
+            rules.insert(base.clone(), json!("allow"));
+            rules.insert(format!("{}/**", base.trim_end_matches(['/', '\\'])), json!("allow"));
+        }
+    }
+    serde_json::Value::Object(rules)
 }
 
 /// Règle de permission OpenCode d'un profil (`ask`, `allow`).
@@ -177,7 +199,12 @@ pub struct OpencodePermissions {
 /// Configuration d'un serveur OpenCode (`OPENCODE_CONFIG_CONTENT`, chargée après celle du
 /// projet) : passerelle sans OAuth, outils `cadence_*` autorisés, consignes et skills de la
 /// session, pas de partage ni de mise à jour automatique.
-pub fn opencode_config(gateway_url: Option<&str>, files: &SessionFiles, permissions: OpencodePermissions) -> serde_json::Value {
+pub fn opencode_config(
+    gateway_url: Option<&str>,
+    files: &SessionFiles,
+    permissions: OpencodePermissions,
+    add_dirs: &[PathBuf],
+) -> serde_json::Value {
     let mut config = json!({
         "$schema": "https://opencode.ai/config.json",
         "autoupdate": false,
@@ -186,6 +213,9 @@ pub fn opencode_config(gateway_url: Option<&str>, files: &SessionFiles, permissi
         "skills": { "paths": [files.skills_root().display().to_string()] },
         "permission": { "edit": permissions.edit, "bash": permissions.bash, "cadence_*": "allow" },
     });
+    if !add_dirs.is_empty() {
+        config["permission"]["external_directory"] = external_directories(add_dirs);
+    }
     if let Some(url) = gateway_url {
         config["mcp"] = json!({ "cadence": {
             "type": "remote",
@@ -264,16 +294,27 @@ mod tests {
         assert!(crate::plugins::skills::load_all(&files.plugin_dir.join("skills")).is_ok(), "skills valides pour Claude Code");
         assert!(fs::read_to_string(&files.settings).unwrap().contains("disableAllHooks"));
 
-        let codex = codex_config(Some("http://127.0.0.1:5000/mcp"));
+        let codex = codex_config(Some("http://127.0.0.1:5000/mcp"), &[]);
         assert_eq!(codex["mcp_servers"]["cadence"]["bearer_token_env_var"], "CADENCE_MCP_TOKEN");
         assert_eq!(codex["mcp_servers"]["cadence"]["default_tools_approval_mode"], "approve");
-        let opencode =
-            opencode_config(Some("http://127.0.0.1:5000/mcp"), &files, OpencodePermissions { edit: "ask", bash: "ask" });
+        assert!(codex.get("sandbox_workspace_write").is_none(), "aucun dossier ouvert d'office");
+        let ask = OpencodePermissions { edit: "ask", bash: "ask" };
+        let opencode = opencode_config(Some("http://127.0.0.1:5000/mcp"), &files, ask, &[]);
+        assert!(opencode["permission"].get("external_directory").is_none());
         assert_eq!(opencode["mcp"]["cadence"]["headers"]["Authorization"], "Bearer {env:CADENCE_MCP_TOKEN}");
         assert_eq!(opencode["mcp"]["cadence"]["oauth"], false);
         assert_eq!(opencode["permission"]["cadence_*"], "allow");
         assert!(opencode["skills"]["paths"][0].as_str().unwrap().ends_with("skills"));
         assert!(!opencode.to_string().contains("jeton"), "jeton jamais dans la configuration");
+
+        // Worktree ouvert à la session : racine inscriptible (Codex), chemin autorisé (OpenCode).
+        let wt = PathBuf::from("/repos/.worktrees/me/app/issue-42");
+        let codex = codex_config(None, std::slice::from_ref(&wt));
+        assert_eq!(codex["sandbox_workspace_write"]["writable_roots"], json!([wt.display().to_string()]));
+        let opencode = opencode_config(None, &files, ask, std::slice::from_ref(&wt));
+        let rules = &opencode["permission"]["external_directory"];
+        assert_eq!(rules["*"], "ask");
+        assert_eq!(rules["/repos/.worktrees/me/app/issue-42/**"], "allow");
 
         let dir = files.dir.clone();
         drop(files);

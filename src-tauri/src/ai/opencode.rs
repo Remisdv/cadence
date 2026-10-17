@@ -79,7 +79,12 @@ impl OpencodeSession {
     pub async fn start(launch: AiLaunch, events: mpsc::UnboundedSender<AiEvent>) -> AppResult<Self> {
         std::fs::create_dir_all(&launch.cwd)?;
         let password = random_secret();
-        let config = staging::opencode_config(launch.gateway_url.as_deref(), &launch.files, permissions(launch.permissions, launch.mode));
+        let config = staging::opencode_config(
+            launch.gateway_url.as_deref(),
+            &launch.files,
+            permissions(launch.permissions, launch.mode),
+            &launch.add_dirs,
+        );
         let mut command = super::process::command(&launch.cli);
         command
             .args(["serve", "--port", "0", "--hostname", "127.0.0.1"])

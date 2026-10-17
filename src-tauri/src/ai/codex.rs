@@ -6,7 +6,8 @@
 //! → initialize { clientInfo, capabilities.experimentalApi } ; initialized
 //! → skills/extraRoots/set { extraRoots: [<prép>/plugin/skills] }
 //! → thread/start | thread/resume { cwd, approvalPolicy, sandbox, developerInstructions,
-//!     config: { mcp_servers.cadence: { url, bearer_token_env_var, default_tools_approval_mode } } }
+//!     config: { mcp_servers.cadence: { url, bearer_token_env_var, default_tools_approval_mode },
+//!               sandbox_workspace_write.writable_roots: [<worktrees ouverts à la session>] } }
 //! → turn/start { threadId, input } … turn/interrupt { threadId, turnId }
 //! ← item/*, turn/*, thread/tokenUsage/updated, error ; requêtes item/*/requestApproval
 //! ```
@@ -162,7 +163,17 @@ impl CodexSession {
             thread_id: String::new(),
             files: launch.files,
         };
-        match session.handshake(&launch.cwd, launch.gateway_url.as_deref(), launch.resume.as_deref(), launch.model.as_deref(), launch.permissions, launch.mode).await {
+        let opened = session
+            .handshake(
+                &launch.cwd,
+                launch.gateway_url.as_deref(),
+                launch.resume.as_deref(),
+                launch.model.as_deref(),
+                (launch.permissions, launch.mode),
+                &launch.add_dirs,
+            )
+            .await;
+        match opened {
             Ok((thread, model)) => {
                 session.thread_id = thread.clone();
                 let _ = events.send(AiEvent::SessionStarted { native_id: thread, model });
@@ -205,8 +216,8 @@ impl CodexSession {
         gateway_url: Option<&str>,
         resume: Option<&str>,
         model: Option<&str>,
-        permissions: Permissions,
-        mode: SessionMode,
+        (permissions, mode): (Permissions, SessionMode),
+        add_dirs: &[std::path::PathBuf],
     ) -> AppResult<(String, Option<String>)> {
         let version = env!("CARGO_PKG_VERSION");
         self.call_with(
@@ -231,7 +242,7 @@ impl CodexSession {
             "cwd": cwd.display().to_string(),
             "approvalPolicy": approval,
             "sandbox": sandbox,
-            "config": staging::codex_config(gateway_url),
+            "config": staging::codex_config(gateway_url, add_dirs),
             "developerInstructions": staging::INSTRUCTIONS,
         });
         if let Some(model) = model {

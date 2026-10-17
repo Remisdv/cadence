@@ -206,6 +206,56 @@ async fn closes_idle_processes_caps_them_and_deletes_conversations() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn opens_granted_worktrees_to_the_cli_from_the_next_turn() {
+    use cadence_lib::{
+        chat::GatewayAccess,
+        gateway::server::GatewayContext,
+        plugins::host::{HostConfig, PluginHost},
+    };
+    let dir = std::env::temp_dir().join(format!("cadence-chat-grants-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let resolve = Arc::new(|_: &str| Err(cadence_lib::error::AppError::Internal("aucun plugin".into())));
+    let host = Arc::new(PluginHost::new(HostConfig::new("0.3.0"), resolve, Arc::new(|_| {})));
+    let context = GatewayContext::new("0.3.0", host, Arc::new(Vec::new), Arc::new(|_| {}));
+    let store = ChatStore::open(&dir.join("chat.sqlite3")).await.unwrap();
+    let cli = fake_claude();
+    let chat = ChatService::new(
+        store,
+        ChatConfig::new(dir.join("sessions"), dir.join("staging")),
+        Arc::new(move |_| Ok(cli.clone())),
+        Arc::new(Vec::new),
+        Some(GatewayAccess { url: "http://127.0.0.1:9/mcp".into(), context: context.clone() }),
+        Arc::new(|_| {}),
+    );
+    let f = Fixture { chat, notices: Arc::default(), dir };
+
+    let id = f.send(None, "dossiers").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await, ["dossiers : "], "aucun dossier ouvert d'office");
+
+    // `cadence__repo_checkout` a ouvert un worktree : la CLI est relancée (reprise) avec lui.
+    let wt = f.dir.join("repos").join(".worktrees").join("me").join("app").join("issue-42");
+    context.grant(&id, wt.clone());
+    f.send(Some(&id), "dossiers").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), &format!("dossiers [reprise] : {}", wt.display()));
+    assert_eq!(f.chat.live_count().await, 1, "l'ancien processus est fermé");
+
+    // Rien de nouveau : même processus.
+    f.send(Some(&id), "encore").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "écho [reprise fake-1] : encore");
+
+    // Une autre conversation n'en hérite pas ; la suppression oublie l'accès.
+    let other = f.send(None, "dossiers").await;
+    f.wait(&other, ChatState::Idle).await;
+    assert_eq!(f.replies(&other).await, ["dossiers : "]);
+    f.chat.delete(&id).await.unwrap();
+    assert!(context.granted(&id).is_empty());
+    f.chat.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn runs_background_actions_in_a_queue_and_records_reports() {
     use cadence_lib::{
         app_settings::AiId,
