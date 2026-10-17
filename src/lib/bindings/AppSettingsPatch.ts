@@ -18,4 +18,8 @@ catalogUrl?: string, devPlugins?: Array<string>, ignoredTools?: Array<ToolId>,
 /**
  * Liste complète des dépôts suivis d'un plugin ; liste vide = n'en suivre aucun.
  */
-trackedRepos?: Record<string, string[]>, };
+trackedRepos?: Record<string, string[]>, 
+/**
+ * Dépôt choisi dans la barre d'un plugin ; `null` = « Tous les dépôts ».
+ */
+repoSelection?: Record<string, string | null>, };

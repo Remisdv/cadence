@@ -264,6 +264,7 @@ export const mockAppSettings: AppSettings = {
   toolPaths: {},
   ignoredTools: [],
   trackedRepos: { "gestion-projet": ["cadence-app/desktop"] },
+  repoSelection: {},
   repoClones: {},
 };
 

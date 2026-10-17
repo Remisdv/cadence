@@ -152,7 +152,9 @@ function ManagedFrame({ plugin }: { plugin: InstalledPluginView }) {
     // Dépôts suivis modifiés (réglages, onboarding ou l'iframe elle-même) : événement `repos`.
     const offRepos = subscribe("repos://changed", (payload) => {
       if (payload.plugin !== plugin.id || !plugin.services.includes("repos")) return;
-      void reposChange(api, payload.repos).then((change) => bridge.current?.emit("repos", change));
+      void reposChange(api, payload.repos, payload.selection).then((change) =>
+        bridge.current?.emit("repos", change),
+      );
     });
     return () => {
       window.removeEventListener("message", onMessage);

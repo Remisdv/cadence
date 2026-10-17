@@ -44,6 +44,8 @@ pub struct ReposChanged {
     pub plugin: String,
     /// Liste complète des dépôts suivis (`owner/name`).
     pub repos: Vec<String>,
+    /// Dépôt choisi dans la barre du plugin ; `null` = « Tous les dépôts ».
+    pub selection: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

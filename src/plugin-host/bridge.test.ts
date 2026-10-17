@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CommandError } from "@/lib/ipc/errors";
 import { createBridge, type HostApi } from "./bridge";
 import type { Envelope } from "./protocol";
+import { reposChange } from "./published";
 
 function setup(overrides: Partial<HostApi> = {}) {
   const sent: Envelope[] = [];
@@ -28,6 +29,7 @@ function setup(overrides: Partial<HostApi> = {}) {
     pickFiles: vi.fn(async () => ["C:/cours.pdf"]),
     reposList: vi.fn(async () => ["RemiSDV/cadence"]),
     reposSet: vi.fn(async (update: (r: string[]) => string[]) => update(["RemiSDV/cadence"])),
+    reposSelection: vi.fn(async () => "RemiSDV/cadence"),
     reposLocalPaths: vi.fn(async () => ({ "remisdv/cadence": "C:/repos/remisdv/cadence" })),
     reposCheckout: vi.fn(
       async (repo: string, task: string | null) => `C:/repos/.worktrees/${repo}/${task}`,
@@ -187,6 +189,9 @@ describe("pont de l'iframe", () => {
         },
       ],
     });
+    expect(await ask("s", "repos.selection", {})).toMatchObject({
+      result: { kind: "one", repo: "RemiSDV/cadence" },
+    });
     expect(await ask("x", "inconnue", {})).toMatchObject({
       ok: false,
       error: { code: "method_not_found" },
@@ -235,6 +240,19 @@ describe("pont de l'iframe", () => {
       error: { code: "invalid_params" },
     });
     expect(api.reposCheckout).toHaveBeenCalledTimes(1);
+
+    // Événement `repos` : liste avec les clones locaux, et la sélection de la barre.
+    expect(await reposChange(api, ["RemiSDV/cadence", "me/autre"], "RemiSDV/cadence")).toEqual({
+      repos: [
+        expect.objectContaining({
+          fullName: "RemiSDV/cadence",
+          localPath: "C:/repos/remisdv/cadence",
+        }),
+        expect.objectContaining({ fullName: "me/autre", localPath: null }),
+      ],
+      selection: { kind: "one", repo: "RemiSDV/cadence" },
+    });
+    expect((await reposChange(api, [], null)).selection).toEqual({ kind: "all" });
   });
 
   it("fusionne les réglages et pousse les événements", async () => {

@@ -41,6 +41,11 @@ ignoredTools: Array<ToolId>,
  */
 trackedRepos: { [key in string]: Array<string> }, 
 /**
+ * Service `repos` : dépôt choisi dans le sélecteur de la barre du plugin (absent = « Tous
+ * les dépôts »). Toujours un des dépôts suivis par le plugin.
+ */
+repoSelection: { [key in string]: string }, 
+/**
  * Service `repos` : clone local désigné par l'utilisateur, par dépôt (`owner/name` en
  * minuscules → dossier). Écrit seulement par `repos_link`, après vérification du clone.
  */

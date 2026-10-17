@@ -4,4 +4,8 @@ export type ReposChanged = { plugin: string,
 /**
  * Liste complète des dépôts suivis (`owner/name`).
  */
-repos: Array<string>, };
+repos: Array<string>, 
+/**
+ * Dépôt choisi dans la barre du plugin ; `null` = « Tous les dépôts ».
+ */
+selection: string | null, };

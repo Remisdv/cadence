@@ -39,7 +39,11 @@ pub async fn app_settings_set(
     patch: AppSettingsPatch,
 ) -> AppResult<AppSettings> {
     let changes_cli = patch.ai.is_some();
-    let repos_of: Vec<String> = patch.tracked_repos.iter().flat_map(|m| m.keys().cloned()).collect();
+    let mut repos_of: Vec<String> = patch.tracked_repos.iter().flat_map(|m| m.keys().cloned()).collect();
+    repos_of.extend(patch.repo_selection.iter().flat_map(|m| m.keys().cloned()));
+    repos_of.sort();
+    repos_of.dedup();
+    let tracked_changed: Vec<String> = patch.tracked_repos.iter().flat_map(|m| m.keys().cloned()).collect();
     let settings = state.settings.try_update(|s| s.apply(patch))?;
     if changes_cli {
         // Chemins ou activation changés : la détection des CLI est refaite au prochain appel.
@@ -47,9 +51,11 @@ pub async fn app_settings_set(
     }
     for plugin in repos_of {
         let repos = settings.tracked_repos.get(&plugin).cloned().unwrap_or_default();
-        events::emit(&app, events::REPOS_CHANGED, ReposChanged { plugin: plugin.clone(), repos: repos.clone() });
+        let selection = settings.repo_selection.get(&plugin).cloned();
+        events::emit(&app, events::REPOS_CHANGED, ReposChanged { plugin: plugin.clone(), repos: repos.clone(), selection });
         let uses_repos = state.plugins.manifest(&plugin).is_ok_and(|m| m.services.contains(&PluginService::Repos));
-        if uses_repos {
+        // Le serveur ne connaît que la liste ; la sélection ne concerne que l'interface.
+        if uses_repos && tracked_changed.contains(&plugin) {
             state.plugin_host.notify(&plugin, REPOS_NOTIFICATION, json!({ "repos": repos })).await;
         }
     }

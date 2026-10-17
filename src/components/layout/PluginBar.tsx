@@ -5,12 +5,23 @@
  */
 import { Icon } from "@/components/icons/Icon";
 import { PluginTile } from "@/components/domain/PluginTile";
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/Menu";
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "@/components/ui/Menu";
 import { homeView, kitIcon, moveInRail, viewSections } from "@/lib/domain/plugins";
 import {
+  useAppSettings,
   usePlugins,
   useReorderPlugins,
   useRunAction,
+  useSaveAppSettings,
   useSetPluginEnabled,
 } from "@/lib/query/queries";
 import { useUiStore } from "@/stores/ui";
@@ -40,7 +51,7 @@ export function PluginBar({ plugin, view }: { plugin: InstalledPluginView; view:
         />
       }
     >
-      {plugin.services.includes("repos") && <RepoSelector />}
+      {plugin.services.includes("repos") && <RepoSelector plugin={plugin.id} />}
       {plugin.status === "needs-setup" && (
         <button
           type="button"
@@ -137,32 +148,67 @@ function PluginActions({ plugin }: { plugin: InstalledPluginView }) {
   );
 }
 
+/** Valeur de « Tous les dépôts » dans le menu (un dépôt est toujours `owner/name`). */
+const ALL_REPOS = "*";
+
 /**
- * Sélecteur « un dépôt » ou « Tous les dépôts » du service `repos` (V2-Repo-Selector) : en
- * attente du service, il montre seulement sa place dans la barre.
+ * Sélecteur « un dépôt » ou « Tous les dépôts » du service `repos` (V2-Repo-Selector) : le
+ * choix est gardé dans les réglages (`repoSelection`) et transmis à l'iframe du plugin
+ * (`repos.selection`, événement `repos`).
  */
-function RepoSelector() {
+function RepoSelector({ plugin }: { plugin: string }) {
+  const navigate = useNavigation((s) => s.navigate);
+  const settings = useAppSettings().data;
+  const save = useSaveAppSettings();
+  const repos = settings?.trackedRepos[plugin] ?? [];
+  const selected = settings?.repoSelection[plugin] ?? null;
+  const choose = (value: string) =>
+    save.mutate({ repoSelection: { [plugin]: value === ALL_REPOS ? null : value } });
+
   return (
-    <button
-      type="button"
-      disabled
-      aria-label="Choisir le dépôt"
-      title="Le service Dépôts arrive avec la connexion GitHub de Cadence 2."
-      className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-line2 bg-p2 px-2 text-tx disabled:cursor-default"
-    >
-      <span
-        aria-hidden="true"
-        className="inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-p3 text-tx3"
-      >
-        <Icon name="github" size={12} />
-      </span>
-      <span className="min-w-0 grow truncate text-left text-body-sm font-medium">
-        Tous les dépôts
-      </span>
-      <span className="flex text-tx3">
-        <Icon name="chevronDown" size={14} />
-      </span>
-    </button>
+    <Menu>
+      <MenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Choisir le dépôt"
+          className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-line2 bg-p2 px-2 text-tx hover:bg-p3"
+        >
+          <span
+            aria-hidden="true"
+            className="inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-p3 text-tx3"
+          >
+            <Icon name="github" size={12} />
+          </span>
+          <span className="min-w-0 grow truncate text-left text-body-sm font-medium">
+            {selected ?? "Tous les dépôts"}
+          </span>
+          <span className="flex text-tx3">
+            <Icon name="chevronDown" size={14} />
+          </span>
+        </button>
+      </MenuTrigger>
+      <MenuContent className="w-[260px]">
+        <MenuLabel>Dépôts suivis</MenuLabel>
+        <MenuRadioGroup value={selected ?? ALL_REPOS} onValueChange={choose}>
+          <MenuRadioItem value={ALL_REPOS}>Tous les dépôts</MenuRadioItem>
+          {repos.map((repo) => (
+            <MenuRadioItem key={repo} value={repo}>
+              <span className="min-w-0 truncate">
+                <span className="text-tx3">{repo.split("/")[0]}/</span>
+                {repo.split("/")[1]}
+              </span>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+        {repos.length === 0 && (
+          <div className="px-2.5 py-1.5 text-caption text-tx3">Aucun dépôt suivi.</div>
+        )}
+        <MenuSeparator />
+        <MenuItem onSelect={() => navigate({ id: "settings", section: "repos" })}>
+          <Icon name="settings" size={14} /> Gérer les dépôts suivis…
+        </MenuItem>
+      </MenuContent>
+    </Menu>
   );
 }
 

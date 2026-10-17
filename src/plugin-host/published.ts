@@ -115,9 +115,14 @@ async function repoInfos(api: HostApi, repos: string[]) {
   return repos.map((repo) => repoInfo(repo, paths[repo.toLowerCase()] ?? null));
 }
 
-/** Charge de l'événement `repos` du SDK publié (pas de sélecteur encore : « Tous les dépôts »). */
-export async function reposChange(api: HostApi, repos: string[]) {
-  return { repos: await repoInfos(api, repos), selection: { kind: "all" as const } };
+/** Sélecteur de la barre du plugin, tel que le SDK publié le décrit. */
+function selectionOf(repo: string | null) {
+  return repo ? { kind: "one" as const, repo } : { kind: "all" as const };
+}
+
+/** Charge de l'événement `repos` du SDK publié : dépôts suivis et sélection de la barre. */
+export async function reposChange(api: HostApi, repos: string[], selection: string | null) {
+  return { repos: await repoInfos(api, repos), selection: selectionOf(selection) };
 }
 
 type Handler = (params: Record<string, unknown>) => unknown;
@@ -201,7 +206,7 @@ export function publishedHandlers(
     },
     "secrets.has": (params) => api.secretHas(text(params, "id")),
     "repos.list": async () => repoInfos(api, await api.reposList()),
-    "repos.selection": () => ({ kind: "all" }),
+    "repos.selection": async () => selectionOf(await api.reposSelection()),
     "repos.follow": async (params) => {
       const repo = text(params, "repo");
       if (!REPO.test(repo))

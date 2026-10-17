@@ -266,13 +266,32 @@ const handlers: Handlers = {
       if (list.length) next.trackedRepos[plugin] = list;
       else delete next.trackedRepos[plugin];
     }
+    for (const [plugin, repo] of Object.entries(patch.repoSelection ?? {})) {
+      if (repo === null) {
+        delete next.repoSelection[plugin];
+        continue;
+      }
+      const tracked = (next.trackedRepos[plugin] ?? []).find(
+        (r) => r.toLowerCase() === repo.trim().toLowerCase(),
+      );
+      if (!tracked)
+        fail("app_settings_set", `Le plugin « ${plugin} » ne suit pas le dépôt ${repo}.`);
+      next.repoSelection[plugin] = tracked;
+    }
+    for (const [plugin, repo] of Object.entries(next.repoSelection))
+      if (!(next.trackedRepos[plugin] ?? []).includes(repo)) delete next.repoSelection[plugin];
     if (patch.ignoredTools !== undefined)
       next.ignoredTools = [...new Set(patch.ignoredTools)].sort();
     state.settings = next;
-    for (const plugin of Object.keys(patch.trackedRepos ?? {}))
+    const touched = new Set([
+      ...Object.keys(patch.trackedRepos ?? {}),
+      ...Object.keys(patch.repoSelection ?? {}),
+    ]);
+    for (const plugin of touched)
       mockBus.emit<ReposChanged>("repos://changed", {
         plugin,
         repos: next.trackedRepos[plugin] ?? [],
+        selection: next.repoSelection[plugin] ?? null,
       });
     return next;
   },
