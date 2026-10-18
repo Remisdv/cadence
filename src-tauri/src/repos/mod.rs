@@ -348,13 +348,15 @@ impl RepoService {
             seen.push(key.clone());
             let lock = self.lock(&key);
             let _guard = lock.lock().await;
-            let entries: Vec<PathBuf> = std::fs::read_dir(self.worktrees_dir(&key))
+            let mut entries: Vec<PathBuf> = std::fs::read_dir(self.worktrees_dir(&key))
                 .into_iter()
                 .flatten()
                 .flatten()
                 .map(|e| e.path())
                 .filter(|p| p.join(".git").exists())
                 .collect();
+            // Ordre de `read_dir` non garanti (alphabétique sous NTFS, quelconque ailleurs).
+            entries.sort();
             for wt in entries {
                 let Some(branch) = git.run(&wt, &["symbolic-ref", "--short", "-q", "HEAD"]).await.ok() else {
                     continue; // détaché : l'IA n'y a pas créé de branche
