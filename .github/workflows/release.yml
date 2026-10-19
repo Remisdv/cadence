@@ -1,14 +1,15 @@
-# Release : déclenchée par un tag `v*` (ex. `v1.0.0`). Construit macOS (universel), Windows et
-# Linux, signe et notarise quand les secrets sont présents, signe les paquets de mise à jour
-# et publie une release GitHub EN BROUILLON avec `latest.json` pour l'updater.
+# Release : lancée À LA MAIN (Actions › Release › Run workflow, « Use workflow from » = le tag,
+# ex. `v1.0.0`), jamais automatiquement, pour économiser les minutes GitHub Actions : pendant le
+# développement, chacun construit l'app depuis les sources (README). Construit macOS (universel),
+# Windows et Linux, signe et notarise quand les secrets sont présents, signe les paquets de mise
+# à jour et publie une release GitHub EN BROUILLON avec `latest.json` pour l'updater.
 #
 # Rien n'est publié automatiquement : la release ne devient visible (et l'updater ne la voit)
 # qu'une fois publiée à la main. Secrets et procédure : docs/release.md.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -31,6 +32,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "::error::Lancez la release depuis un tag (« Use workflow from » › Tags › vX.Y.Z), pas depuis la branche $GITHUB_REF_NAME."
+            exit 1
+          fi
           tag="${GITHUB_REF_NAME#v}"
           conf=$(jq -r .version src-tauri/tauri.conf.json)
           pkg=$(jq -r .version package.json)
@@ -213,4 +218,5 @@ jobs:
           releaseDraft: true
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
-          args: ${{ matrix.args }} ${{ env.TAURI_EXTRA_ARGS }}
+          # Paquets de mise à jour signés seulement ici : un build local (sans clé privée) s'en passe.
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json ${{ env.TAURI_EXTRA_ARGS }}

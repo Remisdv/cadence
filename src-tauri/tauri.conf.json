@@ -29,7 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "publisher": "Rémi Lhuillier",
     "homepage": "https://github.com/RemiSDV/cadence",
     "copyright": "© 2026 Rémi Lhuillier",
@@ -55,7 +55,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REMPLACER-PAR-LA-CLE-PUBLIQUE-DES-MISES-A-JOUR (voir docs/release.md)",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg1OUI2MkNGNENEQTdFMTcKUldRWGZ0cE16MktiaGNGdUtPajUzWXp6aWxZcm1kbENEUGFTT2laMnlpSWo3YjlkVHppelAwbVYK",
       "endpoints": ["https://github.com/RemiSDV/cadence/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"

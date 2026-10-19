@@ -34,6 +34,30 @@ pnpm tauri:mock   # app de bureau, back mocké (tant que les commandes Rust ne s
 | `pnpm format` | Prettier + tri des classes Tailwind |
 | `pnpm build` | build de prod du front |
 
+### Installer Cadence depuis les sources
+
+Pas encore d'installeur publié : chacun construit l'app sur sa machine (les releases signées
+viendront avec la version finale, voir `docs/release.md`).
+
+1. Prérequis : Node 20+ et pnpm, Rust stable (`rustup`), plus selon le système :
+   - **Windows** : Visual Studio Build Tools avec « Développement Desktop en C++ » (Rust MSVC) ;
+     WebView2 est déjà présent sur Windows 10 et 11 ;
+   - **macOS** : outils en ligne de commande Xcode (`xcode-select --install`) ;
+   - **Linux** : `libwebkit2gtk-4.1-dev`, `build-essential`, `libssl-dev`,
+     `libayatana-appindicator3-dev`, `librsvg2-dev` (noms Debian/Ubuntu).
+2. Construire :
+
+   ```bash
+   git clone https://github.com/RemiSDV/cadence.git && cd cadence
+   pnpm install
+   pnpm tauri build
+   ```
+
+3. L'installeur est dans `src-tauri/target/release/bundle/` : `nsis/*.exe` ou `msi/*.msi` sous
+   Windows, `dmg/*.dmg` sous macOS, `deb/`, `rpm/` ou `appimage/` sous Linux. Non signé : Windows
+   affiche « éditeur inconnu » (Informations complémentaires › Exécuter quand même), macOS demande
+   un clic droit › Ouvrir la première fois.
+
 ### Connexion GitHub
 
 **Aucune configuration n'est nécessaire** sur une machine où la CLI GitHub ou Git sont installés.

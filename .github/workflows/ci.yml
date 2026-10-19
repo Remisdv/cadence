@@ -1,5 +1,7 @@
 # Intégration continue : front (types, tests, build) et cœur Rust (clippy, tests) sur chaque
-# push vers main et chaque pull request. Aucun secret n'est utilisé ici.
+# push vers main et chaque pull request. Linux seulement, pour économiser les minutes GitHub
+# Actions (macOS compte 10×, Windows 2×) : Windows et macOS se vérifient en local
+# (`pnpm test:rust`). Aucun secret n'est utilisé ici.
 name: CI
 
 on:
@@ -47,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
+        os: [ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
