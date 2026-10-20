@@ -39,7 +39,7 @@ use super::{
     codex_stream::{
         CodexItem, CodexStream, PendingCodex, approval_reply, notification, question_reply, request, text_input,
     },
-    events::{AiErrorKind, AiEvent, ApprovalDecision},
+    events::{AiErrorKind, AiEvent, ApprovalDecision, QuestionAnswer, background_answers},
     grants,
     process::{Tail, TreeChild},
     session::AiLaunch,
@@ -126,6 +126,13 @@ impl CodexSession {
                     for item in &items {
                         let CodexItem::Approval(pending) = item else { continue };
                         if !pending.questions.is_empty() {
+                            // Question en fond : personne pour répondre, l'IA tranche seule.
+                            if background {
+                                answered.push(pending.request.clone());
+                                if let Err(err) = write_line(&stdin, &question_reply(pending, &background_answers(&pending.questions))).await {
+                                    tracing::warn!(%err, "réponse d'office non transmise à Codex");
+                                }
+                            }
                             continue;
                         }
                         let covered = !pending.paths.is_empty()
@@ -143,7 +150,8 @@ impl CodexSession {
                     for item in items {
                         match item {
                             CodexItem::Approval(pending) if answered.contains(&pending.request) => {}
-                            CodexItem::Event(AiEvent::ApprovalRequested { request, .. }) if answered.contains(&request) => {}
+                            CodexItem::Event(AiEvent::ApprovalRequested { request, .. } | AiEvent::Question { request, .. })
+                                if answered.contains(&request) => {}
                             CodexItem::Response { id, result } => {
                                 if let Some(waiter) = shared.pending.lock().unwrap().remove(&id) {
                                     let _ = waiter.send(result);
@@ -355,7 +363,7 @@ impl CodexSession {
     }
 
     /// Répond à une question (`item/tool/requestUserInput`).
-    pub async fn answer_question(&self, request: &str, answer: &str) -> AppResult<()> {
+    pub async fn answer_question(&self, request: &str, answers: &[QuestionAnswer]) -> AppResult<()> {
         let pending = self
             .shared
             .approvals
@@ -364,7 +372,7 @@ impl CodexSession {
             .remove(request)
             .filter(|p| !p.questions.is_empty())
             .ok_or_else(|| AppError::Validation("Cette question n'attend plus de réponse.".into()))?;
-        write_line(&self.stdin, &question_reply(&pending, answer)).await
+        write_line(&self.stdin, &question_reply(&pending, answers)).await
     }
 
     pub async fn kill(&self) {

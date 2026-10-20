@@ -6,7 +6,7 @@
 //!   --include-partial-messages --mcp-config <prép>/mcp.json --strict-mcp-config
 //!   --plugin-dir <prép>/plugin --append-system-prompt-file <prép>/CADENCE.md
 //!   --settings <prép>/settings.json --allowedTools mcp__cadence
-//!   --permission-mode default|acceptEdits|bypassPermissions [--permission-prompt-tool stdio]
+//!   --permission-mode default|acceptEdits|bypassPermissions --permission-prompt-tool stdio
 //!   [--resume <id>] [--model <alias>] [--add-dir <worktree>]…
 //! cwd = <données>/sessions/<id>/ ; env : CADENCE_MCP_TOKEN, sans ANTHROPIC_API_KEY
 //! ```
@@ -14,9 +14,13 @@
 //! Chaque tour est une ligne `user` sur stdin ; les événements normalisés partent dans un
 //! canal, dans l'ordre. En fond, une seule entrée puis fermeture de stdin.
 //!
-//! Approbations (`--permission-prompt-tool stdio`, sauf en accès complet) : un outil de
+//! Approbations (`--permission-prompt-tool stdio`, dans tous les modes) : un outil de
 //! fichiers qui vise un worktree ouvert à la session est accordé d'office (`addDirectories`) ;
 //! le reste devient une carte dans le chat, ou est refusé en fond (personne pour répondre).
+//!
+//! Questions à choix (`AskUserQuestion`, posées même en accès complet) : une carte de question
+//! dans le chat ; les réponses repartent dans `updatedInput.answers`. En fond, la question est
+//! refusée avec la consigne de trancher seul.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -43,10 +47,10 @@ use ts_rs::TS;
 
 use super::{
     claude_stream::{
-        ClaudeStream, PendingApproval, StreamItem, approval_response, background_denial, grant_response, interrupt_request,
-        user_message,
+        ASK_USER_QUESTION, ClaudeStream, PendingApproval, StreamItem, approval_response, background_denial,
+        background_question_denial, grant_response, interrupt_request, question_response, user_message,
     },
-    events::{AiErrorKind, AiEvent, ApprovalDecision},
+    events::{AiErrorKind, AiEvent, ApprovalDecision, QuestionAnswer},
     grants::{self, DirGrants},
     process::TreeChild,
     staging::SessionFiles,
@@ -123,9 +127,10 @@ pub fn args(launch: &ClaudeLaunch) -> Vec<OsString> {
         (Permissions::Ask, SessionMode::Chat) => "default",
     };
     args.extend(["--permission-mode".into(), mode.into()]);
-    if launch.permissions != Permissions::Full {
-        args.extend(["--permission-prompt-tool".into(), "stdio".into()]);
-    }
+    // Toujours, même en accès complet : `AskUserQuestion` (et les suppressions de chemins
+    // critiques) passent par `can_use_tool` dans tous les modes ; sans outil de demande, la
+    // question reviendrait vide à l'IA.
+    args.extend(["--permission-prompt-tool".into(), "stdio".into()]);
     if let Some(resume) = &launch.resume {
         args.extend(["--resume".into(), resume.into()]);
     }
@@ -222,12 +227,19 @@ impl ClaudeSession {
                     let mut answered = Vec::new();
                     for item in &items {
                         let StreamItem::Approval(pending) = item else { continue };
-                        let dir = grants::claude_tool_path(&pending.tool, &pending.input)
-                            .and_then(|path| grants::covering(&path, &dirs));
-                        let response = match dir {
-                            Some(dir) => grant_response(pending, &dir),
-                            None if background => background_denial(pending),
-                            None => continue,
+                        let response = if pending.tool == ASK_USER_QUESTION {
+                            if !background {
+                                continue;
+                            }
+                            background_question_denial(pending)
+                        } else {
+                            let dir = grants::claude_tool_path(&pending.tool, &pending.input)
+                                .and_then(|path| grants::covering(&path, &dirs));
+                            match dir {
+                                Some(dir) => grant_response(pending, &dir),
+                                None if background => background_denial(pending),
+                                None => continue,
+                            }
                         };
                         answered.push(pending.request_id.clone());
                         if let Err(err) = write_line(&stdin, &response).await {
@@ -237,7 +249,9 @@ impl ClaudeSession {
                     for item in items {
                         match item {
                             StreamItem::Approval(pending) if answered.contains(&pending.request_id) => {}
-                            StreamItem::Event(AiEvent::ApprovalRequested { request, .. }) if answered.contains(&request) => {}
+                            StreamItem::Event(
+                                AiEvent::ApprovalRequested { request, .. } | AiEvent::Question { request, .. },
+                            ) if answered.contains(&request) => {}
                             StreamItem::Approval(pending) => {
                                 shared.approvals.lock().unwrap().insert(pending.request_id.clone(), pending);
                             }
@@ -324,21 +338,27 @@ impl ClaudeSession {
         self.write(&interrupt_request(&id)).await
     }
 
+    /// Demande en attente de ce type (approbation, ou question `AskUserQuestion`).
+    fn take_pending(&self, request: &str, question: bool) -> Option<PendingApproval> {
+        let mut approvals = self.shared.approvals.lock().unwrap();
+        let matches = approvals.get(request).is_some_and(|p| (p.tool == ASK_USER_QUESTION) == question);
+        matches.then(|| approvals.remove(request)).flatten()
+    }
+
     /// Répond à une demande d'approbation.
     pub async fn answer(&self, request: &str, decision: ApprovalDecision) -> AppResult<()> {
         let pending = self
-            .shared
-            .approvals
-            .lock()
-            .unwrap()
-            .remove(request)
+            .take_pending(request, false)
             .ok_or_else(|| AppError::Validation("Cette demande d'approbation n'attend plus de réponse.".into()))?;
         self.write(&approval_response(&pending, decision)).await
     }
 
-    /// Claude Code ne pose pas de question par le flux (outil `AskUserQuestion` refusé en `-p`).
-    pub async fn answer_question(&self, _request: &str, _answer: &str) -> AppResult<()> {
-        Err(AppError::Validation("Claude Code n'attend pas de réponse à une question.".into()))
+    /// Répond à un `AskUserQuestion` : les réponses rejoignent l'entrée de l'outil (`answers`).
+    pub async fn answer_question(&self, request: &str, answers: &[QuestionAnswer]) -> AppResult<()> {
+        let pending = self
+            .take_pending(request, true)
+            .ok_or_else(|| AppError::Validation("Cette question n'attend plus de réponse.".into()))?;
+        self.write(&question_response(&pending, answers)).await
     }
 
     /// Tue le processus (le tour en cours est marqué interrompu).
@@ -406,7 +426,7 @@ mod tests {
         assert!(auto_edit.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]), "le shell reste demandé");
         let full = strings(&launch(Permissions::Full, SessionMode::Chat, None));
         assert!(full.windows(2).any(|w| w == ["--permission-mode", "bypassPermissions"]));
-        assert!(!full.contains(&"--permission-prompt-tool".to_string()), "rien à demander en accès complet");
+        assert!(full.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]), "les questions passent même en accès complet");
         assert!(!full.contains(&"--add-dir".to_string()));
 
         let mut granted = launch(Permissions::Ask, SessionMode::Chat, None);

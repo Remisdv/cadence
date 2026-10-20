@@ -33,6 +33,7 @@ import { versionReport } from "./versions";
 import { mockCatalogEntries, mockCatalogView } from "./catalog";
 import {
   answerApproval,
+  answerQuestion,
   listMockChats,
   mockActionGroup,
   mockChats,
@@ -528,11 +529,10 @@ const handlers: Handlers = {
     requestInterrupt(session);
     return null;
   },
-  chat_answer: ({ session, request, answer }) => {
-    const chat = state.chats.get(session);
-    if (!chat?.events.some((e) => e.event.type === "question" && e.event.request === request))
-      fail("chat_answer", "Cette question n'attend plus de réponse.");
-    recordMockChatEvent(state.chats, session, { type: "question-answered", request, answer });
+  chat_answer: ({ session, request, answers }) => {
+    if (!state.chats.has(session)) fail("chat_answer", `Conversation « ${session} » introuvable.`);
+    const problem = answerQuestion(request, answers);
+    if (problem) fail("chat_answer", problem);
     return null;
   },
   action_run: async ({ input }) => {

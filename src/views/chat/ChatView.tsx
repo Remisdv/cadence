@@ -60,7 +60,13 @@ import {
   useSetChatPermissions,
   useTools,
 } from "@/lib/query/queries";
-import type { AiId, ChatPermissions, ChatSessionRow, InstalledPluginView } from "@/lib/types";
+import type {
+  AiId,
+  ChatPermissions,
+  ChatSessionRow,
+  InstalledPluginView,
+  QuestionAnswer,
+} from "@/lib/types";
 import { navigate, useNavigation } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 import type { ViewProps } from "@/views/registry";
@@ -213,7 +219,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             plugins={plugins}
             showCommands={showCommands}
             onApprove={(request, decision) => approve.mutate({ request, decision })}
-            onAnswer={(request, text) => answer.mutate({ request, answer: text })}
+            onAnswer={(request, answers) => answer.mutateAsync({ request, answers })}
             onLink={onLink}
           />
           <Composer
@@ -324,7 +330,7 @@ function Thread({
   plugins: InstalledPluginView[];
   showCommands: boolean;
   onApprove: (request: string, decision: "allow" | "allow-session" | "deny") => void;
-  onAnswer: (request: string, answer: string) => void;
+  onAnswer: (request: string, answers: QuestionAnswer[]) => Promise<unknown>;
   onLink: (href: string) => boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);

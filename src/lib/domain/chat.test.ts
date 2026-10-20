@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { AiEvent, ChatEventRow } from "@/lib/types";
+import type { AiEvent, AiQuestion, ChatEventRow } from "@/lib/types";
 import {
   activitySummary,
   buildThread,
   compactArgs,
+  composeAnswer,
   conversationGroup,
   formatDuration,
   globalConversations,
@@ -93,24 +94,94 @@ describe("buildThread", () => {
 });
 
 describe("questions et rapports", () => {
-  it("garde la réponse donnée et affiche les rapports de fond", () => {
+  it("lit une question d'avant les questions multiples et affiche les rapports de fond", () => {
+    // Historique enregistré avant `questions` / `answers` : champs absents.
+    const old = [
+      {
+        type: "question",
+        request: "q1",
+        text: "Quelle langue ?",
+        options: ["Français", "Anglais"],
+      },
+      { type: "question-answered", request: "q1", answer: "Français" },
+    ] as unknown as AiEvent[];
     const items = buildThread(
       rows([
-        {
-          type: "question",
-          request: "q1",
-          text: "Quelle langue ?",
-          options: ["Français", "Anglais"],
-        },
-        { type: "question-answered", request: "q1", answer: "Français" },
+        ...old,
         { type: "report", text: "Moitié faite", progress: 50, isFinal: false, data: null },
         { type: "report", text: "Terminé", progress: 100, isFinal: true, data: null },
       ]),
     );
-    expect(items[0]).toMatchObject({ kind: "question", key: "q1", answer: "Français" });
+    expect(items[0]).toMatchObject({
+      kind: "question",
+      key: "q1",
+      answer: "Français",
+      answers: [],
+      questions: [
+        {
+          id: "Quelle langue ?",
+          options: [{ label: "Français" }, { label: "Anglais" }],
+          multiSelect: false,
+          other: true,
+        },
+      ],
+    });
     expect(
       items.filter((i) => i.kind === "report").map((i) => i.kind === "report" && i.final),
     ).toEqual([false, true]);
+  });
+
+  it("garde les questions détaillées et les réponses données", () => {
+    const questions: AiQuestion[] = [
+      {
+        id: "Quel format ?",
+        header: "Format",
+        question: "Quel format ?",
+        options: [
+          { label: "Résumé", description: "Court" },
+          { label: "Détaillé", description: null },
+        ],
+        multiSelect: false,
+        other: true,
+      },
+      {
+        id: "Quelles sections ?",
+        header: "Sections",
+        question: "Quelles sections ?",
+        options: [
+          { label: "Intro", description: null },
+          { label: "Conclusion", description: null },
+        ],
+        multiSelect: true,
+        other: false,
+      },
+    ];
+    const answers = [
+      { id: "Quel format ?", answers: ["Résumé"] },
+      { id: "Quelles sections ?", answers: ["Intro", "Conclusion"] },
+    ];
+    const items = buildThread(
+      rows([
+        { type: "question", request: "q2", text: "Quel format ?", options: [], questions },
+        {
+          type: "question-answered",
+          request: "q2",
+          answer: "Format : Résumé · Sections : Intro, Conclusion",
+          answers,
+        },
+      ]),
+    );
+    expect(items[0]).toMatchObject({ kind: "question", questions, answers });
+
+    // Choix de la carte : un seul pour un choix unique, dans l'ordre des options, puis « Autre ».
+    const [format, sections] = questions as [AiQuestion, AiQuestion];
+    expect(composeAnswer(format, ["Détaillé", "Résumé"], "")).toEqual(["Résumé"]);
+    expect(composeAnswer(format, [], "  Une page  ")).toEqual(["Une page"]);
+    expect(composeAnswer(sections, ["Conclusion", "Intro"], "ignoré")).toEqual([
+      "Intro",
+      "Conclusion",
+    ]);
+    expect(composeAnswer(sections, [], "")).toEqual([]);
   });
 });
 

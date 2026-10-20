@@ -6,7 +6,10 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::{
-    ai::{claude_code::Permissions, events::ApprovalDecision},
+    ai::{
+        claude_code::Permissions,
+        events::{ApprovalDecision, QuestionAnswer},
+    },
     chat::{
         ChatSendInput, ChatSendResult, ChatService,
         conversations::{ConversationDetail, ConversationInfo},
@@ -60,10 +63,16 @@ pub async fn chat_send(state: State<'_, AppState>, mut input: ChatSendInput) -> 
     chat(&state)?.send(input).await
 }
 
-/// Répond à une question posée par l'IA (Codex, OpenCode).
+/// Répond aux questions à choix de l'IA (Claude Code, Codex, OpenCode) : une entrée par
+/// question posée, libellés choisis ou texte libre.
 #[tauri::command]
-pub async fn chat_answer(state: State<'_, AppState>, session: String, request: String, answer: String) -> AppResult<()> {
-    chat(&state)?.answer(&session, &request, &answer).await
+pub async fn chat_answer(
+    state: State<'_, AppState>,
+    session: String,
+    request: String,
+    answers: Vec<QuestionAnswer>,
+) -> AppResult<()> {
+    chat(&state)?.answer(&session, &request, answers).await
 }
 
 #[tauri::command]

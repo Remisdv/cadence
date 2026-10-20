@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ChatThread, CommandCard } from "./ChatThread";
 import { buildThread, type ChatItem } from "@/lib/domain/chat";
 import type { AiEvent } from "@/lib/types";
+import { MOCK_QUESTIONS } from "@/lib/ipc/mock/chat";
 
 const LONG =
   'cd "C:/Users/lhuil/AppData/Roaming/app.cadence.desktop/repos/.worktrees/remisdv/go-alternance-crm-poc/extraction-issues" && ls -la && echo "--- TREE ---" && find . -path ./.git -prune -o -type f -print | head -100';
@@ -100,5 +101,52 @@ describe("CommandCard : une commande très longue reste dans le fil", () => {
 
   it("borne la carte et son contenu à la largeur du fil", () => {
     expect(classOf(html, "details ").split(" ")).toContain("min-w-0");
+  });
+});
+
+describe("carte de questions à choix", () => {
+  const questions = MOCK_QUESTIONS;
+  const asked: AiEvent = {
+    type: "question",
+    request: "q1",
+    text: questions.map((q) => q.question).join("\n"),
+    options: [],
+    questions,
+  };
+
+  it("montre chaque question, ses choix (unique ou multiple), « Autre » et Envoyer", () => {
+    const html = renderToStaticMarkup(
+      <ChatThread items={thread([asked])} ai="Claude Code" onAnswer={() => {}} />,
+    );
+    expect(html).toContain("2 questions de l&#x27;IA");
+    expect(html.match(/role="radio"/g)).toHaveLength(2);
+    expect(html.match(/role="checkbox"/g)).toHaveLength(3);
+    expect(html).toContain("Plusieurs choix possibles");
+    expect(html.match(/placeholder="Autre réponse…"/g)).toHaveLength(2);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Envoyer/s);
+  });
+
+  it("une fois répondue, montre les réponses données", () => {
+    const html = renderToStaticMarkup(
+      <ChatThread
+        items={thread([
+          asked,
+          {
+            type: "question-answered",
+            request: "q1",
+            answer: "Format : Résumé · Sections : Formules",
+            answers: [
+              { id: questions[0]!.id, answers: ["Résumé"] },
+              { id: questions[1]!.id, answers: ["Formules", "Exercices"] },
+            ],
+          },
+        ])}
+        ai="Claude Code"
+      />,
+    );
+    expect(html).toContain("Répondu");
+    expect(html).toContain("Formules, Exercices");
+    expect(html).not.toContain("Envoyer");
+    expect(html).not.toContain('role="radio"');
   });
 });

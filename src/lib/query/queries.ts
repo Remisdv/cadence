@@ -14,6 +14,7 @@ import type {
   ChatSendInput,
   ChatSessionDetail,
   ChatSessionRow,
+  QuestionAnswer,
   AuthProvider,
   AuthStatus,
   CliAgentInfo,
@@ -382,8 +383,8 @@ export function useApproveChat(session: string) {
 
 export function useAnswerChat(session: string) {
   return useMutation({
-    mutationFn: ({ request, answer }: { request: string; answer: string }) =>
-      call("chat_answer", { session, request, answer }),
+    mutationFn: ({ request, answers }: { request: string; answers: QuestionAnswer[] }) =>
+      call("chat_answer", { session, request, answers }),
   });
 }
 

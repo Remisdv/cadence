@@ -4,6 +4,9 @@
 //! Selon le message reçu :
 //! - par défaut : répond « écho : <message> » (deltas mot à mot, message complet, résultat) ;
 //! - « approbation » : demande `can_use_tool` (Write) et répond selon la décision ;
+//! - « question » : pose deux questions `AskUserQuestion` (par `can_use_tool`, s'il y a un
+//!   `--permission-prompt-tool`) et répond « réponses (2 questions) : Quel format ?=… | … » ou
+//!   « question refusée : <message> » ;
 //! - « long » : diffuse lentement, jusqu'à une interruption (`control_request interrupt`) ;
 //! - « plante » : écrit sur stderr et quitte (code 1) ;
 //! - « dossiers » : répond la liste des `--add-dir` reçus (« dossiers : a | b ») ;
@@ -129,6 +132,50 @@ fn main() {
                         "lu : refusé".to_string()
                     };
                     session.start_text();
+                    session.text(&reply);
+                    session.result(false);
+                    continue;
+                }
+                if text.contains("question") {
+                    // `AskUserQuestion` passe par `can_use_tool` dans tous les modes, à condition
+                    // d'avoir un outil de demande ; sinon la question revient vide.
+                    session.start_text();
+                    if !args.iter().any(|a| a == "--permission-prompt-tool") {
+                        session.text("question : aucune réponse");
+                        session.result(false);
+                        continue;
+                    }
+                    let request = format!("question-{}", session.turn);
+                    let questions = json!([
+                        { "question": "Quel format ?", "header": "Format", "multiSelect": false,
+                          "options": [{ "label": "Résumé", "description": "Court" }, { "label": "Détaillé", "description": "Long" }] },
+                        { "question": "Quelles sections ?", "header": "Sections", "multiSelect": true,
+                          "options": [{ "label": "Intro", "description": "" }, { "label": "Conclusion", "description": "" }] }
+                    ]);
+                    emit(json!({ "type": "control_request", "request_id": request, "request": {
+                        "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "display_name": "AskUserQuestion",
+                        "input": { "questions": questions }, "permission_suggestions": [], "tool_use_id": "toolu_q" } }));
+                    let answer = loop {
+                        match rx.recv() {
+                            Ok(m) if m["type"] == "control_response" && m["response"]["request_id"] == request.as_str() => break m,
+                            Ok(_) => continue,
+                            Err(_) => return,
+                        }
+                    };
+                    let response = &answer["response"]["response"];
+                    let reply = if response["behavior"] == "allow" {
+                        let input = &response["updatedInput"];
+                        let kept = input["questions"].as_array().map(Vec::len).unwrap_or(0);
+                        let answers: Vec<String> = input["answers"]
+                            .as_object()
+                            .into_iter()
+                            .flatten()
+                            .map(|(q, a)| format!("{q}={}", a.as_str().unwrap_or_default()))
+                            .collect();
+                        format!("réponses ({kept} questions) : {}", answers.join(" | "))
+                    } else {
+                        format!("question refusée : {}", response["message"].as_str().unwrap_or_default())
+                    };
                     session.text(&reply);
                     session.result(false);
                     continue;

@@ -23,13 +23,14 @@ import { cn } from "@/lib/cn";
 import {
   activitySummary,
   compactArgs,
+  composeAnswer,
   formatDuration,
   groupTurns,
   isActivity,
   type ChatItem,
   type ChatTurn,
 } from "@/lib/domain/chat";
-import type { ApprovalDecision } from "@/lib/types";
+import type { AiQuestion, ApprovalDecision, QuestionAnswer } from "@/lib/types";
 
 type Item<K extends ChatItem["kind"]> = Extract<ChatItem, { kind: K }>;
 
@@ -42,8 +43,8 @@ export interface ChatThreadProps {
   /** Un tour est en cours : indicateur d'attente tant que rien n'arrive. */
   running?: boolean;
   onApprove?: (request: string, decision: ApprovalDecision) => void;
-  /** Réponse à une question de l'IA (Codex, OpenCode). */
-  onAnswer?: (request: string, answer: string) => void;
+  /** Réponses aux questions à choix de l'IA, une par question ; un rejet rouvre la carte. */
+  onAnswer?: (request: string, answers: QuestionAnswer[]) => void | Promise<unknown>;
   /** Clic sur un lien du texte ; `true` s'il est traité (liens `cadence:`). */
   onLink?: (href: string) => boolean;
   /** Commandes, outils et fichiers montrés (défaut) ; sinon résumés par tour. */
@@ -504,7 +505,11 @@ function PlanCard({ item }: { item: Item<"plan"> }) {
   );
 }
 
-/** Question de l'IA : les choix proposés, ou une réponse libre. */
+/**
+ * Questions à choix de l'IA (`AskUserQuestion`, et l'équivalent de Codex et d'OpenCode) : une
+ * ou plusieurs questions, choix unique ou multiple, champ « Autre » ; « Envoyer » quand chaque
+ * question a sa réponse. Une fois répondu, la carte montre les réponses données.
+ */
 export function QuestionCard({
   item,
   onAnswer,
@@ -512,51 +517,148 @@ export function QuestionCard({
   item: Item<"question">;
   onAnswer?: ChatThreadProps["onAnswer"];
 }) {
-  const [text, setText] = useState("");
+  const [picked, setPicked] = useState<Record<string, string[]>>({});
+  const [other, setOther] = useState<Record<string, string>>({});
+  const [sent, setSent] = useState(false);
   const answered = item.answer !== null;
+  const answers: QuestionAnswer[] = item.questions.map((q) => ({
+    id: q.id,
+    answers: composeAnswer(q, picked[q.id] ?? [], other[q.id] ?? ""),
+  }));
+  const complete = answers.every((a) => a.answers.length > 0);
+  const toggle = (question: AiQuestion, label: string) =>
+    setPicked((prev) => {
+      const current = prev[question.id] ?? [];
+      const next = question.multiSelect
+        ? current.includes(label)
+          ? current.filter((l) => l !== label)
+          : [...current, label]
+        : current.includes(label)
+          ? []
+          : [label];
+      return { ...prev, [question.id]: next };
+    });
+  const submit = () => {
+    if (!complete || sent) return;
+    setSent(true);
+    void Promise.resolve(onAnswer?.(item.key, answers)).catch(() => setSent(false));
+  };
+  const given = (question: AiQuestion) =>
+    item.answers.find((a) => a.id === question.id)?.answers.join(", ");
+
   return (
     <div
       className={cn(
-        "flex max-w-[720px] flex-col gap-2.5 rounded-field border px-3.5 py-3",
+        "flex max-w-[720px] flex-col gap-3 rounded-field border px-3.5 py-3",
         answered ? "border-line bg-p2" : "border-blue-line bg-blue-d",
       )}
     >
-      <div className="flex items-start gap-2 text-body-sm">
-        <span className={cn("mt-px flex", answered ? "text-tx3" : "text-blue")}>
+      <div className="flex items-center gap-2 text-body-sm">
+        <span className={cn("flex", answered ? "text-tx3" : "text-blue")}>
           <Icon name="chat" size={14} />
         </span>
-        <span className="min-w-0 grow leading-[1.55] font-medium wrap-anywhere whitespace-pre-wrap">
-          {item.text}
+        <span className="min-w-0 grow font-medium">
+          {item.questions.length > 1
+            ? `${item.questions.length} questions de l'IA`
+            : "Question de l'IA"}
         </span>
         {answered && <Badge tone="green">Répondu</Badge>}
       </div>
-      {answered ? (
-        <span className="text-small text-tx2">{item.answer}</span>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          {item.options.map((option) => (
-            <Button key={option} size="sm" onClick={() => onAnswer?.(item.key, option)}>
-              {option}
-            </Button>
-          ))}
-          <form
-            className="flex min-w-[240px] grow items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (text.trim()) onAnswer?.(item.key, text.trim());
-            }}
+      {item.questions.map((question) => (
+        <fieldset key={question.id} className="flex min-w-0 flex-col gap-1.5">
+          <legend className="contents">
+            {question.header && (
+              <span className="text-micro font-semibold tracking-[0.09em] text-tx3 uppercase">
+                {question.header}
+              </span>
+            )}
+            <span className="text-body-sm leading-[1.55] wrap-anywhere whitespace-pre-wrap text-tx">
+              {question.question}
+            </span>
+          </legend>
+          {answered ? (
+            <span className="text-small text-tx2">
+              {given(question) ?? (item.questions.length === 1 ? item.answer : null) ?? "—"}
+            </span>
+          ) : (
+            <>
+              {question.multiSelect && (
+                <span className="text-caption text-tx3">Plusieurs choix possibles</span>
+              )}
+              <div className="flex flex-col gap-[5px]">
+                {question.options.map((option) => {
+                  const on = (picked[question.id] ?? []).includes(option.label);
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      role={question.multiSelect ? "checkbox" : "radio"}
+                      aria-label={option.label}
+                      aria-checked={on}
+                      disabled={sent}
+                      onClick={() => toggle(question, option.label)}
+                      className={cn(
+                        "flex items-start gap-2.5 rounded-control border px-2.5 py-[7px] text-left transition-colors disabled:opacity-60",
+                        on ? "border-blue-line bg-panel" : "border-line bg-p2 hover:bg-p3",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "mt-0.5 inline-flex size-3.5 shrink-0 items-center justify-center border",
+                          question.multiSelect ? "rounded-[4px]" : "rounded-full",
+                          on ? "border-blue bg-blue text-bg" : "border-line2 bg-panel",
+                        )}
+                      >
+                        {on && <Icon name="check" size={10} />}
+                      </span>
+                      <span className="flex min-w-0 flex-col">
+                        <span className="text-body-sm font-medium text-tx">{option.label}</span>
+                        {option.description && (
+                          <span className="text-caption leading-normal text-tx3">
+                            {option.description}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {question.other && (
+                <input
+                  aria-label={`Autre réponse : ${question.question}`}
+                  placeholder={question.options.length > 0 ? "Autre réponse…" : "Votre réponse…"}
+                  value={other[question.id] ?? ""}
+                  disabled={sent}
+                  onChange={(e) => setOther((prev) => ({ ...prev, [question.id]: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      submit();
+                    }
+                  }}
+                  className="h-7 min-w-0 rounded-control border border-line2 bg-panel px-2.5 text-body-sm text-tx outline-none focus:border-blue-line"
+                />
+              )}
+            </>
+          )}
+        </fieldset>
+      ))}
+      {!answered && (
+        <div className="flex items-center justify-end gap-2">
+          {!complete && (
+            <span className="text-caption text-tx3">
+              {item.questions.length > 1 ? "Répondez à chaque question" : "Choisissez une réponse"}
+            </span>
+          )}
+          <Button
+            size="sm"
+            variant="primary"
+            icon="send"
+            disabled={!complete || sent}
+            onClick={submit}
           >
-            <input
-              aria-label="Votre réponse"
-              placeholder={item.options.length > 0 ? "Autre réponse…" : "Votre réponse…"}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              className="h-7 min-w-0 grow rounded-control border border-line2 bg-panel px-2.5 text-body-sm text-tx outline-none focus:border-blue-line"
-            />
-            <Button type="submit" size="sm" variant="primary" disabled={!text.trim()}>
-              Répondre
-            </Button>
-          </form>
+            Envoyer
+          </Button>
         </div>
       )}
     </div>

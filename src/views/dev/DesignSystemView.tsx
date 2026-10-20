@@ -35,6 +35,7 @@ import { NeutralTile, PluginTile } from "@/components/domain/PluginTile";
 import { SettingsForm } from "@/components/domain/SettingsForm";
 import { mockAppSettings, mockPlugins, mockSettingsSchema } from "@/lib/ipc/mock/plugins";
 import { mockToolsReport } from "@/lib/ipc/mock/tools";
+import { MOCK_QUESTIONS } from "@/lib/ipc/mock/chat";
 import { AiCard } from "@/components/domain/AiCard";
 import { CommandBox } from "@/components/domain/CommandBox";
 import { ToolsTable } from "@/components/domain/ToolsTable";
@@ -292,6 +293,19 @@ export default function DesignSystemView() {
               model="claude-opus-5"
               running
               onApprove={() => {}}
+            />
+          </Card>
+        </Section>
+
+        <Section title="Chat : questions à choix de l'IA (en attente, puis répondue)">
+          <Card className="p-5">
+            <ChatThread
+              items={buildThread(
+                sampleQuestions.map((event, i) => ({ seq: i + 1, turn: 1, at: "", event })),
+              )}
+              ai="Claude Code"
+              model="claude-opus-5"
+              onAnswer={() => {}}
             />
           </Card>
         </Section>
@@ -848,6 +862,43 @@ export default function DesignSystemView() {
 }
 
 /** Fil d'exemple de la galerie (V2-Chat.dc.html). */
+/** Questions à choix (`AskUserQuestion`) : une carte répondue, puis une en attente. */
+const sampleQuestions: AiEvent[] = [
+  { type: "user-message", text: "Prépare la fiche du chapitre 3." },
+  {
+    type: "question",
+    request: "q0",
+    text: "Pour quel examen ?",
+    options: ["Partiel", "Final"],
+    questions: [
+      {
+        id: "Pour quel examen ?",
+        header: "Examen",
+        question: "Pour quel examen ?",
+        options: [
+          { label: "Partiel", description: null },
+          { label: "Final", description: null },
+        ],
+        multiSelect: false,
+        other: true,
+      },
+    ],
+  },
+  {
+    type: "question-answered",
+    request: "q0",
+    answer: "Partiel",
+    answers: [{ id: "Pour quel examen ?", answers: ["Partiel"] }],
+  },
+  {
+    type: "question",
+    request: "q1",
+    text: MOCK_QUESTIONS.map((q) => q.question).join("\n"),
+    options: MOCK_QUESTIONS[0]!.options.map((o) => o.label),
+    questions: MOCK_QUESTIONS,
+  },
+];
+
 const sampleChat: AiEvent[] = [
   {
     type: "user-message",

@@ -1,12 +1,13 @@
 /**
  * Chat du mode mock : deux conversations d'exemple, et une IA simulée qui répond mot à mot
  * par `chat://event`. Message contenant « approbation » : carte d'approbation (sauf en mode
- * Auto) ; « commandes » : plusieurs commandes (dont une très longue), une lecture et deux
- * fichiers modifiés ; « long » : réponse lente, interruptible ; « erreur » : tour en échec
- * (connexion expirée).
+ * Auto) ; « question » : deux questions à choix (dans tous les modes) ; « commandes » :
+ * plusieurs commandes (dont une très longue), une lecture et deux fichiers modifiés ;
+ * « long » : réponse lente, interruptible ; « erreur » : tour en échec (connexion expirée).
  */
 import type {
   AiEvent,
+  AiQuestion,
   AiId,
   ApprovalDecision,
   ChatEventPayload,
@@ -17,6 +18,7 @@ import type {
   ChatStatePayload,
   ConversationDetail,
   ConversationInfo,
+  QuestionAnswer,
 } from "@/lib/types";
 import { globalConversations, localGroup, originPlugin } from "@/lib/domain/chat";
 import { mockBus } from "./bus";
@@ -403,9 +405,37 @@ export async function simulateTurn(chats: Chats, id: string, text: string) {
     }
   }
 
-  const reply = text.includes("long")
-    ? Array.from({ length: 60 }, (_, i) => `Vers ${i + 1} sur la mer qui roule.\n`).join("")
-    : `Réponse simulée à « ${text.slice(0, 80)} ». En mode mock, aucune IA n'est appelée : lancez l'app avec Claude Code installé pour une vraie conversation.`;
+  // Questions à choix (comme `AskUserQuestion`) : posées dans tous les modes, « Auto » compris.
+  let answered: string | null = null;
+  if (text.includes("question")) {
+    const request = `question-${Date.now()}`;
+    const questions = MOCK_QUESTIONS;
+    record(chats, id, {
+      type: "question",
+      request,
+      text: questions.map((q) => q.question).join("\n"),
+      options: questions[0]!.options.map((o) => o.label),
+      questions,
+    });
+    setState(chats, id, "waiting-approval");
+    const answers = await new Promise<QuestionAnswer[]>((resolve) =>
+      pendingQuestions.set(request, { questions, resolve }),
+    );
+    answered = answers
+      .map((a) => {
+        const header = questions.find((q) => q.id === a.id)?.header;
+        return `${header ? `${header} : ` : ""}${a.answers.join(", ")}`;
+      })
+      .join(" · ");
+    record(chats, id, { type: "question-answered", request, answer: answered, answers });
+    setState(chats, id, "running");
+  }
+
+  const reply = answered
+    ? `Merci : ${answered}. En mode mock, aucune IA n'est appelée.`
+    : text.includes("long")
+      ? Array.from({ length: 60 }, (_, i) => `Vers ${i + 1} sur la mer qui roule.\n`).join("")
+      : `Réponse simulée à « ${text.slice(0, 80)} ». En mode mock, aucune IA n'est appelée : lancez l'app avec Claude Code installé pour une vraie conversation.`;
   let sent = "";
   for (const word of reply.split(/(?<= )/)) {
     if (interrupts.delete(id)) {
@@ -468,6 +498,58 @@ async function simulateCommands(chats: Chats, id: string) {
   });
   for (const path of ["src/extraction/issues.go", "src/extraction/labels.go"])
     record(chats, id, { type: "file-changed", path, change: "modified" });
+}
+
+/** Questions du mode mock (message contenant « question »). */
+export const MOCK_QUESTIONS: AiQuestion[] = [
+  {
+    id: "Quel format pour la fiche ?",
+    header: "Format",
+    question: "Quel format pour la fiche ?",
+    options: [
+      { label: "Résumé", description: "Une page, l'essentiel" },
+      { label: "Détaillé", description: "Définitions, exemples et exercices" },
+    ],
+    multiSelect: false,
+    other: true,
+  },
+  {
+    id: "Quelles sections inclure ?",
+    header: "Sections",
+    question: "Quelles sections inclure ?",
+    options: [
+      { label: "Introduction", description: null },
+      { label: "Formules", description: "Avec leurs unités" },
+      { label: "Conclusion", description: null },
+    ],
+    multiSelect: true,
+    other: true,
+  },
+];
+
+const pendingQuestions = new Map<
+  string,
+  { questions: AiQuestion[]; resolve: (answers: QuestionAnswer[]) => void }
+>();
+
+/**
+ * Réponse à une question en attente, comme `ChatService::answer` : une entrée non vide par
+ * question, remises dans l'ordre. Renvoie un message d'erreur, ou `null` si c'est transmis.
+ */
+export function answerQuestion(request: string, answers: QuestionAnswer[]): string | null {
+  const pending = pendingQuestions.get(request);
+  if (!pending) return "Cette question n'attend plus de réponse.";
+  const ordered = pending.questions.map((q) => ({
+    id: q.id,
+    answers: (answers.find((a) => a.id === q.id)?.answers ?? [])
+      .map((s) => s.trim())
+      .filter(Boolean),
+  }));
+  const missing = pending.questions.find((_, i) => ordered[i]!.answers.length === 0);
+  if (missing) return `Répondez à « ${missing.question} ».`;
+  pendingQuestions.delete(request);
+  pending.resolve(ordered);
+  return null;
 }
 
 export function answerApproval(request: string, decision: ApprovalDecision): boolean {

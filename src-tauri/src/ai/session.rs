@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use super::{
     claude_code::{ClaudeLaunch, ClaudeSession, Permissions, SessionMode},
     codex::CodexSession,
-    events::{AiEvent, ApprovalDecision},
+    events::{AiEvent, ApprovalDecision, QuestionAnswer},
     grants::DirGrants,
     opencode::OpencodeSession,
     staging::SessionFiles,
@@ -108,8 +108,9 @@ impl AiSession {
         each!(self, s => s.answer(request, decision).await)
     }
 
-    pub async fn answer_question(&self, request: &str, answer: &str) -> AppResult<()> {
-        each!(self, s => s.answer_question(request, answer).await)
+    /// Réponses aux questions à choix, dans l'ordre des questions posées.
+    pub async fn answer_question(&self, request: &str, answers: &[QuestionAnswer]) -> AppResult<()> {
+        each!(self, s => s.answer_question(request, answers).await)
     }
 
     /// Tue le processus (le tour en cours est marqué interrompu).

@@ -44,7 +44,9 @@ use self::{
 use crate::{
     ai::{
         claude_code::{Permissions, SessionMode},
-        events::{AiErrorKind, AiEvent, ApprovalDecision},
+        events::{
+            AiErrorKind, AiEvent, AiQuestion, ApprovalDecision, QuestionAnswer, QuestionOption, answers_summary, check_answers,
+        },
         grants::DirGrants,
         session::{AiLaunch, AiSession},
         staging::{self, StagedSkill},
@@ -468,19 +470,43 @@ impl ChatService {
         self.record(&id, turn, event).await.map(|_| ())
     }
 
-    /// Répond à une question posée par l'IA (Codex, OpenCode).
-    pub async fn answer(&self, id: &str, request: &str, answer: &str) -> AppResult<()> {
-        let answer = answer.trim();
-        if answer.is_empty() {
-            return Err(AppError::Validation("La réponse est vide.".into()));
-        }
+    /// Répond aux questions à choix de l'IA (Claude Code, Codex, OpenCode) : une entrée par
+    /// question posée (libellés choisis ou texte libre), remise dans l'ordre des questions.
+    pub async fn answer(&self, id: &str, request: &str, answers: Vec<QuestionAnswer>) -> AppResult<()> {
+        let questions = self.asked(id, request).await?;
+        let answers: Vec<QuestionAnswer> = questions
+            .iter()
+            .filter_map(|q| answers.iter().find(|a| a.id == q.id))
+            .map(|a| QuestionAnswer {
+                id: a.id.clone(),
+                answers: a.answers.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+            })
+            .collect();
+        check_answers(&questions, &answers).map_err(AppError::Validation)?;
         let Some(session) = self.live_session(id).await else {
             return Err(AppError::Validation("Cette question n'attend plus de réponse.".into()));
         };
-        session.answer_question(request, answer).await?;
+        session.answer_question(request, &answers).await?;
         let turn = self.store.next_turn(id).await?.saturating_sub(1);
-        self.record(id, turn, AiEvent::QuestionAnswered { request: request.into(), answer: answer.into() }).await?;
+        let answer = answers_summary(&questions, &answers);
+        self.record(id, turn, AiEvent::QuestionAnswered { request: request.into(), answer, answers }).await?;
         self.set_state(id, ChatState::Running).await
+    }
+
+    /// Questions d'une demande `request`, lues dans l'historique (une seule pour une question
+    /// d'avant les questions multiples).
+    async fn asked(&self, id: &str, request: &str) -> AppResult<Vec<AiQuestion>> {
+        let events = self.store.events(id).await?;
+        let asked = events.into_iter().rev().find_map(|row| match row.event {
+            AiEvent::Question { request: r, text, options, questions } if r == request => Some(if questions.is_empty() {
+                let options = options.into_iter().map(|label| QuestionOption { label, description: None }).collect();
+                vec![AiQuestion { id: text.clone(), header: None, question: text, options, multi_select: false, other: true }]
+            } else {
+                questions
+            }),
+            _ => None,
+        });
+        asked.ok_or_else(|| AppError::Validation("Cette question n'attend plus de réponse.".into()))
     }
 
     /// Processus vivant de la conversation, lancé au besoin.

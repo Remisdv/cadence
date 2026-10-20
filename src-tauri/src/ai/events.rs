@@ -117,6 +117,101 @@ pub struct PlanItem {
     pub status: PlanStatus,
 }
 
+/// Choix proposé par une question de l'IA.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct QuestionOption {
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Question à choix posée par l'IA (`AskUserQuestion` de Claude Code, `requestUserInput` de
+/// Codex, `question.asked` d'OpenCode).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AiQuestion {
+    /// Identifiant rendu avec la réponse : celui de la CLI (Codex), sinon le texte de la question.
+    pub id: String,
+    /// Titre court (« Format »).
+    #[serde(default)]
+    pub header: Option<String>,
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<QuestionOption>,
+    /// Plusieurs choix possibles.
+    #[serde(default)]
+    pub multi_select: bool,
+    /// Réponse libre acceptée (« Autre »).
+    #[serde(default)]
+    pub other: bool,
+}
+
+/// Réponse de l'utilisateur à une question : les libellés choisis, ou un texte libre.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct QuestionAnswer {
+    /// `id` de la question.
+    pub id: String,
+    pub answers: Vec<String>,
+}
+
+/// Choix `[{ label, description }]` d'une question, tels que les trois CLI les décrivent.
+pub fn question_options(value: Option<&Value>) -> Vec<QuestionOption> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|o| {
+            let label = o.get("label").and_then(Value::as_str)?.to_string();
+            let description = o.get("description").and_then(Value::as_str).filter(|d| !d.is_empty()).map(str::to_string);
+            Some(QuestionOption { label, description })
+        })
+        .collect()
+}
+
+/// Réponse donnée d'office à une question posée pendant une exécution de fond.
+pub const BACKGROUND_ANSWER: &str =
+    "Personne ne peut répondre pendant une tâche de fond : choisis l'option la plus raisonnable, poursuis, et signale ce choix dans ton rapport.";
+
+/// Réponses d'office (fond) aux questions `ids`.
+pub fn background_answers(ids: &[String]) -> Vec<QuestionAnswer> {
+    ids.iter().map(|id| QuestionAnswer { id: id.clone(), answers: vec![BACKGROUND_ANSWER.into()] }).collect()
+}
+
+/// Vérifie une réponse : une entrée non vide par question posée, rien d'autre.
+pub fn check_answers(questions: &[AiQuestion], answers: &[QuestionAnswer]) -> Result<(), String> {
+    for question in questions {
+        let given = answers.iter().find(|a| a.id == question.id);
+        if !given.is_some_and(|a| a.answers.iter().any(|s| !s.trim().is_empty())) {
+            return Err(format!("Répondez à « {} ».", question.question));
+        }
+    }
+    if let Some(extra) = answers.iter().find(|a| !questions.iter().any(|q| q.id == a.id)) {
+        return Err(format!("« {} » n'est pas une question posée.", extra.id));
+    }
+    Ok(())
+}
+
+/// Réponse lisible (« Format : Résumé · Sections : Intro, Conclusion »), pour l'historique.
+pub fn answers_summary(questions: &[AiQuestion], answers: &[QuestionAnswer]) -> String {
+    answers
+        .iter()
+        .map(|a| {
+            let joined = a.answers.join(", ");
+            let question = questions.iter().find(|q| q.id == a.id);
+            match question.and_then(|q| q.header.as_deref()).filter(|h| !h.is_empty()) {
+                Some(header) if answers.len() > 1 => format!("{header} : {joined}"),
+                _ => joined,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// Événement d'une session d'IA.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "kebab-case", rename_all_fields = "camelCase")]
@@ -156,9 +251,22 @@ pub enum AiEvent {
     },
     /// Réponse donnée à une demande d'approbation (écrit par Cadence).
     ApprovalAnswered { request: String, decision: ApprovalDecision },
-    Question { request: String, text: String, options: Vec<String> },
-    /// Réponse donnée à une question (écrit par Cadence).
-    QuestionAnswered { request: String, answer: String },
+    /// Questions à choix de l'IA ; `text` et `options` résument la première (historique d'avant
+    /// les questions multiples, où `questions` est absent).
+    Question {
+        request: String,
+        text: String,
+        options: Vec<String>,
+        #[serde(default)]
+        questions: Vec<AiQuestion>,
+    },
+    /// Réponse donnée à une question (écrit par Cadence) : `answer` lisible, `answers` détaillées.
+    QuestionAnswered {
+        request: String,
+        answer: String,
+        #[serde(default)]
+        answers: Vec<QuestionAnswer>,
+    },
     /// Rapport d'une exécution de fond (`cadence__run_report`), écrit par Cadence.
     Report {
         text: String,
@@ -173,6 +281,13 @@ pub enum AiEvent {
 }
 
 impl AiEvent {
+    /// Question(s) de l'IA, avec le résumé `text` / `options` (anciens lecteurs).
+    pub fn question(request: String, questions: Vec<AiQuestion>) -> Self {
+        let text = questions.iter().map(|q| q.question.as_str()).collect::<Vec<_>>().join("\n");
+        let options = questions.first().map(|q| q.options.iter().map(|o| o.label.clone()).collect()).unwrap_or_default();
+        AiEvent::Question { request, text, options, questions }
+    }
+
     /// Enregistré dans l'historique (les deltas ne le sont pas).
     pub fn is_persisted(&self) -> bool {
         !matches!(self, AiEvent::MessageDelta { .. })
@@ -220,6 +335,36 @@ mod tests {
             ToolSource::Cadence { plugin: "exemple".into(), tool: "echo".into() }
         );
         assert_eq!(ToolSource::from_opencode_name("bash"), ToolSource::Builtin);
+    }
+
+    #[test]
+    fn checks_and_summarizes_question_answers() {
+        let question = |id: &str, header: Option<&str>| AiQuestion {
+            id: id.into(),
+            header: header.map(str::to_string),
+            question: format!("{id} ?"),
+            options: Vec::new(),
+            multi_select: false,
+            other: true,
+        };
+        let questions = [question("format", Some("Format")), question("sections", Some("Sections"))];
+        let answer = |id: &str, answers: &[&str]| QuestionAnswer { id: id.into(), answers: answers.iter().map(|s| s.to_string()).collect() };
+        let full = [answer("format", &["Résumé"]), answer("sections", &["Intro", "Conclusion"])];
+        assert!(check_answers(&questions, &full).is_ok());
+        assert_eq!(answers_summary(&questions, &full), "Format : Résumé · Sections : Intro, Conclusion");
+        assert_eq!(answers_summary(&questions[..1], &full[..1]), "Résumé", "une seule question : sans titre");
+        assert!(check_answers(&questions, &full[..1]).unwrap_err().contains("sections ?"));
+        assert!(check_answers(&questions, &[answer("format", &["Résumé"]), answer("sections", &[" "])]).is_err());
+        assert!(check_answers(&questions[..1], &full).is_err(), "question inconnue");
+        assert_eq!(background_answers(&["q1".into()])[0].answers, [BACKGROUND_ANSWER]);
+
+        // Historique d'avant les questions multiples : `questions` et `answers` absents.
+        let old: AiEvent = serde_json::from_value(json!({ "type": "question", "request": "q", "text": "Langue ?", "options": ["Fr"] })).unwrap();
+        assert!(matches!(old, AiEvent::Question { questions, .. } if questions.is_empty()));
+        let old: AiEvent = serde_json::from_value(json!({ "type": "question-answered", "request": "q", "answer": "Fr" })).unwrap();
+        assert!(matches!(old, AiEvent::QuestionAnswered { answers, .. } if answers.is_empty()));
+        let event = AiEvent::question("q".into(), vec![question("format", None)]);
+        assert_eq!(serde_json::to_value(&event).unwrap()["questions"][0]["multiSelect"], false);
     }
 
     #[test]

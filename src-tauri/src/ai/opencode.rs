@@ -31,7 +31,7 @@ use tokio::{
 
 use super::{
     claude_code::{Permissions, SessionMode},
-    events::{AiErrorKind, AiEvent, ApprovalDecision},
+    events::{AiErrorKind, AiEvent, ApprovalDecision, QuestionAnswer},
     grants::{self, DirGrants},
     opencode_stream::{OpencodeStream, sse_data},
     process::{Tail, TreeChild, random_secret},
@@ -268,12 +268,13 @@ impl OpencodeSession {
             .map(|_| ())
     }
 
-    /// Répond à une question (`question.asked`) : la même réponse pour chaque question posée.
-    pub async fn answer_question(&self, request: &str, answer: &str) -> AppResult<()> {
+    /// Répond à une question (`question.asked`) : une liste de réponses par question, dans
+    /// l'ordre des questions posées.
+    pub async fn answer_question(&self, request: &str, answers: &[QuestionAnswer]) -> AppResult<()> {
         if !self.shared.questions.lock().unwrap().remove(request) {
             return Err(AppError::Validation("Cette question n'attend plus de réponse.".into()));
         }
-        let body = json!({ "answers": [[answer]] });
+        let body = json!({ "answers": answers.iter().map(|a| a.answers.clone()).collect::<Vec<_>>() });
         self.send_json(reqwest::Method::POST, &format!("/question/{request}/reply"), Some(body)).await.map(|_| ())
     }
 

@@ -6,7 +6,8 @@
 use serde_json::{Value, json};
 
 use super::events::{
-    AiErrorKind, AiEvent, ApprovalDecision, ApprovalKind, FileChange, PlanItem, PlanStatus, ToolSource, truncate,
+    AiErrorKind, AiEvent, AiQuestion, ApprovalDecision, ApprovalKind, FileChange, PlanItem, PlanStatus, QuestionAnswer,
+    ToolSource, question_options, truncate,
 };
 
 /// Ce qu'une ligne du serveur demande à la session.
@@ -33,10 +34,16 @@ pub struct PendingCodex {
     pub paths: Vec<String>,
 }
 
-/// Réponse JSON-RPC à une question : la même réponse pour chaque question posée.
-pub fn question_reply(pending: &PendingCodex, answer: &str) -> Value {
-    let answers: serde_json::Map<String, Value> =
-        pending.questions.iter().map(|q| (q.clone(), json!({ "answers": [answer] }))).collect();
+/// Réponse JSON-RPC à `requestUserInput` : les réponses de chaque question, par son id.
+pub fn question_reply(pending: &PendingCodex, answers: &[QuestionAnswer]) -> Value {
+    let answers: serde_json::Map<String, Value> = pending
+        .questions
+        .iter()
+        .map(|id| {
+            let given = answers.iter().find(|a| &a.id == id).map(|a| a.answers.clone()).unwrap_or_default();
+            (id.clone(), json!({ "answers": given }))
+        })
+        .collect();
     json!({ "jsonrpc": "2.0", "id": pending.id, "result": { "answers": answers } })
 }
 
@@ -163,21 +170,24 @@ impl CodexStream {
             }
             "item/tool/requestUserInput" => {
                 let questions = params.get("questions").and_then(Value::as_array).cloned().unwrap_or_default();
-                let ids: Vec<String> = questions.iter().filter_map(|q| str_of(q, "id").map(str::to_string)).collect();
-                let text = questions
+                let asked: Vec<AiQuestion> = questions
                     .iter()
-                    .filter_map(|q| str_of(q, "question"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let options = questions
-                    .first()
-                    .and_then(|q| q.get("options"))
-                    .and_then(Value::as_array)
-                    .map(|o| o.iter().filter_map(|o| str_of(o, "label").map(str::to_string)).collect())
-                    .unwrap_or_default();
+                    .filter_map(|q| {
+                        let options = question_options(q.get("options"));
+                        Some(AiQuestion {
+                            id: str_of(q, "id")?.to_string(),
+                            header: str_of(q, "header").filter(|h| !h.is_empty()).map(str::to_string),
+                            question: str_of(q, "question").unwrap_or_default().to_string(),
+                            multi_select: false,
+                            other: q.get("isOther").and_then(Value::as_bool).unwrap_or(false) || options.is_empty(),
+                            options,
+                        })
+                    })
+                    .collect();
+                let ids = asked.iter().map(|q| q.id.clone()).collect();
                 vec![
                     CodexItem::Approval(PendingCodex { id: id.clone(), request: request.clone(), questions: ids, paths: Vec::new() }),
-                    CodexItem::Event(AiEvent::Question { request: request.clone(), text, options }),
+                    CodexItem::Event(AiEvent::question(request.clone(), asked)),
                 ]
             }
             // Ancien protocole : même sens, autre forme de réponse (refus par défaut).
@@ -467,9 +477,14 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":8,"method":"item/tool/requestUserInput","params":{"threadId":"t","turnId":"u","itemId":"i","isBlocking":true,"autoResolutionMs":null,"questions":[{"id":"q1","header":"Langue","question":"En quelle langue ?","isOther":false,"isSecret":false,"options":[{"label":"Français","description":""},{"label":"Anglais","description":""}]}]}}"#,
         );
         let CodexItem::Approval(pending) = &question[0] else { panic!("{question:?}") };
-        assert!(matches!(&question[1], CodexItem::Event(AiEvent::Question { text, options, .. })
-            if text == "En quelle langue ?" && options.len() == 2));
-        assert_eq!(question_reply(pending, "Français")["result"]["answers"]["q1"]["answers"][0], "Français");
+        let CodexItem::Event(AiEvent::Question { text, options, questions, .. }) = &question[1] else { panic!("{question:?}") };
+        assert_eq!((text.as_str(), options.len()), ("En quelle langue ?", 2));
+        assert_eq!(questions[0].id, "q1");
+        assert_eq!(questions[0].header.as_deref(), Some("Langue"));
+        assert_eq!(questions[0].options[0].description, None, "description vide ignorée");
+        assert!(!questions[0].other);
+        let answers = [QuestionAnswer { id: "q1".into(), answers: vec!["Français".into()] }];
+        assert_eq!(question_reply(pending, &answers)["result"]["answers"]["q1"]["answers"][0], "Français");
 
         // Modification de fichiers : ses chemins (annoncés par `item/started`) suivent la demande.
         stream.push_line(

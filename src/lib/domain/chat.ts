@@ -10,6 +10,8 @@ import type {
   ChatEventRow,
   ChatGroup,
   ChatSessionRow,
+  AiQuestion,
+  QuestionAnswer,
   FileChange,
   PlanItem,
   ToolSource,
@@ -47,7 +49,16 @@ export type ChatItem =
       decision: ApprovalDecision | null;
     }
   | { kind: "error"; key: string; error: AiErrorKind; message: string }
-  | { kind: "question"; key: string; text: string; options: string[]; answer: string | null }
+  | {
+      kind: "question";
+      key: string;
+      text: string;
+      /** Questions posées (au moins une : les anciennes questions en donnent une seule). */
+      questions: AiQuestion[];
+      /** Réponse lisible, une fois répondu. */
+      answer: string | null;
+      answers: QuestionAnswer[];
+    }
   | { kind: "report"; key: string; text: string; progress: number | null; final: boolean }
   | {
       kind: "turn";
@@ -159,12 +170,13 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
         kind: "question",
         key: event.request,
         text: event.text,
-        options: event.options,
+        questions: questionsOf(event),
         answer: null,
+        answers: [],
       });
     case "question-answered": {
       const next = replace(items, event.request, "question", (i) =>
-        i.kind === "question" ? { ...i, answer: event.answer } : i,
+        i.kind === "question" ? { ...i, answer: event.answer, answers: event.answers ?? [] } : i,
       );
       return next ? { ...thread, items: next } : thread;
     }
@@ -339,4 +351,33 @@ export function localGroup(plugin: string, group: ChatGroup | null): ChatGroup |
 /** Lien de retour d'une conversation de groupe vers la vue de son plugin. */
 export function groupReturnLabel(group: ChatGroup, pluginName: string): string {
   return /^sprint[:/]/.test(group.id) ? "Retour au sprint" : `Retour à ${pluginName}`;
+}
+
+/**
+ * Questions d'un événement `question` : les questions détaillées, ou, pour l'historique d'avant
+ * les questions multiples, une seule question tirée de `text` et `options`.
+ */
+export function questionsOf(event: {
+  text: string;
+  options: string[];
+  questions?: AiQuestion[];
+}): AiQuestion[] {
+  if (event.questions && event.questions.length > 0) return event.questions;
+  return [
+    {
+      id: event.text,
+      header: null,
+      question: event.text,
+      options: event.options.map((label) => ({ label, description: null })),
+      multiSelect: false,
+      other: true,
+    },
+  ];
+}
+
+/** Réponse d'une question telle que la carte la compose : choix cochés, puis texte « Autre ». */
+export function composeAnswer(question: AiQuestion, picked: string[], other: string): string[] {
+  const chosen = question.options.map((o) => o.label).filter((label) => picked.includes(label));
+  const free = question.other ? other.trim() : "";
+  return [...(question.multiSelect ? chosen : chosen.slice(0, 1)), ...(free ? [free] : [])];
 }

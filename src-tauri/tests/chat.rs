@@ -458,3 +458,67 @@ async fn keeps_group_conversations_out_of_the_global_chat_and_inside_their_plugi
     assert_eq!(free_state.map(|s| (s.plugin, s.group)), Some((None, None)));
     f.chat.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn asks_choice_questions_and_returns_the_answers_even_in_auto_mode() {
+    use cadence_lib::{
+        ai::events::QuestionAnswer,
+        app_settings::AiId,
+        chat::{ActionStart, store::ChatMode},
+    };
+    let f = fixture("questions", |_| {}).await;
+    let answer = |id: &str, answers: &[&str]| QuestionAnswer { id: id.into(), answers: answers.iter().map(|s| s.to_string()).collect() };
+    // « Auto » (bypassPermissions) compris : la question est posée à l'utilisateur.
+    for permissions in [Permissions::Ask, Permissions::Full] {
+        let input = ChatSendInput { session: None, text: "question".into(), ai: None, attachments: None, permissions: Some(permissions) };
+        let id = f.chat.send(input).await.unwrap().session;
+        f.wait(&id, ChatState::WaitingApproval).await;
+        let (request, questions) = f
+            .events(&id)
+            .await
+            .into_iter()
+            .find_map(|e| if let AiEvent::Question { request, questions, .. } = e { Some((request, questions)) } else { None })
+            .expect("carte de question");
+        assert_eq!(questions.len(), 2);
+        assert_eq!((questions[0].header.as_deref(), questions[1].multi_select), (Some("Format"), true));
+        assert_eq!(questions[0].options[0].description.as_deref(), Some("Court"));
+        assert!(!f.events(&id).await.iter().any(|e| matches!(e, AiEvent::ApprovalRequested { .. })), "pas d'approbation");
+
+        // Réponse incomplète : refusée, la question attend toujours.
+        let partial = f.chat.answer(&id, &request, vec![answer("Quel format ?", &["Résumé"])]).await;
+        assert!(partial.unwrap_err().to_string().contains("Quelles sections ?"));
+        f.chat
+            .answer(&id, &request, vec![answer("Quelles sections ?", &["Intro", " Conclusion "]), answer("Quel format ?", &["Résumé"])])
+            .await
+            .unwrap();
+        f.wait(&id, ChatState::Idle).await;
+        assert_eq!(f.replies(&id).await, ["réponses (2 questions) : Quel format ?=Résumé | Quelles sections ?=Intro, Conclusion"]);
+        let answered = f.events(&id).await.into_iter().find_map(|e| match e {
+            AiEvent::QuestionAnswered { answer, answers, .. } => Some((answer, answers.len())),
+            _ => None,
+        });
+        assert_eq!(answered, Some(("Format : Résumé · Sections : Intro, Conclusion".to_string(), 2)));
+        assert!(f.chat.answer(&id, &request, vec![answer("Quel format ?", &["Détaillé"])]).await.is_err(), "déjà répondu");
+    }
+
+    // En fond, personne pour répondre : refus d'office, avec la consigne de trancher seul.
+    let run = f
+        .chat
+        .start_action(ActionStart {
+            ai: AiId::ClaudeCode,
+            mode: ChatMode::Background,
+            title: "Question de fond".into(),
+            origin: "action:exemple/rapport".into(),
+            prompt: "question".into(),
+            group: None,
+            hidden: false,
+            context: None,
+        })
+        .await
+        .unwrap();
+    f.wait(&run, ChatState::Idle).await;
+    let reply = f.replies(&run).await.join("");
+    assert!(reply.starts_with("question refusée : Personne ne peut répondre"), "{reply}");
+    assert!(!f.events(&run).await.iter().any(|e| matches!(e, AiEvent::Question { .. })));
+    f.chat.shutdown().await;
+}

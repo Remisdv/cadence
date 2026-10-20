@@ -32,6 +32,7 @@ import type {
   IssueFilter,
   IssueRow,
   PrFilter,
+  QuestionAnswer,
   PrDetail,
   PrRow,
   PluginProcessView,
@@ -135,8 +136,11 @@ export interface Commands {
   plugin_conversation_get: { args: { plugin: string; id: string }; result: ConversationDetail };
   chat_send: { args: { input: ChatSendInput }; result: ChatSendResult };
   chat_interrupt: { args: { session: string }; result: null };
-  /** Réponse à une question de l'IA (Codex, OpenCode). */
-  chat_answer: { args: { session: string; request: string; answer: string }; result: null };
+  /** Réponses aux questions à choix de l'IA (Claude Code, Codex, OpenCode), une par question. */
+  chat_answer: {
+    args: { session: string; request: string; answers: QuestionAnswer[] };
+    result: null;
+  };
   /** Action d'un plugin : conversation (mode chat) ou exécution de fond. */
   action_run: { args: { input: ActionRunInput }; result: ActionRunResult };
   chat_approve: {

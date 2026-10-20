@@ -9,7 +9,9 @@ use std::{
 
 use serde_json::Value;
 
-use super::events::{AiErrorKind, AiEvent, ApprovalKind, FileChange, PlanItem, PlanStatus, ToolSource, truncate};
+use super::events::{
+    AiErrorKind, AiEvent, AiQuestion, ApprovalKind, FileChange, PlanItem, PlanStatus, ToolSource, question_options, truncate,
+};
 
 /// État d'une session pendant un tour.
 #[derive(Debug, Default)]
@@ -121,17 +123,26 @@ impl OpencodeStream {
             }
             "question.asked" => {
                 let Some(id) = str_of(props, "id") else { return Vec::new() };
-                let question = props.pointer("/questions/0").unwrap_or(&Value::Null);
-                let options = question
-                    .get("options")
+                // Questions dans l'ordre (la réponse est une liste dans le même ordre) ; l'id
+                // d'une question est son texte. `custom` (réponse libre) vaut vrai par défaut.
+                let questions = props
+                    .get("questions")
                     .and_then(Value::as_array)
-                    .map(|o| o.iter().filter_map(|o| str_of(o, "label").map(str::to_string)).collect())
-                    .unwrap_or_default();
-                vec![AiEvent::Question {
-                    request: id.into(),
-                    text: str_of(question, "question").unwrap_or_default().into(),
-                    options,
-                }]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|q| {
+                        let question = str_of(q, "question")?.to_string();
+                        Some(AiQuestion {
+                            id: question.clone(),
+                            header: str_of(q, "header").filter(|h| !h.is_empty()).map(str::to_string),
+                            options: question_options(q.get("options")),
+                            multi_select: q.get("multiple").and_then(Value::as_bool).unwrap_or(false),
+                            other: q.get("custom").and_then(Value::as_bool).unwrap_or(true),
+                            question,
+                        })
+                    })
+                    .collect();
+                vec![AiEvent::question(id.into(), questions)]
             }
             "session.status" => {
                 if props.pointer("/status/type").and_then(Value::as_str) == Some("busy") && self.busy_since.is_none() {
@@ -313,5 +324,23 @@ mod tests {
         assert!(matches!(&got[1], AiEvent::TurnCompleted { ok: false, error: Some(_), .. }));
         assert_eq!(got.len(), 2, "autre session ignorée");
         assert_eq!(sse_data("data: {\"type\":\"server.connected\"}").unwrap()["type"], "server.connected");
+    }
+
+    #[test]
+    fn reads_every_question_of_a_question_request() {
+        let mut stream = OpencodeStream::new("ses_1");
+        let got = stream.push(&serde_json::json!({ "type": "question.asked", "properties": {
+            "id": "que_1", "sessionID": "ses_1",
+            "questions": [
+                { "question": "Quelle base ?", "header": "Base", "options": [{ "label": "SQLite", "description": "Locale" }] },
+                { "question": "Quels tests ?", "header": "Tests", "multiple": true, "custom": false,
+                  "options": [{ "label": "Unitaires", "description": "" }, { "label": "Intégration", "description": "" }] }
+            ] } }));
+        let [AiEvent::Question { request, questions, .. }] = got.as_slice() else { panic!("{got:?}") };
+        assert_eq!(request, "que_1");
+        assert_eq!(questions.len(), 2);
+        assert_eq!((questions[0].id.as_str(), questions[0].other, questions[0].multi_select), ("Quelle base ?", true, false));
+        assert_eq!((questions[1].other, questions[1].multi_select), (false, true));
+        assert_eq!(questions[0].options[0].description.as_deref(), Some("Locale"));
     }
 }

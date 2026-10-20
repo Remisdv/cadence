@@ -6,6 +6,8 @@
 //! - texte : `stream_event` `content_block_delta/text_delta` (deltas) puis un message
 //!   `assistant` par bloc (texte complet) ;
 //! - `can_use_tool` arrive en `control_request` ; la réponse part en `control_response` ;
+//!   `AskUserQuestion` y passe aussi (même en `bypassPermissions`) : ses réponses repartent dans
+//!   `updatedInput.answers` ;
 //! - erreur d'authentification : `assistant.error` puis `result` `is_error` (jamais le seul
 //!   `subtype`) ; interruption : `result` `terminal_reason = "aborted_streaming"`.
 //!
@@ -16,8 +18,8 @@ use std::collections::HashMap;
 use serde_json::{Value, json};
 
 use super::events::{
-    AiErrorKind, AiEvent, ApprovalDecision, ApprovalKind, FileChange, PlanItem, PlanStatus, ToolSource, saturating_u32,
-    truncate,
+    AiErrorKind, AiEvent, AiQuestion, ApprovalDecision, ApprovalKind, FileChange, PlanItem, PlanStatus, QuestionAnswer,
+    BACKGROUND_ANSWER, ToolSource, question_options, saturating_u32, truncate,
 };
 
 /// Ce qu'une ligne du flux demande.
@@ -63,6 +65,56 @@ pub fn background_denial(pending: &PendingApproval) -> Value {
     let response = json!({
         "behavior": "deny",
         "message": "Refusé : une tâche de fond ne peut pas demander d'autorisation. Seul le worktree rendu par cadence__repo_checkout est accessible."
+    });
+    json!({ "type": "control_response", "response": { "subtype": "success", "request_id": pending.request_id, "response": response } })
+}
+
+/// Outil des questions à choix de Claude Code. Il passe par `can_use_tool` dans tous les modes,
+/// `bypassPermissions` compris.
+pub const ASK_USER_QUESTION: &str = "AskUserQuestion";
+
+/// Questions d'un `AskUserQuestion` (`input.questions` : question, header, options
+/// { label, description }, multiSelect). L'id d'une question est son texte : c'est la clé de
+/// `answers`. Une réponse libre est toujours acceptée.
+pub fn questions_of(input: &Value) -> Vec<AiQuestion> {
+    input
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|q| {
+            let question = str_at(q, "question")?.to_string();
+            Some(AiQuestion {
+                id: question.clone(),
+                header: str_at(q, "header").filter(|h| !h.is_empty()).map(str::to_string),
+                options: question_options(q.get("options")),
+                multi_select: q.get("multiSelect").and_then(Value::as_bool).unwrap_or(false),
+                other: true,
+                question,
+            })
+        })
+        .collect()
+}
+
+/// Réponse à un `AskUserQuestion` : l'entrée d'origine plus `answers` (texte de la question →
+/// libellés choisis séparés par « , », ou texte libre).
+pub fn question_response(pending: &PendingApproval, answers: &[QuestionAnswer]) -> Value {
+    let map: serde_json::Map<String, Value> =
+        answers.iter().map(|a| (a.id.clone(), Value::String(a.answers.join(", ")))).collect();
+    let mut input = match &pending.input {
+        Value::Object(object) => object.clone(),
+        _ => serde_json::Map::new(),
+    };
+    input.insert("answers".into(), Value::Object(map));
+    let response = json!({ "behavior": "allow", "updatedInput": input });
+    json!({ "type": "control_response", "response": { "subtype": "success", "request_id": pending.request_id, "response": response } })
+}
+
+/// Question posée pendant une exécution de fond : personne pour répondre.
+pub fn background_question_denial(pending: &PendingApproval) -> Value {
+    let response = json!({
+        "behavior": "deny",
+        "message": BACKGROUND_ANSWER
     });
     json!({ "type": "control_response", "response": { "subtype": "success", "request_id": pending.request_id, "response": response } })
 }
@@ -159,6 +211,18 @@ impl ClaudeStream {
                     let request_id = str_at(line, "request_id").unwrap_or_default().to_string();
                     let tool = str_at(request, "tool_name").unwrap_or_default();
                     let input = request.get("input").cloned().unwrap_or(Value::Null);
+                    // Question à choix : une carte de question, pas d'approbation ; la réponse
+                    // repart dans `updatedInput.answers` (voir `question_response`).
+                    if tool == ASK_USER_QUESTION {
+                        event(&mut out, AiEvent::question(request_id.clone(), questions_of(&input)));
+                        out.push(StreamItem::Approval(PendingApproval {
+                            request_id,
+                            tool: tool.to_string(),
+                            input,
+                            suggestions: json!([]),
+                        }));
+                        return out;
+                    }
                     let kind = match tool {
                         "Bash" | "PowerShell" => ApprovalKind::Command,
                         "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => ApprovalKind::FileChange,
@@ -453,5 +517,45 @@ mod tests {
         assert!(matches!(events[2], AiEvent::ToolStarted { source: ToolSource::Cadence { plugin, .. }, .. } if plugin == "gestion-projet"));
         assert!(matches!(events[3], AiEvent::Command { exit_code: Some(1), output: Some(o), .. } if o == "échec"));
         assert!(matches!(events[4], AiEvent::ToolCompleted { ok: true, .. }));
+    }
+
+    #[test]
+    fn turns_ask_user_question_into_a_question_card_and_answers_it() {
+        let mut stream = ClaudeStream::default();
+        let line = json!({ "type": "control_request", "request_id": "q-1", "request": {
+            "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "toolu_q",
+            "input": { "questions": [
+                { "question": "Quel format ?", "header": "Format", "multiSelect": false,
+                  "options": [{ "label": "Résumé", "description": "Court" }, { "label": "Détaillé", "description": "Long" }] },
+                { "question": "Quelles sections ?", "header": "Sections", "multiSelect": true,
+                  "options": [{ "label": "Intro", "description": "" }, { "label": "Conclusion", "description": "" }] }
+            ] } } });
+        let items = stream.push(&line);
+        let [StreamItem::Event(AiEvent::Question { request, text, options, questions }), StreamItem::Approval(pending)] = items.as_slice() else {
+            panic!("{items:?}")
+        };
+        assert_eq!(request, "q-1");
+        assert_eq!(text, "Quel format ?\nQuelles sections ?");
+        assert_eq!(options, &["Résumé", "Détaillé"]);
+        assert_eq!(questions[0].id, "Quel format ?", "la clé de `answers` est le texte de la question");
+        assert_eq!(questions[0].options[0].description.as_deref(), Some("Court"));
+        assert_eq!(questions[1].options[0].description, None);
+        assert!(questions[1].multi_select && questions[0].other);
+        assert_eq!(pending.tool, ASK_USER_QUESTION);
+
+        let answers = [
+            QuestionAnswer { id: "Quel format ?".into(), answers: vec!["Résumé".into()] },
+            QuestionAnswer { id: "Quelles sections ?".into(), answers: vec!["Intro".into(), "Conclusion".into()] },
+        ];
+        let response = question_response(pending, &answers);
+        assert_eq!(response["response"]["request_id"], "q-1");
+        let body = &response["response"]["response"];
+        assert_eq!(body["behavior"], "allow");
+        assert_eq!(body["updatedInput"]["questions"].as_array().unwrap().len(), 2, "entrée d'origine gardée");
+        assert_eq!(body["updatedInput"]["answers"]["Quel format ?"], "Résumé");
+        assert_eq!(body["updatedInput"]["answers"]["Quelles sections ?"], "Intro, Conclusion");
+        let denied = background_question_denial(pending);
+        assert_eq!(denied["response"]["response"]["behavior"], "deny");
+        assert_eq!(denied["response"]["response"]["message"], BACKGROUND_ANSWER);
     }
 }
