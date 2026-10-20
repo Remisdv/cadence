@@ -10,7 +10,10 @@ import type {
   ActionRunInput,
   ApprovalDecision,
   AppSettingsPatch,
+  ChatPermissions,
   ChatSendInput,
+  ChatSessionDetail,
+  ChatSessionRow,
   AuthProvider,
   AuthStatus,
   CliAgentInfo,
@@ -401,6 +404,38 @@ export function useRenameChat() {
     onSuccess: (row) => {
       void qc.invalidateQueries({ queryKey: keys.chatSessions() });
       void qc.invalidateQueries({ queryKey: keys.chatSession(row.id) });
+    },
+  });
+}
+
+/**
+ * Mode d'une conversation (Demander, Édition auto, Accès complet). Affiché tout de suite ; la
+ * CLI le reçoit au tour suivant.
+ */
+export function useSetChatPermissions() {
+  const qc = useQueryClient();
+  const patch = (session: string, permissions: ChatPermissions) => {
+    qc.setQueryData<ChatSessionDetail>(keys.chatSession(session), (prev) =>
+      prev ? { ...prev, session: { ...prev.session, permissions } } : prev,
+    );
+    qc.setQueryData<ChatSessionRow[]>(keys.chatSessions(), (prev) =>
+      prev?.map((row) => (row.id === session ? { ...row, permissions } : row)),
+    );
+  };
+  return useMutation({
+    mutationFn: ({ session, permissions }: { session: string; permissions: ChatPermissions }) =>
+      call("chat_set_permissions", { session, permissions }),
+    onMutate: ({ session, permissions }) => {
+      const before = qc.getQueryData<ChatSessionDetail>(keys.chatSession(session))?.session;
+      patch(session, permissions);
+      return { before };
+    },
+    onError: (_, { session }, context) => {
+      if (context?.before) patch(session, context.before.permissions);
+    },
+    onSettled: (_, __, { session }) => {
+      void qc.invalidateQueries({ queryKey: keys.chatSession(session) });
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
     },
   });
 }

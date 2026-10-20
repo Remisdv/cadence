@@ -5,6 +5,13 @@
  *
  * Les éléments viennent de `buildThread` (`lib/domain/chat.ts`) ; le composant ne lit aucune
  * donnée lui-même.
+ *
+ * `showCommands` faux : commandes, appels d'outils et fichiers modifiés d'un tour se résument en
+ * une ligne (« 6 commandes · 2 fichiers modifiés ») qui les déplie au clic.
+ *
+ * Largeur : tout reste dans la colonne du fil. Les lignes de commande se tronquent (ellipse) et
+ * se lisent en entier, coupées n'importe où, une fois la carte dépliée ; les sorties défilent
+ * dans leur cadre ; textes et chemins se coupent au besoin (`wrap-anywhere`).
  */
 import { useState, type ReactNode } from "react";
 import { Icon } from "@/components/icons/Icon";
@@ -14,9 +21,11 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/cn";
 import {
+  activitySummary,
   compactArgs,
   formatDuration,
   groupTurns,
+  isActivity,
   type ChatItem,
   type ChatTurn,
 } from "@/lib/domain/chat";
@@ -37,6 +46,8 @@ export interface ChatThreadProps {
   onAnswer?: (request: string, answer: string) => void;
   /** Clic sur un lien du texte ; `true` s'il est traité (liens `cadence:`). */
   onLink?: (href: string) => boolean;
+  /** Commandes, outils et fichiers montrés (défaut) ; sinon résumés par tour. */
+  showCommands?: boolean;
 }
 
 export function ChatThread({
@@ -47,6 +58,7 @@ export function ChatThread({
   onApprove,
   onAnswer,
   onLink,
+  showCommands = true,
 }: ChatThreadProps) {
   const turns = groupTurns(items);
   return (
@@ -61,6 +73,7 @@ export function ChatThread({
           onApprove={onApprove}
           onAnswer={onAnswer}
           onLink={onLink}
+          showCommands={showCommands}
         />
       ))}
     </div>
@@ -75,6 +88,7 @@ function TurnView({
   onApprove,
   onAnswer,
   onLink,
+  showCommands,
 }: {
   turn: ChatTurn;
   ai: string;
@@ -83,8 +97,12 @@ function TurnView({
   onApprove?: ChatThreadProps["onApprove"];
   onAnswer?: ChatThreadProps["onAnswer"];
   onLink?: ChatThreadProps["onLink"];
+  showCommands: boolean;
 }) {
+  /** Activité dépliée pour ce tour malgré l'interrupteur. */
+  const [unfolded, setUnfolded] = useState(false);
   const visible = turn.reply.filter((i) => i.kind !== "turn");
+  const rows = showCommands ? visible : fold(visible, unfolded);
   const end = turn.reply.find((i): i is Item<"turn"> => i.kind === "turn");
   const tools = turn.reply.filter((i) => i.kind === "tool" || i.kind === "command").length;
   const meta = [
@@ -113,9 +131,9 @@ function TurnView({
               <span className="font-semibold">{ai}</span>
               {meta.length > 0 && <span className="text-tx3">{meta.join(" · ")}</span>}
             </div>
-            {segments(visible).map((segment) =>
+            {segments(rows).map((segment) =>
               Array.isArray(segment) ? (
-                <div key={segment[0]!.key} className="flex flex-col gap-1.5">
+                <div key={segment[0]!.key} className="flex min-w-0 flex-col gap-1.5">
                   {segment.map((item) =>
                     item.kind === "tool" ? (
                       <ToolCard key={item.key} item={item} />
@@ -124,6 +142,13 @@ function TurnView({
                     ),
                   )}
                 </div>
+              ) : segment.kind === "activity" ? (
+                <ActivitySummary
+                  key={segment.key}
+                  items={segment.items}
+                  open={unfolded}
+                  onToggle={() => setUnfolded((open) => !open)}
+                />
               ) : (
                 <ReplyItem
                   key={segment.key}
@@ -150,16 +175,79 @@ function TurnView({
   );
 }
 
-/** Regroupe les cartes d'outil et de commande consécutives (6px entre elles). */
-function segments(items: ChatItem[]): (ChatItem | ChatItem[])[] {
-  const out: (ChatItem | ChatItem[])[] = [];
+/** Résumé de l'activité d'un tour, à la place de sa première commande. */
+type ActivityRow = { kind: "activity"; key: string; items: ChatItem[] };
+type Row = ChatItem | ActivityRow;
+
+/**
+ * Activité repliée : le résumé remplace commandes, outils et fichiers. Dépliée : le résumé
+ * reste en tête, comme bouton pour replier, et tout reprend sa place.
+ */
+function fold(items: ChatItem[], unfolded: boolean): Row[] {
+  const activity = items.filter(isActivity);
+  if (activity.length === 0) return items;
+  const out: Row[] = [];
   for (const item of items) {
-    const tool = item.kind === "tool" || item.kind === "command";
-    const last = out.at(-1);
-    if (tool && Array.isArray(last)) last.push(item);
-    else out.push(tool ? [item] : item);
+    if (item === activity[0])
+      out.push({ kind: "activity", key: `activite-${item.key}`, items: activity });
+    if (unfolded || !isActivity(item)) out.push(item);
   }
   return out;
+}
+
+/** Regroupe les cartes d'outil et de commande consécutives (6px entre elles). */
+function segments(items: Row[]): (Row | ChatItem[])[] {
+  const out: (Row | ChatItem[])[] = [];
+  for (const item of items) {
+    if (item.kind === "tool" || item.kind === "command") {
+      const last = out.at(-1);
+      if (Array.isArray(last)) last.push(item);
+      else out.push([item]);
+    } else out.push(item);
+  }
+  return out;
+}
+
+/** Ligne repliée de l'activité d'un tour : « 6 commandes · 2 fichiers modifiés ». */
+export function ActivitySummary({
+  items,
+  open,
+  onToggle,
+}: {
+  items: ChatItem[];
+  open: boolean;
+  onToggle?: () => void;
+}) {
+  const running = items.some(
+    (i) => (i.kind === "tool" && i.status === "running") || (i.kind === "command" && i.running),
+  );
+  const failed = items.some(
+    (i) =>
+      (i.kind === "tool" && i.status === "error") ||
+      (i.kind === "command" && !i.running && i.exitCode !== null && i.exitCode !== 0),
+  );
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      title={open ? "Replier les commandes de ce tour" : "Afficher les commandes de ce tour"}
+      onClick={onToggle}
+      className="inline-flex h-7 max-w-full min-w-0 items-center gap-2 self-start rounded-field border border-line bg-p2 px-2.5 text-caption text-tx2 hover:border-line2 hover:text-tx"
+    >
+      {running ? (
+        <Spinner size={12} className="shrink-0" />
+      ) : (
+        <span className="flex shrink-0 text-tx3">
+          <Icon name="terminal" size={13} />
+        </span>
+      )}
+      <span className="min-w-0 truncate">{activitySummary(items)}</span>
+      {failed && <span className="shrink-0 text-red">· en échec</span>}
+      <span className={cn("flex shrink-0 text-tx3 transition-transform", open && "rotate-180")}>
+        <Icon name="chevronDown" size={13} />
+      </span>
+    </button>
+  );
 }
 
 /** `claude-opus-5` → `Opus 5`, `claude-haiku-4-5-20251001` → `Haiku 4.5`. */
@@ -185,7 +273,7 @@ export function AiTile() {
 export function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[520px] rounded-card rounded-br-[4px] border border-line2 bg-p3 px-3.5 py-[11px] text-body leading-[1.6] whitespace-pre-wrap">
+      <div className="max-w-[520px] min-w-0 rounded-card rounded-br-[4px] border border-line2 bg-p3 px-3.5 py-[11px] text-body leading-[1.6] wrap-anywhere whitespace-pre-wrap">
         {text}
       </div>
     </div>
@@ -206,7 +294,7 @@ function ReplyItem({
   switch (item.kind) {
     case "assistant":
       return (
-        <div className="max-w-[720px]">
+        <div className="max-w-[720px] min-w-0 wrap-anywhere">
           <Markdown
             source={item.text}
             onLink={onLink}
@@ -223,15 +311,15 @@ function ReplyItem({
       );
     case "reasoning":
       return (
-        <details className="max-w-[720px] text-body-sm text-tx3">
+        <details className="max-w-[720px] min-w-0 text-body-sm text-tx3">
           <summary className="cursor-pointer list-none">Réflexion</summary>
-          <p className="mt-1.5 leading-[1.6] whitespace-pre-wrap">{item.text}</p>
+          <p className="mt-1.5 leading-[1.6] wrap-anywhere whitespace-pre-wrap">{item.text}</p>
         </details>
       );
     case "file":
       return (
-        <span className="flex items-center gap-2 text-small text-tx2">
-          <span className="flex text-tx3">
+        <span className="flex min-w-0 items-center gap-2 text-small text-tx2">
+          <span className="flex shrink-0 text-tx3">
             <Icon name="file" size={13} />
           </span>
           {item.change === "added"
@@ -239,7 +327,9 @@ function ReplyItem({
             : item.change === "deleted"
               ? "Fichier supprimé"
               : "Fichier modifié"}
-          <span className="truncate mono text-tx3">{item.path}</span>
+          <span title={item.path} className="min-w-0 truncate mono text-tx3">
+            {item.path}
+          </span>
         </span>
       );
     case "plan":
@@ -253,10 +343,13 @@ function ReplyItem({
     case "error":
       return (
         <div className="flex max-w-[720px] items-start gap-2 rounded-field border border-red-line bg-red-d px-3 py-2.5 text-body-sm leading-[1.55] text-tx2">
-          <span className="mt-px flex text-red">
+          <span className="mt-px flex shrink-0 text-red">
             <Icon name="warning" size={14} />
           </span>
-          <Markdown source={item.message} className="text-body-sm leading-[1.55] text-tx2" />
+          <Markdown
+            source={item.message}
+            className="min-w-0 text-body-sm leading-[1.55] wrap-anywhere text-tx2"
+          />
         </div>
       );
     default:
@@ -287,14 +380,17 @@ export function ToolCard({ item }: { item: Item<"tool"> }) {
       args={compactArgs(item.input)}
       result={item.summary}
     >
-      <pre className="overflow-x-auto mono text-tiny leading-[1.6] whitespace-pre-wrap text-tx3">
+      <pre className="min-w-0 overflow-x-auto mono text-tiny leading-[1.6] wrap-anywhere whitespace-pre-wrap text-tx3">
         {JSON.stringify(item.input, null, 2)}
       </pre>
     </ToolShell>
   );
 }
 
-/** Commande shell de la CLI : la commande en résumé, sa sortie dépliée. */
+/**
+ * Commande shell de la CLI : la commande sur une ligne (tronquée) en résumé ; dépliée, la
+ * commande entière (coupée n'importe où) et sa sortie, qui défile dans son cadre.
+ */
 export function CommandCard({ item }: { item: Item<"command"> }) {
   const status = item.running ? "running" : item.exitCode && item.exitCode !== 0 ? "error" : "ok";
   return (
@@ -302,10 +398,13 @@ export function CommandCard({ item }: { item: Item<"command"> }) {
       status={status}
       icon={<Icon name="bolt" size={14} />}
       name={item.command}
-      result={null}
+      result={item.exitCode !== null && item.exitCode !== 0 ? `code ${item.exitCode}` : null}
     >
+      <pre className="min-w-0 mono text-tiny leading-[1.6] break-all whitespace-pre-wrap text-tx">
+        {item.command}
+      </pre>
       {item.output && (
-        <pre className="max-h-[260px] overflow-auto rounded-control bg-console px-2.5 py-2 mono text-tiny leading-[1.6] whitespace-pre-wrap text-tx2">
+        <pre className="max-h-[260px] min-w-0 overflow-auto rounded-control bg-console px-2.5 py-2 mono text-tiny leading-[1.6] whitespace-pre text-tx2">
           {item.output}
         </pre>
       )}
@@ -329,26 +428,36 @@ function ToolShell({
   children?: ReactNode;
 }) {
   return (
-    <details className="group rounded-field border border-line bg-p2">
-      <summary className="flex h-9 cursor-pointer list-none items-center gap-[9px] px-3">
+    <details className="group min-w-0 rounded-field border border-line bg-p2">
+      <summary className="flex h-9 min-w-0 cursor-pointer list-none items-center gap-[9px] px-3">
         {status === "running" ? (
-          <Spinner size={14} />
+          <Spinner size={14} className="shrink-0" />
         ) : (
-          <span className={cn("flex", status === "ok" ? "text-green" : "text-red")}>
+          <span className={cn("flex shrink-0", status === "ok" ? "text-green" : "text-red")}>
             <Icon name={status === "ok" ? "check" : "close"} size={14} />
           </span>
         )}
-        <span className="flex text-tx3">{icon}</span>
-        <span className="min-w-0 shrink-0 truncate mono text-small text-tx">{name}</span>
-        {args && <span className="min-w-0 truncate mono text-caption text-tx3">{args}</span>}
+        <span className="flex shrink-0 text-tx3">{icon}</span>
+        <span title={name} className="min-w-0 truncate mono text-small text-tx">
+          {name}
+        </span>
+        {args && (
+          <span title={args} className="min-w-0 shrink-[3] truncate mono text-caption text-tx3">
+            {args}
+          </span>
+        )}
         <div className="grow" />
-        {result && <span className="max-w-[260px] truncate text-caption text-tx2">{result}</span>}
-        <span className="flex text-tx3 transition-transform group-open:rotate-180">
+        {result && (
+          <span className="max-w-[40%] min-w-0 shrink-0 truncate text-caption text-tx2">
+            {result}
+          </span>
+        )}
+        <span className="flex shrink-0 text-tx3 transition-transform group-open:rotate-180">
           <Icon name="chevronDown" size={14} />
         </span>
       </summary>
       {children && (
-        <div className="flex flex-col gap-[5px] pt-1 pr-3 pb-2.5 pl-[37px]">{children}</div>
+        <div className="flex min-w-0 flex-col gap-[5px] pt-1 pr-3 pb-2.5 pl-[37px]">{children}</div>
       )}
     </details>
   );
@@ -381,7 +490,12 @@ function PlanCard({ item }: { item: Item<"plan"> }) {
               size={13}
             />
           </span>
-          <span className={cn(step.status === "completed" ? "text-tx3 line-through" : "text-tx2")}>
+          <span
+            className={cn(
+              "min-w-0 wrap-anywhere",
+              step.status === "completed" ? "text-tx3 line-through" : "text-tx2",
+            )}
+          >
             {step.text}
           </span>
         </span>
@@ -411,7 +525,9 @@ export function QuestionCard({
         <span className={cn("mt-px flex", answered ? "text-tx3" : "text-blue")}>
           <Icon name="chat" size={14} />
         </span>
-        <span className="grow leading-[1.55] font-medium whitespace-pre-wrap">{item.text}</span>
+        <span className="min-w-0 grow leading-[1.55] font-medium wrap-anywhere whitespace-pre-wrap">
+          {item.text}
+        </span>
         {answered && <Badge tone="green">Répondu</Badge>}
       </div>
       {answered ? (
@@ -459,7 +575,7 @@ function ReportLine({ item }: { item: Item<"report"> }) {
       <span className={cn("mt-px flex", item.final ? "text-green" : "text-tx3")}>
         <Icon name={item.final ? "check" : "clock"} size={14} />
       </span>
-      <span className="grow whitespace-pre-wrap">{item.text}</span>
+      <span className="min-w-0 grow wrap-anywhere whitespace-pre-wrap">{item.text}</span>
       {item.progress !== null && !item.final && (
         <span className="mono text-tiny text-tx3">{item.progress} %</span>
       )}

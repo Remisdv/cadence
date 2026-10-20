@@ -244,6 +244,30 @@ export function groupTurns(items: ChatItem[]): ChatTurn[] {
   return turns;
 }
 
+/**
+ * Activité d'un tour : commandes shell, appels d'outils (lectures de fichiers comprises) et
+ * fichiers modifiés. Masquée par l'interrupteur « Commandes », elle se résume en une ligne.
+ */
+export function isActivity(item: ChatItem): boolean {
+  return item.kind === "tool" || item.kind === "command" || item.kind === "file";
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
+
+/** `6 commandes · 3 outils · 2 fichiers modifiés` ; chaîne vide sans activité. */
+export function activitySummary(items: ChatItem[]): string {
+  const commands = items.filter((i) => i.kind === "command").length;
+  const tools = items.filter((i) => i.kind === "tool").length;
+  const files = new Set(items.flatMap((i) => (i.kind === "file" ? [i.path] : []))).size;
+  return [
+    commands > 0 ? plural(commands, "commande", "commandes") : null,
+    tools > 0 ? plural(tools, "outil", "outils") : null,
+    files > 0 ? plural(files, "fichier modifié", "fichiers modifiés") : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /** `12 s`, `2 min 08 s`. */
 export function formatDuration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));

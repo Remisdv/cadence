@@ -72,6 +72,7 @@ export type { PlanStatus } from "./bindings/PlanStatus";
 export type { ToolSource } from "./bindings/ToolSource";
 export type { ChatState } from "./bindings/ChatState";
 export type { ChatMode } from "./bindings/ChatMode";
+export type { ChatPermissions } from "./bindings/ChatPermissions";
 export type { ChatSessionRow } from "./bindings/ChatSessionRow";
 export type { ChatEventRow } from "./bindings/ChatEventRow";
 export type { ChatSessionDetail } from "./bindings/ChatSessionDetail";

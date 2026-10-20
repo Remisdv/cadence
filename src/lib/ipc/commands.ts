@@ -14,6 +14,7 @@ import type {
   ApprovalDecision,
   AuthStatus,
   CatalogView,
+  ChatPermissions,
   ChatSendInput,
   ChatSendResult,
   ChatSessionDetail,
@@ -133,6 +134,11 @@ export interface Commands {
     result: null;
   };
   chat_session_rename: { args: { id: string; title: string }; result: ChatSessionRow };
+  /** Mode de la conversation ; s'applique au tour suivant (la CLI est relancée, reprise). */
+  chat_set_permissions: {
+    args: { session: string; permissions: ChatPermissions };
+    result: ChatSessionRow;
+  };
   chat_session_delete: { args: { id: string }; result: null };
   // Auth
   auth_start_device_flow: { args: NoArgs; result: DeviceFlowStart };

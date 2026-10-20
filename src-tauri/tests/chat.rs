@@ -8,7 +8,10 @@ use std::{
 };
 
 use cadence_lib::{
-    ai::events::{AiEvent, ApprovalDecision},
+    ai::{
+        claude_code::Permissions,
+        events::{AiEvent, ApprovalDecision},
+    },
     chat::{
         ChatConfig, ChatNotice, ChatSendInput, ChatService,
         store::{ChatState, ChatStore},
@@ -66,7 +69,7 @@ async fn service(dir: PathBuf, tweak: impl FnOnce(&mut ChatConfig)) -> Fixture {
 
 impl Fixture {
     async fn send(&self, session: Option<&str>, text: &str) -> String {
-        let input = ChatSendInput { session: session.map(str::to_string), text: text.into(), ai: None, attachments: None };
+        let input = ChatSendInput { session: session.map(str::to_string), text: text.into(), ai: None, attachments: None, permissions: None };
         self.chat.send(input).await.unwrap().session
     }
 
@@ -201,7 +204,46 @@ async fn closes_idle_processes_caps_them_and_deletes_conversations() {
     assert!(!f.dir.join("sessions").join(&a).exists(), "dossier de travail supprimé");
     assert!(f.chat.detail(&a).await.is_err());
     assert_eq!(f.chat.rename(&b, "Renommée").await.unwrap().title, "Renommée");
-    assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None, attachments: None }).await.is_err());
+    assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None, attachments: None, permissions: None }).await.is_err());
+    f.chat.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn applies_a_new_mode_from_the_next_turn_by_resuming_the_session() {
+    let f = fixture("modes", |_| {}).await;
+    let input = ChatSendInput { session: None, text: "mode".into(), ai: None, attachments: None, permissions: Some(Permissions::AutoEdit) };
+    let id = f.chat.send(input).await.unwrap().session;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await, ["mode : acceptEdits"], "mode choisi à la création");
+    assert_eq!(f.chat.detail(&id).await.unwrap().session.permissions, Permissions::AutoEdit);
+
+    // Mode changé entre deux tours : la CLI est relancée avec lui, la session native reprise.
+    assert_eq!(f.chat.set_permissions(&id, Permissions::Full).await.unwrap().permissions, Permissions::Full);
+    f.send(Some(&id), "mode").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "mode [reprise] : bypassPermissions");
+    assert_eq!(f.chat.live_count().await, 1, "l'ancien processus est fermé");
+
+    // Même mode : même processus.
+    f.send(Some(&id), "encore").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "écho [reprise fake-1] : encore");
+
+    // Changé pendant un tour : le tour en cours garde son processus, le suivant a le nouveau mode.
+    f.send(Some(&id), "long").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    f.chat.set_permissions(&id, Permissions::Ask).await.unwrap();
+    f.chat.interrupt(&id).await.unwrap();
+    f.wait(&id, ChatState::Interrupted).await;
+    f.send(Some(&id), "mode").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "mode [reprise] : default");
+
+    // Une nouvelle conversation part en « Demander ».
+    let other = f.send(None, "mode").await;
+    f.wait(&other, ChatState::Idle).await;
+    assert_eq!(f.replies(&other).await, ["mode : default"]);
+    assert!(f.chat.set_permissions("absente", Permissions::Full).await.is_err());
     f.chat.shutdown().await;
 }
 

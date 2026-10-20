@@ -98,9 +98,18 @@ export function MenuRadioGroup({
   );
 }
 
-export function MenuRadioItem({ value, children }: { value: string; children: ReactNode }) {
+export function MenuRadioItem({
+  value,
+  children,
+  className,
+}: {
+  value: string;
+  children: ReactNode;
+  /** Ex. `h-auto py-1.5` pour un choix sur deux lignes. */
+  className?: string;
+}) {
   return (
-    <DropdownMenu.RadioItem value={value} className={itemClass}>
+    <DropdownMenu.RadioItem value={value} className={cn(itemClass, className)}>
       <span className="flex size-4 items-center justify-center text-clay">
         <DropdownMenu.ItemIndicator>
           <Icon name="check" size={13} />

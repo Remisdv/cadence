@@ -64,9 +64,10 @@ import {
 } from "@/components/domain/Panels";
 import { SessionConsole } from "@/components/domain/SessionConsole";
 import { ChatThread } from "@/components/domain/ChatThread";
+import { ChatModeMenu } from "@/components/domain/ChatModeMenu";
 import { ToastCard } from "@/components/ui/Toaster";
 import { buildThread } from "@/lib/domain/chat";
-import type { AiEvent } from "@/lib/types";
+import type { AiEvent, ChatPermissions } from "@/lib/types";
 import { MeterList, StatCard, StatStrip } from "@/components/domain/Stats";
 import { OnboardingSteps, PipelineStages, StepTimeline } from "@/components/domain/Steps";
 import { issueTypes, statusOrder } from "@/lib/domain/issues";
@@ -142,6 +143,7 @@ const swatches = [
 
 export default function DesignSystemView() {
   const [switchOn, setSwitchOn] = useState(true);
+  const [chatMode, setChatMode] = useState<ChatPermissions>("ask");
   const [next, setNext] = useState("0.1.3");
   const [carry, setCarry] = useState("move");
   const [tab, setTab] = useState("scope");
@@ -292,6 +294,26 @@ export default function DesignSystemView() {
               onApprove={() => {}}
             />
           </Card>
+        </Section>
+
+        <Section title="Chat : mode de la conversation, commandes masquées (résumé repliable)">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <ChatModeMenu value={chatMode} onChange={setChatMode} />
+              <ChatModeMenu value="full" onChange={() => {}} running />
+            </div>
+            <Card className="p-5">
+              <ChatThread
+                items={buildThread(
+                  sampleChat.map((event, i) => ({ seq: i + 1, turn: 1, at: "", event })),
+                )}
+                ai="Claude Code"
+                model="claude-opus-5"
+                showCommands={false}
+                onApprove={() => {}}
+              />
+            </Card>
+          </div>
         </Section>
 
         <Section title="Toasts (cadence.notify, messages du shell)">

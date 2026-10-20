@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::{
-    ai::events::ApprovalDecision,
+    ai::{claude_code::Permissions, events::ApprovalDecision},
     chat::{
         ChatSendInput, ChatSendResult, ChatService,
         store::{ChatSessionDetail, ChatSessionRow},
@@ -64,6 +64,12 @@ pub async fn chat_approve(
 #[tauri::command]
 pub async fn chat_session_rename(state: State<'_, AppState>, id: String, title: String) -> AppResult<ChatSessionRow> {
     chat(&state)?.rename(&id, &title).await
+}
+
+/// Mode de la conversation (Demander, Édition auto, Auto) ; s'applique au tour suivant.
+#[tauri::command]
+pub async fn chat_set_permissions(state: State<'_, AppState>, session: String, permissions: Permissions) -> AppResult<ChatSessionRow> {
+    chat(&state)?.set_permissions(&session, permissions).await
 }
 
 /// Supprime la conversation, son historique et son dossier de travail.

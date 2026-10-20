@@ -1,13 +1,16 @@
 /**
  * Chat du mode mock : deux conversations d'exemple, et une IA simulée qui répond mot à mot
- * par `chat://event`. Message contenant « approbation » : carte d'approbation ; « long » :
- * réponse lente, interruptible ; « erreur » : tour en échec (connexion expirée).
+ * par `chat://event`. Message contenant « approbation » : carte d'approbation (sauf en mode
+ * Auto) ; « commandes » : plusieurs commandes (dont une très longue), une lecture et deux
+ * fichiers modifiés ; « long » : réponse lente, interruptible ; « erreur » : tour en échec
+ * (connexion expirée).
  */
 import type {
   AiEvent,
   AiId,
   ApprovalDecision,
   ChatEventPayload,
+  ChatPermissions,
   ChatSessionDetail,
   ChatSessionRow,
   ChatState,
@@ -25,6 +28,7 @@ function session(id: string, title: string, minutesAgo: number, origin = "user")
     model: "claude-opus-5",
     origin,
     mode: "chat",
+    permissions: "ask",
     state: "idle",
     createdAt: at(minutesAgo + 5),
     updatedAt: at(minutesAgo),
@@ -137,7 +141,18 @@ export async function simulateTurn(chats: Chats, id: string, text: string) {
     return finish(false, false, "Connexion expirée.");
   }
 
-  if (text.includes("approbation")) {
+  if (text.includes("commandes")) await simulateCommands(chats, id);
+
+  const mode = chats.get(id)?.session.permissions ?? "ask";
+  if (text.includes("approbation") && mode === "full") {
+    record(chats, id, {
+      type: "command",
+      call: "c1",
+      command: "pnpm test",
+      exitCode: 0,
+      output: "41 tests passés (mode Auto : aucune demande)",
+    });
+  } else if (text.includes("approbation")) {
     const request = `perm-${Date.now()}`;
     record(chats, id, {
       type: "approval-requested",
@@ -188,6 +203,56 @@ export async function simulateTurn(chats: Chats, id: string, text: string) {
   finish(true);
 }
 
+/** Commande du retour utilisateur qui sortait du cadre du fil. */
+export const LONG_MOCK_COMMAND =
+  'cd "C:/Users/lhuil/AppData/Roaming/app.cadence.desktop/repos/.worktrees/remisdv/go-alternance-crm-poc/extraction-issues" && ls -la && echo "--- TREE ---" && find . -path ./.git -prune -o -type f -print | head -100';
+
+async function simulateCommands(chats: Chats, id: string) {
+  const commands: [string, string, number][] = [
+    [
+      LONG_MOCK_COMMAND,
+      [
+        "total 48",
+        "drwxr-xr-x 1 moi 197121    0 oct. 20 09:12 .",
+        "-rw-r--r-- 1 moi 197121 2310 oct. 20 09:12 C:/Users/lhuil/AppData/Roaming/app.cadence.desktop/repos/.worktrees/remisdv/go-alternance-crm-poc/extraction-issues/README.md",
+        "--- TREE ---",
+        "./src/extraction/issues/github_issues_extractor_with_a_really_long_file_name_without_spaces.go",
+        "./go.mod",
+      ].join("\n"),
+      0,
+    ],
+    ["git status --short", " M src/extraction/issues.go\n?? src/extraction/labels.go", 0],
+    ["go test ./...", "--- FAIL: TestLabels (0.00s)\nFAIL", 1],
+  ];
+  for (const [i, [command, output, exitCode]] of commands.entries()) {
+    const call = `cmd-${Date.now()}-${i}`;
+    record(chats, id, { type: "command", call, command, exitCode: null, output: null });
+    await sleep(250);
+    record(chats, id, { type: "command", call, command, exitCode, output });
+  }
+  const call = `read-${Date.now()}`;
+  record(chats, id, {
+    type: "tool-started",
+    call,
+    source: { kind: "builtin" },
+    name: "Read",
+    input: {
+      file_path:
+        "C:/Users/lhuil/AppData/Roaming/app.cadence.desktop/repos/.worktrees/remisdv/go-alternance-crm-poc/extraction-issues/src/extraction/issues.go",
+    },
+  });
+  await sleep(150);
+  record(chats, id, {
+    type: "tool-completed",
+    call,
+    ok: true,
+    summary: "212 lignes",
+    output: null,
+  });
+  for (const path of ["src/extraction/issues.go", "src/extraction/labels.go"])
+    record(chats, id, { type: "file-changed", path, change: "modified" });
+}
+
 export function answerApproval(request: string, decision: ApprovalDecision): boolean {
   const resolve = pendingApprovals.get(request);
   if (!resolve) return false;
@@ -200,7 +265,12 @@ export function requestInterrupt(id: string) {
   interrupts.add(id);
 }
 
-export function newChat(chats: Chats, text: string, ai: AiId = "claude-code"): ChatSessionRow {
+export function newChat(
+  chats: Chats,
+  text: string,
+  ai: AiId = "claude-code",
+  permissions: ChatPermissions = "ask",
+): ChatSessionRow {
   const line =
     text
       .split("\n")
@@ -212,6 +282,7 @@ export function newChat(chats: Chats, text: string, ai: AiId = "claude-code"): C
     0,
   );
   row.ai = ai;
+  row.permissions = permissions;
   row.model = ai === "claude-code" ? row.model : null;
   chats.set(row.id, { session: row, events: [], worktrees: [] });
   return row;

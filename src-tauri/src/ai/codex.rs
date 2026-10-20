@@ -63,11 +63,15 @@ struct Shared {
     killed: AtomicBool,
 }
 
-/// Politique d'approbation et bac à sable d'un profil. En fond, les demandes sont tranchées
-/// d'office par Cadence : une modification dans un worktree accordé passe, le reste est refusé.
-pub fn policy(permissions: Permissions, _mode: SessionMode) -> (&'static str, &'static str) {
-    match permissions {
-        Permissions::Full => ("never", "danger-full-access"),
+/// Politique d'approbation et bac à sable d'un profil. « Demander » : toute commande hors
+/// lecture et toute modification passent par une carte (`untrusted`) ; « Édition auto » : les
+/// modifications du dossier de travail passent, Codex demande pour sortir du bac à sable. En
+/// fond, les demandes sont tranchées d'office par Cadence : une modification dans un worktree
+/// accordé passe, le reste est refusé.
+pub fn policy(permissions: Permissions, mode: SessionMode) -> (&'static str, &'static str) {
+    match (permissions, mode) {
+        (Permissions::Full, _) => ("never", "danger-full-access"),
+        (Permissions::Ask, SessionMode::Chat) => ("untrusted", "workspace-write"),
         _ => ("on-request", "workspace-write"),
     }
 }
@@ -388,7 +392,8 @@ mod tests {
 
     #[test]
     fn maps_profiles_to_codex_policies() {
-        assert_eq!(policy(Permissions::Ask, SessionMode::Chat), ("on-request", "workspace-write"));
+        assert_eq!(policy(Permissions::Ask, SessionMode::Chat), ("untrusted", "workspace-write"));
+        assert_eq!(policy(Permissions::AutoEdit, SessionMode::Chat), ("on-request", "workspace-write"));
         assert_eq!(policy(Permissions::Ask, SessionMode::Background), ("on-request", "workspace-write"), "tranché d'office");
         assert_eq!(policy(Permissions::Full, SessionMode::Chat), ("never", "danger-full-access"));
     }

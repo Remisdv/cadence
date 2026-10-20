@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { AiEvent, ChatEventRow } from "@/lib/types";
 import {
+  activitySummary,
   buildThread,
   compactArgs,
   conversationGroup,
   formatDuration,
   groupTurns,
+  isActivity,
   originPlugin,
   parseCadenceLink,
   toolLabel,
@@ -146,5 +148,58 @@ describe("aides du chat", () => {
     expect(conversationGroup(new Date(2026, 9, 16, 23).toISOString(), now)).toBe("Hier");
     expect(conversationGroup(new Date(2026, 9, 13).toISOString(), now)).toBe("Cette semaine");
     expect(conversationGroup(new Date(2026, 8, 1).toISOString(), now)).toBe("Plus ancien");
+  });
+});
+
+describe("activité d'un tour", () => {
+  const items = buildThread(
+    rows([
+      { type: "user-message", text: "Lance les tests" },
+      { type: "command", call: "c1", command: "ls -la", exitCode: null, output: null },
+      { type: "command", call: "c1", command: "ls -la", exitCode: 0, output: "total 0" },
+      { type: "command", call: "c2", command: "go test ./...", exitCode: 1, output: "FAIL" },
+      {
+        type: "tool-started",
+        call: "t1",
+        source: { kind: "builtin" },
+        name: "Read",
+        input: { file_path: "README.md" },
+      },
+      { type: "tool-completed", call: "t1", ok: true, summary: null, output: null },
+      { type: "file-changed", path: "a.go", change: "modified" },
+      { type: "file-changed", path: "a.go", change: "modified" },
+      { type: "file-changed", path: "b.go", change: "added" },
+      { type: "message-completed", message: "m:0", text: "Fini." },
+    ]),
+  );
+
+  it("remplace une commande en cours par son résultat (même appel)", () => {
+    const commands = items.filter((i) => i.kind === "command");
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toMatchObject({ command: "ls -la", running: false, exitCode: 0 });
+    expect(commands[1]).toMatchObject({ running: false, exitCode: 1, output: "FAIL" });
+  });
+
+  it("classe commandes, outils et fichiers comme activité, pas les messages", () => {
+    expect(items.filter(isActivity).map((i) => i.kind)).toEqual([
+      "command",
+      "command",
+      "tool",
+      "file",
+      "file",
+      "file",
+    ]);
+    expect(items.filter((i) => !isActivity(i)).map((i) => i.kind)).toEqual(["user", "assistant"]);
+  });
+
+  it("résume l'activité (fichiers comptés une fois, accords au pluriel)", () => {
+    expect(activitySummary(items)).toBe("2 commandes · 1 outil · 2 fichiers modifiés");
+    expect(activitySummary(items.filter((i) => i.kind === "command").slice(0, 1))).toBe(
+      "1 commande",
+    );
+    expect(activitySummary(items.filter((i) => i.kind === "file").slice(0, 1))).toBe(
+      "1 fichier modifié",
+    );
+    expect(activitySummary([])).toBe("");
   });
 });

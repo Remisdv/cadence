@@ -228,6 +228,7 @@ pub fn run() {
             commands::actions::action_run,
             commands::chat::chat_approve,
             commands::chat::chat_session_rename,
+            commands::chat::chat_set_permissions,
             commands::chat::chat_session_delete,
             commands::auth::auth_start_device_flow,
             commands::auth::auth_start_web_flow,

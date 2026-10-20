@@ -2,12 +2,16 @@
  * Chat global (maquette V2-Chat.dc.html) : la colonne des conversations, l'en-tête avec la
  * puce de contexte, le fil, le composeur et le panneau de la session. Les réponses arrivent
  * par `chat://event` (useBackendEvents tient le cache à jour).
+ *
+ * Le composeur porte le mode de la conversation (Demander, Édition auto, Auto), mémorisé avec
+ * elle ; l'en-tête, l'interrupteur « Commandes » (préférence gardée dans `stores/ui`).
  */
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChatBar, SessionContext } from "@/components/layout/ChatBar";
 import { Page } from "@/components/layout/Page";
 import { Icon } from "@/components/icons/Icon";
 import { ChatThread } from "@/components/domain/ChatThread";
+import { ChatModeMenu } from "@/components/domain/ChatModeMenu";
 import { PluginTile } from "@/components/domain/PluginTile";
 import { Button } from "@/components/ui/Button";
 import {
@@ -18,6 +22,7 @@ import {
   DialogHeader,
 } from "@/components/ui/Dialog";
 import { Field, Input } from "@/components/ui/Field";
+import { Switch } from "@/components/ui/Switch";
 import {
   Menu,
   MenuContent,
@@ -31,6 +36,7 @@ import { aiTileClass } from "@/components/domain/AiCard";
 import { aiLabels, aiOrder } from "@/lib/domain/ai";
 import { toolIcons, toolOfAi } from "@/lib/domain/tools";
 import { formatDuration, parseCadenceLink, type ChatItem } from "@/lib/domain/chat";
+import { defaultChatMode } from "@/lib/domain/chatModes";
 import {
   useAppSettings,
   useAppStatus,
@@ -43,10 +49,12 @@ import {
   usePlugins,
   useRenameChat,
   useSendChat,
+  useSetChatPermissions,
   useTools,
 } from "@/lib/query/queries";
-import type { AiId, ChatSessionRow, InstalledPluginView } from "@/lib/types";
+import type { AiId, ChatPermissions, ChatSessionRow, InstalledPluginView } from "@/lib/types";
 import { navigate, useNavigation } from "@/stores/navigation";
+import { useUiStore } from "@/stores/ui";
 import type { ViewProps } from "@/views/registry";
 
 export default function ChatView({ view }: ViewProps<"chat">) {
@@ -60,7 +68,21 @@ export default function ChatView({ view }: ViewProps<"chat">) {
   const interrupt = useInterruptChat();
   const approve = useApproveChat(sessionId ?? "");
   const answer = useAnswerChat(sessionId ?? "");
+  const setPermissions = useSetChatPermissions();
   const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
+  const showCommands = useUiStore((s) => s.showCommands);
+  const setShowCommands = useUiStore((s) => s.setShowCommands);
+  /** Mode choisi dans le composeur pour une nouvelle conversation (mémorisé ensuite avec elle). */
+  const [pickedMode, setPickedMode] = useState<ChatPermissions>(defaultChatMode);
+  const mode = session?.permissions ?? pickedMode;
+  // Chaque nouvelle conversation repart en « Demander » (« Auto » ne se reporte pas d'office).
+  useEffect(() => {
+    if (sessionId !== null) setPickedMode(defaultChatMode);
+  }, [sessionId]);
+  const onMode = (next: ChatPermissions) => {
+    if (sessionId) setPermissions.mutate({ session: sessionId, permissions: next });
+    else setPickedMode(next);
+  };
 
   const tools = useTools().data;
   /** IA choisie dans le composeur pour une nouvelle conversation (fixée ensuite). */
@@ -81,6 +103,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
       text,
       ai: sessionId ? null : aiId,
       ...(attachments.length > 0 ? { attachments } : {}),
+      ...(sessionId ? {} : { permissions: pickedMode }),
     });
     if (id !== sessionId) replace({ id: "chat", session: id });
   };
@@ -121,6 +144,19 @@ export default function ChatView({ view }: ViewProps<"chat">) {
         actions={
           <>
             {session && (
+              <label
+                title="Afficher ou masquer les commandes shell, appels d'outils et fichiers modifiés"
+                className="inline-flex h-8 cursor-pointer items-center gap-2 px-1 text-body-sm text-tx2"
+              >
+                <Switch
+                  checked={showCommands}
+                  onCheckedChange={setShowCommands}
+                  aria-label="Afficher les commandes"
+                />
+                Commandes
+              </label>
+            )}
+            {session && (
               <Menu>
                 <MenuTrigger asChild>
                   <Button
@@ -153,6 +189,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             model={session?.model}
             running={running}
             plugins={plugins}
+            showCommands={showCommands}
             onApprove={(request, decision) => approve.mutate({ request, decision })}
             onAnswer={(request, text) => answer.mutate({ request, answer: text })}
             onLink={onLink}
@@ -161,13 +198,16 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             ai={aiId}
             choices={sessionId ? [] : available}
             onPick={setPicked}
+            mode={mode}
+            onMode={onMode}
             running={running}
             sending={send.isPending}
             error={
               send.error?.message ??
               interrupt.error?.message ??
               approve.error?.message ??
-              answer.error?.message
+              answer.error?.message ??
+              setPermissions.error?.message
             }
             onSend={onSend}
             onStop={() => sessionId && interrupt.mutate(sessionId)}
@@ -227,6 +267,7 @@ function Thread({
   model,
   running,
   plugins,
+  showCommands,
   onApprove,
   onAnswer,
   onLink,
@@ -238,6 +279,7 @@ function Thread({
   model?: string | null;
   running: boolean;
   plugins: InstalledPluginView[];
+  showCommands: boolean;
   onApprove: (request: string, decision: "allow" | "allow-session" | "deny") => void;
   onAnswer: (request: string, answer: string) => void;
   onLink: (href: string) => boolean;
@@ -272,6 +314,7 @@ function Thread({
             ai={ai ?? "IA"}
             model={model}
             running={running}
+            showCommands={showCommands}
             onApprove={onApprove}
             onAnswer={onAnswer}
             onLink={onLink}
@@ -331,6 +374,8 @@ function Composer({
   ai: aiId,
   choices,
   onPick,
+  mode,
+  onMode,
   running,
   sending,
   error,
@@ -342,6 +387,9 @@ function Composer({
   /** IA proposées pour une nouvelle conversation ; vide = IA fixée (conversation existante). */
   choices: AiId[];
   onPick: (ai: AiId) => void;
+  /** Mode de la conversation ; un changement s'applique au tour suivant. */
+  mode: ChatPermissions;
+  onMode: (mode: ChatPermissions) => void;
   running: boolean;
   sending: boolean;
   error?: string;
@@ -439,7 +487,7 @@ function Composer({
               ))}
             </div>
           )}
-          <div className="flex items-center gap-2 px-2.5 py-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 px-2.5 py-2">
             {choices.length > 1 ? (
               <Menu>
                 <MenuTrigger asChild>
@@ -468,6 +516,7 @@ function Composer({
                 <AiChip ai={aiId} />
               </span>
             )}
+            <ChatModeMenu value={mode} onChange={onMode} running={running} />
             {withSkills.length > 0 && (
               <Menu>
                 <MenuTrigger asChild>

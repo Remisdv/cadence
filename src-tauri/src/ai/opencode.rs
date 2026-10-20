@@ -370,6 +370,7 @@ mod tests {
     #[test]
     fn maps_profiles_to_opencode_rules() {
         assert_eq!(permissions(Permissions::Ask, SessionMode::Chat), OpencodePermissions { edit: "ask", bash: "ask" });
+        assert_eq!(permissions(Permissions::AutoEdit, SessionMode::Chat), OpencodePermissions { edit: "allow", bash: "ask" });
         assert_eq!(permissions(Permissions::Ask, SessionMode::Background).bash, "deny");
         assert_eq!(permissions(Permissions::Full, SessionMode::Chat).bash, "allow");
     }

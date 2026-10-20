@@ -13,6 +13,12 @@
 //! racine inscriptible, permission de chemin). Un worktree ouvert en cours de route relance la
 //! session (reprise par `native_id`) au tour suivant ; pendant le tour, l'adaptateur accorde
 //! d'office les accès qui le visent. Ils disparaissent avec la conversation.
+//!
+//! Mode d'une conversation (`Permissions` : Demander, Édition auto, Auto), choisi dans
+//! le composeur et mémorisé avec elle. Les trois CLI le reçoivent au lancement : un changement
+//! en cours de route relance le processus (reprise par `native_id`) au tour suivant, comme un
+//! worktree ouvert ; le tour en cours garde son mode. Une exécution de fond reste en édition
+//! auto (personne pour répondre aux demandes).
 
 pub mod store;
 
@@ -79,6 +85,11 @@ pub struct ChatSendInput {
     #[serde(default)]
     #[ts(optional)]
     pub attachments: Option<Vec<String>>,
+    /// Mode d'une nouvelle conversation (défaut : Demander) ; ignoré pour une conversation
+    /// existante (`chat_set_permissions`).
+    #[serde(default)]
+    #[ts(optional)]
+    pub permissions: Option<Permissions>,
 }
 
 /// Dossier des pièces jointes, dans le dossier de travail de la conversation.
@@ -203,6 +214,8 @@ struct Live {
     turn: Arc<AtomicU32>,
     last_used: Instant,
     mode: SessionMode,
+    /// Mode de la conversation au lancement de la CLI.
+    permissions: Permissions,
     /// Worktrees ouverts à la CLI à son lancement.
     dirs: Vec<PathBuf>,
     /// Place dans la file des exécutions de fond, rendue à la fermeture du processus.
@@ -262,6 +275,12 @@ impl ChatService {
         self.store.rename(id, title).await
     }
 
+    /// Change le mode de la conversation. Il s'applique au tour suivant : le processus vivant,
+    /// lancé avec l'ancien mode, est relancé (reprise de la session native) à ce moment-là.
+    pub async fn set_permissions(&self, id: &str, permissions: Permissions) -> AppResult<ChatSessionRow> {
+        self.store.set_permissions(id, permissions).await
+    }
+
     fn notify_state(&self, session: &str, state: ChatState) {
         (self.sink)(ChatNotice::State(ChatStatePayload { session: session.into(), state }));
     }
@@ -296,6 +315,7 @@ impl ChatService {
                     model: (ai == AiId::ClaudeCode).then(|| self.config.model.clone()).flatten(),
                     origin: "user".into(),
                     mode: ChatMode::Chat,
+                    permissions: input.permissions.unwrap_or_default(),
                     state: ChatState::Idle,
                     created_at: now.clone(),
                     updated_at: now,
@@ -355,6 +375,10 @@ impl ChatService {
             model: (start.ai == AiId::ClaudeCode).then(|| self.config.model.clone()).flatten(),
             origin: start.origin,
             mode: start.mode,
+            permissions: match start.mode {
+                ChatMode::Chat => Permissions::Ask,
+                ChatMode::Background => Permissions::AutoEdit,
+            },
             state: ChatState::Idle,
             created_at: now.clone(),
             updated_at: now,
@@ -413,11 +437,15 @@ impl ChatService {
         permit: Option<OwnedSemaphorePermit>,
     ) -> AppResult<(Arc<AiSession>, Arc<AtomicU32>)> {
         let dirs = self.granted(id);
+        let row = self.store.get(id).await?;
+        let permissions = launch_permissions(row.permissions, mode);
         let mut live = self.live.lock().await;
         if let Some(entry) = live.get_mut(id) {
-            // Un tour en cours garde son processus ; sinon, un worktree ouvert depuis le
-            // lancement relance la CLI (reprise de la session native) pour qu'elle le reçoive.
-            if entry.session.is_alive() && (entry.dirs == dirs || entry.session.is_running()) {
+            // Un tour en cours garde son processus ; sinon, un worktree ouvert ou un mode changé
+            // depuis le lancement relance la CLI (reprise de la session native) pour qu'elle les
+            // reçoive.
+            let same = entry.dirs == dirs && entry.permissions == permissions;
+            if entry.session.is_alive() && (same || entry.session.is_running()) {
                 entry.last_used = Instant::now();
                 return Ok((entry.session.clone(), entry.turn.clone()));
             }
@@ -436,7 +464,6 @@ impl ChatService {
             }
         }
 
-        let row = self.store.get(id).await?;
         let cli = (self.locate)(row.ai)?;
         let resume = self.store.native_id(id).await?;
         let run = (mode == SessionMode::Background).then(|| id.to_string());
@@ -459,7 +486,7 @@ impl ChatService {
                     resume,
                     model: row.model.clone().filter(|_| row.ai == AiId::ClaudeCode),
                     mode,
-                    permissions: if mode == SessionMode::Background { Permissions::AutoEdit } else { Permissions::Ask },
+                    permissions,
                     title: row.title.clone(),
                     add_dirs: dirs.clone(),
                     granted: self.gateway.as_ref().map(|g| {
@@ -474,7 +501,7 @@ impl ChatService {
         );
         live.insert(
             id.to_string(),
-            Live { session: session.clone(), turn: turn.clone(), last_used: Instant::now(), mode, dirs, _permit: permit },
+            Live { session: session.clone(), turn: turn.clone(), last_used: Instant::now(), mode, permissions, dirs, _permit: permit },
         );
         Ok((session, turn))
     }
@@ -487,7 +514,7 @@ impl ChatService {
     /// Ferme le processus et attend sa fin : la session native est libre pour une reprise.
     /// Le jeton de passerelle reste valide (la conversation continue).
     async fn close_now(&self, id: &str, session: Arc<AiSession>) {
-        tracing::info!(session = id, "worktree ouvert : la CLI est relancée avec ce dossier");
+        tracing::info!(session = id, "worktree ouvert ou mode changé : la CLI est relancée (reprise)");
         match Arc::try_unwrap(session) {
             Ok(session) => session.close(self.config.close_grace).await,
             Err(shared) => shared.kill().await,
@@ -600,6 +627,14 @@ impl ChatService {
     }
 }
 
+/// Mode passé à la CLI : celui de la conversation ; une exécution de fond reste en édition auto.
+pub fn launch_permissions(chosen: Permissions, mode: SessionMode) -> Permissions {
+    match mode {
+        SessionMode::Chat => chosen,
+        SessionMode::Background => Permissions::AutoEdit,
+    }
+}
+
 /// Enregistre et diffuse les événements d'un processus, dans l'ordre.
 async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, mut events: mpsc::UnboundedReceiver<AiEvent>) {
     while let Some(event) = events.recv().await {
@@ -669,6 +704,14 @@ mod tests {
         assert!(text.starts_with("Résume\n\nPièces jointes") && text.ends_with("- pieces-jointes/notes"));
         assert_eq!(with_attachments("Bonjour", &[]), "Bonjour");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn background_runs_keep_auto_edit() {
+        assert_eq!(launch_permissions(Permissions::Full, SessionMode::Chat), Permissions::Full);
+        assert_eq!(launch_permissions(Permissions::Ask, SessionMode::Chat), Permissions::Ask);
+        assert_eq!(launch_permissions(Permissions::Full, SessionMode::Background), Permissions::AutoEdit);
+        assert_eq!(launch_permissions(Permissions::Ask, SessionMode::Background), Permissions::AutoEdit);
     }
 
     #[test]

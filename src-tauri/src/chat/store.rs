@@ -12,7 +12,7 @@ use sqlx::{
 use ts_rs::TS;
 
 use crate::{
-    ai::events::AiEvent,
+    ai::{claude_code::Permissions, events::AiEvent},
     app_settings::AiId,
     domain::version::now_iso,
     error::{AppError, AppResult},
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     native_id TEXT,
     origin TEXT NOT NULL,
     mode TEXT NOT NULL,
+    permissions TEXT NOT NULL DEFAULT 'ask',
     state TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -75,6 +76,8 @@ pub struct ChatSessionRow {
     /// `user`, ou `action:<plugin>/<action>`.
     pub origin: String,
     pub mode: ChatMode,
+    /// Mode de la conversation (approbations de la CLI), modifiable entre deux tours.
+    pub permissions: Permissions,
     pub state: ChatState,
     pub created_at: String,
     pub updated_at: String,
@@ -136,13 +139,19 @@ impl ChatStore {
         // écritures d'une session suit l'ordre des événements.
         let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+        // Historique d'avant les modes (0.3.0) : la colonne arrive avec « Demander ».
+        let has_permissions: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'permissions'").fetch_one(&pool).await?;
+        if has_permissions == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN permissions TEXT NOT NULL DEFAULT 'ask'").execute(&pool).await?;
+        }
         Ok(Self { pool })
     }
 
     pub async fn create(&self, session: &ChatSessionRow) -> AppResult<()> {
         sqlx::query(
-            "INSERT INTO sessions (id, title, ai, model, native_id, origin, mode, state, created_at, updated_at)
-             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions (id, title, ai, model, native_id, origin, mode, permissions, state, created_at, updated_at)
+             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&session.id)
         .bind(&session.title)
@@ -150,6 +159,7 @@ impl ChatStore {
         .bind(&session.model)
         .bind(&session.origin)
         .bind(kebab(&session.mode))
+        .bind(kebab(&session.permissions))
         .bind(kebab(&session.state))
         .bind(&session.created_at)
         .bind(&session.updated_at)
@@ -166,6 +176,7 @@ impl ChatStore {
             model: row.try_get("model")?,
             origin: row.try_get("origin")?,
             mode: parse(&row.try_get::<String, _>("mode")?)?,
+            permissions: parse(&row.try_get::<String, _>("permissions")?).unwrap_or_default(),
             state: parse(&row.try_get::<String, _>("state")?)?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
@@ -216,6 +227,13 @@ impl ChatStore {
             return Err(AppError::Validation("Le titre est vide.".into()));
         }
         sqlx::query("UPDATE sessions SET title = ? WHERE id = ?").bind(title).bind(id).execute(&self.pool).await?;
+        self.get(id).await
+    }
+
+    /// Change le mode ; le processus vivant est relancé au tour suivant (voir `ChatService`).
+    pub async fn set_permissions(&self, id: &str, permissions: Permissions) -> AppResult<ChatSessionRow> {
+        self.get(id).await?;
+        sqlx::query("UPDATE sessions SET permissions = ? WHERE id = ?").bind(kebab(&permissions)).bind(id).execute(&self.pool).await?;
         self.get(id).await
     }
 
@@ -294,6 +312,7 @@ mod tests {
             model: None,
             origin: "user".into(),
             mode: ChatMode::Chat,
+            permissions: Permissions::Ask,
             state: ChatState::Idle,
             created_at: now.clone(),
             updated_at: now,
@@ -321,10 +340,51 @@ mod tests {
         assert_eq!((a.state, a.model.as_deref()), (ChatState::Interrupted, Some("haiku")));
         assert_eq!(store.rename("a", "  Nouveau titre ").await.unwrap().title, "Nouveau titre");
         assert!(store.rename("a", " ").await.is_err());
+        assert_eq!(store.get("a").await.unwrap().permissions, Permissions::Ask);
+        assert_eq!(store.set_permissions("a", Permissions::AutoEdit).await.unwrap().permissions, Permissions::AutoEdit);
+        assert!(store.set_permissions("absente", Permissions::Full).await.is_err());
 
         store.delete("a").await.unwrap();
         assert!(store.get("a").await.is_err());
         assert!(store.events("a").await.unwrap().is_empty());
         assert_eq!(store.list().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn adds_the_mode_column_to_an_older_history() {
+        let dir = crate::app_settings::temp_dir("chat-store-migration");
+        let path = dir.join("chat.sqlite3");
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let options = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
+            let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await.unwrap();
+            // Table `sessions` de la 0.3.0, sans la colonne du mode.
+            sqlx::raw_sql(
+                "CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY, title TEXT NOT NULL, ai TEXT NOT NULL, model TEXT,
+                    native_id TEXT, origin TEXT NOT NULL, mode TEXT NOT NULL, state TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO sessions (id, title, ai, origin, mode, state, created_at, updated_at)
+                 VALUES ('a', 'Ancienne', 'claude-code', 'user', 'chat', 'idle', '2026-10-01', '2026-10-01')",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+        }
+        let store = ChatStore::open(&path).await.unwrap();
+        assert_eq!(store.get("a").await.unwrap().permissions, Permissions::Ask, "« Demander » par défaut");
+        store.set_permissions("a", Permissions::Full).await.unwrap();
+        drop(store);
+        let store = ChatStore::open(&path).await.unwrap();
+        assert_eq!(store.get("a").await.unwrap().permissions, Permissions::Full, "mémorisé");
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

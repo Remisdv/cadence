@@ -31,6 +31,7 @@ use std::{
 };
 
 use secrecy::{ExposeSecret, SecretString};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -38,6 +39,7 @@ use tokio::{
     sync::mpsc,
     task::JoinHandle,
 };
+use ts_rs::TS;
 
 use super::{
     claude_stream::{
@@ -52,10 +54,13 @@ use super::{
 use crate::error::{AppError, AppResult};
 
 /// Profil de permissions des outils natifs de la CLI (ceux de la passerelle sont toujours
-/// autorisés).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// autorisés). C'est le « mode » d'une conversation, choisi dans le composeur du chat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, rename = "ChatPermissions")]
 pub enum Permissions {
     /// Chaque demande devient une carte d'approbation dans le chat.
+    #[default]
     Ask,
     /// Édition de fichiers autorisée, le reste demandé (refusé en fond).
     AutoEdit,
@@ -396,6 +401,9 @@ mod tests {
         let background = strings(&launch(Permissions::Ask, SessionMode::Background, None));
         assert!(background.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]), "réponses d'office en fond");
         assert!(background.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]));
+        let auto_edit = strings(&launch(Permissions::AutoEdit, SessionMode::Chat, None));
+        assert!(auto_edit.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]));
+        assert!(auto_edit.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]), "le shell reste demandé");
         let full = strings(&launch(Permissions::Full, SessionMode::Chat, None));
         assert!(full.windows(2).any(|w| w == ["--permission-mode", "bypassPermissions"]));
         assert!(!full.contains(&"--permission-prompt-tool".to_string()), "rien à demander en accès complet");

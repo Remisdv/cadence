@@ -499,7 +499,7 @@ const handlers: Handlers = {
     const text = input.text.trim();
     if (!text) fail("chat_send", "Le message est vide.");
     const ai = input.ai ?? state.settings.defaultAi ?? "claude-code";
-    const id = input.session ?? newChat(state.chats, text, ai).id;
+    const id = input.session ?? newChat(state.chats, text, ai, input.permissions).id;
     const chat = state.chats.get(id);
     if (!chat) fail("chat_send", `Conversation « ${id} » introuvable.`);
     if (chat.session.state === "running" || chat.session.state === "waiting-approval")
@@ -549,6 +549,7 @@ const handlers: Handlers = {
     Object.assign(row, {
       origin: `action:${plugin.id}/${action.id}`,
       mode: action.mode === "background" ? "background" : "chat",
+      permissions: action.mode === "background" ? "auto-edit" : "ask",
     });
     recordMockChatEvent(state.chats, row.id, { type: "user-message", text: prompt });
     void simulateTurn(state.chats, row.id, prompt).then(() => {
@@ -573,6 +574,12 @@ const handlers: Handlers = {
     if (!chat) fail("chat_session_rename", `Conversation « ${id} » introuvable.`);
     if (!title.trim()) fail("chat_session_rename", "Le titre est vide.");
     chat.session = { ...chat.session, title: title.trim() };
+    return chat.session;
+  },
+  chat_set_permissions: ({ session, permissions }) => {
+    const chat = state.chats.get(session);
+    if (!chat) fail("chat_set_permissions", `Conversation « ${session} » introuvable.`);
+    chat.session = { ...chat.session, permissions };
     return chat.session;
   },
   chat_session_delete: ({ id }) => {

@@ -7,6 +7,7 @@
 //! - « long » : diffuse lentement, jusqu'à une interruption (`control_request interrupt`) ;
 //! - « plante » : écrit sur stderr et quitte (code 1) ;
 //! - « dossiers » : répond la liste des `--add-dir` reçus (« dossiers : a | b ») ;
+//! - « mode » : répond le `--permission-mode` reçu (« mode [reprise] : acceptEdits ») ;
 //! - « lis <chemin> » : demande `can_use_tool` (Read) et répond « lu : autorisé [dossiers
 //!   ajoutés] » ou « lu : refusé ».
 //!
@@ -69,6 +70,8 @@ fn main() {
     let resumed = resume.is_some();
     let add_dirs: Vec<String> =
         args.windows(2).filter(|w| w[0] == "--add-dir").map(|w| w[1].clone()).collect();
+    let permission_mode =
+        args.iter().position(|a| a == "--permission-mode").and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
     let id = resume.unwrap_or_else(|| "fake-1".into());
     let mut session = Session { id, turn: 0 };
 
@@ -168,7 +171,9 @@ fn main() {
                     session.result(interrupted);
                     continue;
                 }
-                let reply = if text.contains("dossiers") {
+                let reply = if text == "mode" {
+                    format!("mode{} : {permission_mode}", if resumed { " [reprise]" } else { "" })
+                } else if text.contains("dossiers") {
                     format!("dossiers{} : {}", if resumed { " [reprise]" } else { "" }, add_dirs.join(" | "))
                 } else if resumed {
                     format!("écho [reprise {}] : {text}", session.id)

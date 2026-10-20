@@ -1,4 +1,7 @@
-/** État d'interface transverse : modales globales, palette, bandeau de quota, toasts. */
+/**
+ * État d'interface transverse : modales globales, palette, bandeau de quota, toasts, et les
+ * préférences d'affichage du chat (gardées dans le stockage local du webview).
+ */
 import { create } from "zustand";
 import type { RateLimitInfo } from "@/lib/types";
 
@@ -32,9 +35,32 @@ interface UiState {
   toasts: Toast[];
   pushToast: (toast: Omit<Toast, "id">) => void;
   dismissToast: (id: number) => void;
+
+  /** Chat : commandes, appels d'outils et fichiers montrés dans le fil (sinon résumés). */
+  showCommands: boolean;
+  setShowCommands: (show: boolean) => void;
 }
 
 let nextToast = 1;
+
+/** Préférence « afficher les commandes » du chat, gardée entre deux lancements. */
+export const SHOW_COMMANDS_KEY = "cadence.chat.showCommands";
+
+function readShowCommands(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(SHOW_COMMANDS_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function writeShowCommands(show: boolean) {
+  try {
+    globalThis.localStorage?.setItem(SHOW_COMMANDS_KEY, String(show));
+  } catch {
+    // Stockage indisponible : la préférence vaut pour cette session seulement.
+  }
+}
 
 export const useUiStore = create<UiState>((set) => ({
   dialog: null,
@@ -55,4 +81,10 @@ export const useUiStore = create<UiState>((set) => ({
   pushToast: (toast) =>
     set((s) => ({ toasts: [...s.toasts, { ...toast, id: nextToast++ }].slice(-4) })),
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  showCommands: readShowCommands(),
+  setShowCommands: (showCommands) => {
+    writeShowCommands(showCommands);
+    set({ showCommands });
+  },
 }));
