@@ -16,6 +16,7 @@ import { createBridge, type Bridge } from "./bridge";
 import { isMockIpc } from "@/lib/ipc/transport";
 import { hostApi, mockFrameDocument, pluginRuns, pluginUrl, shellTheme } from "./host";
 import { reposChange } from "./published";
+import { conversationEvent } from "./conversations";
 
 type Route = { view: string; params: Record<string, string> };
 type Rect = { left: number; top: number; width: number; height: number };
@@ -143,8 +144,12 @@ function ManagedFrame({ plugin }: { plugin: InstalledPluginView }) {
           data: report.data,
         });
     });
-    const offRunState = subscribe("chat://state", ({ session, state }) => {
+    const offRunState = subscribe("chat://state", (payload) => {
+      const { session, state } = payload;
       if (pluginRuns.get(session) === plugin.id) b.emit("run", { runId: session, state });
+      // Conversation ouverte par une action de ce plugin : création ou changement d'état.
+      const conversation = conversationEvent(plugin.id, payload);
+      if (conversation) b.emit("conversations", conversation);
     });
     const offEvents = subscribe("plugin://event", (payload) => {
       if (payload.plugin === plugin.id) b.emit(payload.event, payload.data);

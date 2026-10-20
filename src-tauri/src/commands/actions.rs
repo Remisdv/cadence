@@ -10,7 +10,7 @@ use ts_rs::TS;
 use crate::{
     ai::prompt::{action_prompt, action_title},
     app_settings::{AiId, AppSettings},
-    chat::{ActionStart, store::ChatMode},
+    chat::{ActionStart, conversations::action_group, store::ChatMode},
     error::{AppError, AppResult},
     plugins::manifest::{ActionMode, PluginActionInfo},
     state::AppState,
@@ -74,6 +74,8 @@ pub async fn action_run(state: State<'_, AppState>, input: ActionRunInput) -> Ap
         .find(|a| a.id == input.action)
         .ok_or_else(|| AppError::Validation(format!("« {} » ne déclare pas l'action « {} ».", manifest.name, input.action)))?;
     check_context(action, input.context.as_ref())?;
+    // Champ réservé `group` : conversation rattachée (sprint…), cachée du chat global par défaut.
+    let (group, hidden) = action_group(&input.plugin, input.context.as_ref())?;
     let settings = state.settings.get();
     let ai = choose_ai(&settings, &input.plugin, &input.action, input.ai)?;
     if !settings.ai.get(ai).enabled {
@@ -89,6 +91,9 @@ pub async fn action_run(state: State<'_, AppState>, input: ActionRunInput) -> Ap
             title: action_title(&action.label, input.context.as_ref()),
             origin: format!("action:{}/{}", input.plugin, input.action),
             prompt,
+            group,
+            hidden,
+            context: input.context,
         })
         .await?;
     Ok(ActionRunResult { session, mode: action.mode, ai })

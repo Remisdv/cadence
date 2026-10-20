@@ -174,5 +174,17 @@
         return call("storage.set", { key: key, value: value });
       },
     },
+    // Conversations ouvertes par les actions du plugin (événement `conversations` à chaque état).
+    conversations: {
+      list: function (options) {
+        return call("conversations.list", { group: (options && options.group) || null });
+      },
+      get: function (id) {
+        return call("conversations.get", { id: id });
+      },
+      open: function (id) {
+        return call("conversations.open", { id: id });
+      },
+    },
   };
 })(window);

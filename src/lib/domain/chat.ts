@@ -8,6 +8,8 @@ import type {
   ApprovalDecision,
   ApprovalKind,
   ChatEventRow,
+  ChatGroup,
+  ChatSessionRow,
   FileChange,
   PlanItem,
   ToolSource,
@@ -321,4 +323,20 @@ export function conversationTime(iso: string, now = new Date()): string {
 /** Plugin d'origine d'une conversation ouverte par une action (`action:<plugin>/<action>`). */
 export function originPlugin(origin: string): string | null {
   return /^action:([a-z0-9-]+)\//.exec(origin)?.[1] ?? null;
+}
+
+/** Conversations du chat global : sans les conversations cachées (rattachées à un groupe). */
+export function globalConversations<T extends Pick<ChatSessionRow, "hidden">>(rows: T[]): T[] {
+  return rows.filter((row) => !row.hidden);
+}
+
+/** Groupe d'une conversation vu par son plugin : l'id sans le préfixe `<plugin>:` de l'hôte. */
+export function localGroup(plugin: string, group: ChatGroup | null): ChatGroup | null {
+  if (!group?.id.startsWith(`${plugin}:`)) return null;
+  return { id: group.id.slice(plugin.length + 1), label: group.label };
+}
+
+/** Lien de retour d'une conversation de groupe vers la vue de son plugin. */
+export function groupReturnLabel(group: ChatGroup, pluginName: string): string {
+  return /^sprint[:/]/.test(group.id) ? "Retour au sprint" : `Retour à ${pluginName}`;
 }

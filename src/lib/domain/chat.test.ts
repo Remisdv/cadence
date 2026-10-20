@@ -6,8 +6,11 @@ import {
   compactArgs,
   conversationGroup,
   formatDuration,
+  globalConversations,
+  groupReturnLabel,
   groupTurns,
   isActivity,
+  localGroup,
   originPlugin,
   parseCadenceLink,
   toolLabel,
@@ -140,6 +143,23 @@ describe("aides du chat", () => {
     expect(parseCadenceLink("https://example.org")).toBeNull();
     expect(originPlugin("action:gestion-projet/preparer-issue")).toBe("gestion-projet");
     expect(originPlugin("user")).toBeNull();
+  });
+
+  it("écarte les conversations cachées et lit le groupe vu par son plugin", () => {
+    const list = [
+      { id: "a", hidden: false },
+      { id: "b", hidden: true },
+    ];
+    expect(globalConversations(list).map((r) => r.id)).toEqual(["a"]);
+    const group = { id: "gestion-projet:sprint:o/n:3", label: "Sprint 3 · o/n" };
+    expect(localGroup("gestion-projet", group)).toEqual({ id: "sprint:o/n:3", label: group.label });
+    expect(localGroup("gestion", group)).toBeNull();
+    expect(localGroup("documents", group)).toBeNull();
+    expect(localGroup("gestion-projet", null)).toBeNull();
+    expect(groupReturnLabel({ id: "sprint:o/n:3", label: "" }, "Gestion de projet")).toBe(
+      "Retour au sprint",
+    );
+    expect(groupReturnLabel({ id: "lot:4", label: "" }, "Documents")).toBe("Retour à Documents");
   });
 
   it("range les conversations par jour", () => {

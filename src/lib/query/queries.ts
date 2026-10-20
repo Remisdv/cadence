@@ -331,7 +331,7 @@ export function useRestartPlugin() {
 
 /** Conversations, la plus récemment active d'abord. */
 export const useChatSessions = () =>
-  useQuery({ queryKey: keys.chatSessions(), queryFn: () => call("chat_sessions") });
+  useQuery({ queryKey: keys.chatSessions(), queryFn: () => call("chat_sessions", {}) });
 
 /** Historique d'une conversation, tenu à jour par `chat://event` (useBackendEvents). */
 export const useChatSession = (id: string | null) =>

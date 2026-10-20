@@ -197,7 +197,7 @@ async fn closes_idle_processes_caps_them_and_deletes_conversations() {
 
     assert_eq!(f.chat.close_idle().await.len(), 1);
     assert_eq!(f.chat.live_count().await, 0);
-    assert_eq!(f.chat.sessions().await.unwrap().len(), 2, "les conversations restent");
+    assert_eq!(f.chat.sessions(None).await.unwrap().len(), 2, "les conversations restent");
 
     assert!(f.dir.join("sessions").join(&a).is_dir());
     f.chat.delete(&a).await.unwrap();
@@ -332,6 +332,9 @@ async fn runs_background_actions_in_a_queue_and_records_reports() {
         title: format!("Action {n}"),
         origin: "action:exemple/resumer".into(),
         prompt: format!("tâche {n}"),
+        group: None,
+        hidden: false,
+        context: None,
     };
     let first = f.chat.start_action(start(1)).await.unwrap();
     let second = f.chat.start_action(start(2)).await.unwrap();
@@ -377,5 +380,81 @@ async fn runs_background_actions_in_a_queue_and_records_reports() {
     f.wait(&first, ChatState::Idle).await;
     let last = f.replies(&first).await.last().cloned().unwrap_or_default();
     assert!(last.contains("reprise fake-1") && last.ends_with("et ensuite ?"), "session native reprise : {last}");
+    f.chat.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keeps_group_conversations_out_of_the_global_chat_and_inside_their_plugin() {
+    use cadence_lib::{
+        app_settings::AiId,
+        chat::{
+            ActionStart, ChatStatePayload,
+            conversations::{ConversationRole, action_group},
+            store::ChatMode,
+        },
+    };
+    let f = fixture("groups", |_| {}).await;
+    let context = serde_json::json!({ "type": "issue", "repo": "o/n", "issue": 42,
+        "group": { "id": "sprint:o/n:3", "label": "Sprint 3 · o/n" } });
+    let (group, hidden) = action_group("gestion-projet", Some(&context)).unwrap();
+    let start = |origin: &str, prompt: &str| ActionStart {
+        ai: AiId::ClaudeCode,
+        mode: ChatMode::Chat,
+        title: "Développer l'issue 42".into(),
+        origin: origin.into(),
+        prompt: prompt.into(),
+        group: group.clone(),
+        hidden,
+        context: Some(context.clone()),
+    };
+    let sprint = f.chat.start_action(start("action:gestion-projet/developper-issue", "issue 42")).await.unwrap();
+    let free = f.send(None, "bonjour").await;
+    f.wait(&sprint, ChatState::Idle).await;
+    f.wait(&free, ChatState::Idle).await;
+
+    let global: Vec<String> = f.chat.sessions(None).await.unwrap().into_iter().map(|s| s.id).collect();
+    assert_eq!(global, std::slice::from_ref(&free), "conversation de groupe cachée du chat global");
+    let explicit = f.chat.sessions(Some("gestion-projet:sprint:o/n:3")).await.unwrap();
+    assert_eq!(explicit.len(), 1, "visible avec un filtre de groupe explicite");
+    assert!(f.chat.detail(&sprint).await.is_ok(), "elle s'ouvre quand même dans le chat");
+
+    let listed = f.chat.conversations("gestion-projet", Some("sprint:o/n:3")).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    let info = &listed[0];
+    assert_eq!((info.id.as_str(), info.turns, info.state), (sprint.as_str(), 1, ChatState::Idle));
+    assert_eq!(info.action.as_deref(), Some("developper-issue"));
+    assert_eq!(info.group.as_ref().map(|g| (g.id.as_str(), g.label.as_str())), Some(("sprint:o/n:3", "Sprint 3 · o/n")));
+    assert_eq!(info.context.as_ref().and_then(|c| c.get("issue")), Some(&serde_json::json!(42)));
+    assert!(f.chat.conversations("gestion-projet", None).await.unwrap().is_empty(), "sans groupe : pas les cachées");
+
+    // Isolation : un autre plugin ne voit ni le groupe ni la conversation.
+    assert!(f.chat.conversations("documents", Some("sprint:o/n:3")).await.unwrap().is_empty());
+    assert!(f.chat.conversation("documents", &sprint).await.is_err());
+    assert!(f.chat.conversation("gestion-projet", &free).await.is_err(), "conversation libre : pas au plugin");
+
+    let detail = f.chat.conversation("gestion-projet", &sprint).await.unwrap();
+    let roles: Vec<ConversationRole> = detail.messages.iter().map(|m| m.role).collect();
+    assert_eq!(roles, [ConversationRole::User, ConversationRole::Assistant]);
+    assert_eq!(detail.messages[1].text, "écho : issue 42");
+
+    // L'état relayé porte le plugin et le groupe vu par lui (événement `conversations`).
+    let states: Vec<ChatStatePayload> = f
+        .notices
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|n| match n {
+            ChatNotice::State(s) if s.session == sprint => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(states.iter().any(|s| s.state == ChatState::Running), "création : en cours");
+    assert!(states.iter().all(|s| s.plugin.as_deref() == Some("gestion-projet")
+        && s.group.as_ref().map(|g| g.id.as_str()) == Some("sprint:o/n:3")));
+    let free_state = f.notices.lock().unwrap().iter().find_map(|n| match n {
+        ChatNotice::State(s) if s.session == free => Some(s.clone()),
+        _ => None,
+    });
+    assert_eq!(free_state.map(|s| (s.plugin, s.group)), Some((None, None)));
     f.chat.shutdown().await;
 }

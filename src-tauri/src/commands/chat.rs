@@ -9,6 +9,7 @@ use crate::{
     ai::{claude_code::Permissions, events::ApprovalDecision},
     chat::{
         ChatSendInput, ChatSendResult, ChatService,
+        conversations::{ConversationDetail, ConversationInfo},
         store::{ChatSessionDetail, ChatSessionRow},
     },
     error::{AppError, AppResult},
@@ -19,10 +20,29 @@ fn chat(state: &AppState) -> AppResult<Arc<ChatService>> {
     state.chat.clone().ok_or_else(|| AppError::Internal("Le chat n'a pas pu démarrer (historique local illisible).".into()))
 }
 
-/// Conversations, la plus récemment active d'abord.
+/// Conversations, la plus récemment active d'abord. Les conversations cachées (de groupe) n'y
+/// sont qu'avec un filtre `group` explicite (id préfixé par le plugin).
 #[tauri::command]
-pub async fn chat_sessions(state: State<'_, AppState>) -> AppResult<Vec<ChatSessionRow>> {
-    chat(&state)?.sessions().await
+pub async fn chat_sessions(state: State<'_, AppState>, group: Option<String>) -> AppResult<Vec<ChatSessionRow>> {
+    chat(&state)?.sessions(group.as_deref()).await
+}
+
+/// Pont de l'iframe (`conversations.list`) : conversations ouvertes par les actions du plugin,
+/// celles d'un de ses groupes avec `group` (id vu par le plugin).
+#[tauri::command]
+pub async fn plugin_conversations(
+    state: State<'_, AppState>,
+    plugin: String,
+    group: Option<String>,
+) -> AppResult<Vec<ConversationInfo>> {
+    chat(&state)?.conversations(&plugin, group.as_deref()).await
+}
+
+/// Pont de l'iframe (`conversations.get`, `conversations.open`) : une conversation du plugin,
+/// messages complets, sans sorties d'outils. Celle d'un autre plugin est introuvable.
+#[tauri::command]
+pub async fn plugin_conversation_get(state: State<'_, AppState>, plugin: String, id: String) -> AppResult<ConversationDetail> {
+    chat(&state)?.conversation(&plugin, &id).await
 }
 
 #[tauri::command]

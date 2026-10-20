@@ -33,7 +33,12 @@ import { versionReport } from "./versions";
 import { mockCatalogEntries, mockCatalogView } from "./catalog";
 import {
   answerApproval,
+  listMockChats,
+  mockActionGroup,
   mockChats,
+  mockContexts,
+  mockConversation,
+  mockConversations,
   newChat,
   recordMockChatEvent,
   requestInterrupt,
@@ -486,10 +491,11 @@ const handlers: Handlers = {
       state.settings.devPlugins = state.settings.devPlugins.filter((d) => baseName(d) !== id);
     return null;
   },
-  chat_sessions: () =>
-    [...state.chats.values()]
-      .map((c) => c.session)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+  chat_sessions: ({ group }) => listMockChats(state.chats, group ?? null),
+  plugin_conversations: ({ plugin, group }) => mockConversations(state.chats, plugin, group),
+  plugin_conversation_get: ({ plugin, id }) =>
+    mockConversation(state.chats, plugin, id) ??
+    fail("plugin_conversation_get", `Conversation « ${id} » introuvable.`),
   chat_session_get: ({ id }) => {
     const chat = state.chats.get(id);
     if (!chat) fail("chat_session_get", `Conversation « ${id} » introuvable.`);
@@ -544,13 +550,21 @@ const handlers: Handlers = {
       state.settings.actionAi[`${plugin.id}/${action.id}`] ??
       state.settings.defaultAi ??
       "claude-code";
+    let grouping: ReturnType<typeof mockActionGroup>;
+    try {
+      grouping = mockActionGroup(plugin.id, input.context ?? null);
+    } catch (err) {
+      fail("action_run", (err as Error).message);
+    }
     const prompt = `/cadence:${plugin.id}-${action.skill}\n\nAction : ${action.label}`;
     const row = newChat(state.chats, action.label, ai);
     Object.assign(row, {
       origin: `action:${plugin.id}/${action.id}`,
       mode: action.mode === "background" ? "background" : "chat",
       permissions: action.mode === "background" ? "auto-edit" : "ask",
+      ...grouping,
     });
+    if (input.context) mockContexts.set(row.id, input.context);
     recordMockChatEvent(state.chats, row.id, { type: "user-message", text: prompt });
     void simulateTurn(state.chats, row.id, prompt).then(() => {
       if (action.mode === "background")

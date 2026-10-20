@@ -35,6 +35,11 @@ function setup(overrides: Partial<HostApi> = {}) {
       async (repo: string, task: string | null) => `C:/repos/.worktrees/${repo}/${task}`,
     ),
     toolStatus: vi.fn(async () => ({ installed: true, version: "2.47.1", authenticated: null })),
+    conversationsList: vi.fn(async () => []),
+    conversationGet: vi.fn(async () => {
+      throw new Error("absente");
+    }),
+    conversationOpen: vi.fn(async () => {}),
     ...overrides,
   };
   const bridge = createBridge({

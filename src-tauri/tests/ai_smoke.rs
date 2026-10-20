@@ -473,6 +473,9 @@ async fn ai_smoke_opencode_background_action_reports_its_result() {
             title: "Écho de fond".into(),
             origin: "action:fake/echo".into(),
             prompt,
+            group: None,
+            hidden: false,
+            context: None,
         })
         .await
         .unwrap();

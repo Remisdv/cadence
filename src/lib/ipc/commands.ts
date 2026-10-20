@@ -22,6 +22,8 @@ import type {
   CliAgentInfo,
   CliTest,
   CloseReport,
+  ConversationDetail,
+  ConversationInfo,
   DeviceFlowStart,
   GithubAuth,
   InstalledPluginView,
@@ -121,8 +123,16 @@ export interface Commands {
   /** « Désigner un clone existant… » ; `path` nul = revenir au clone de Cadence. */
   repos_link: { args: { repo: string; path: string | null }; result: RepoCloneView };
   // Chat du cœur (réponses par `chat://event` et `chat://state`)
-  chat_sessions: { args: NoArgs; result: ChatSessionRow[] };
+  /** Sans les conversations cachées (de groupe), sauf avec `group` (id préfixé par le plugin). */
+  chat_sessions: { args: { group?: string | null }; result: ChatSessionRow[] };
   chat_session_get: { args: { id: string }; result: ChatSessionDetail };
+  /** Pont de l'iframe (`conversations.list`) : conversations des actions du plugin ; `group` = id vu par lui. */
+  plugin_conversations: {
+    args: { plugin: string; group: string | null };
+    result: ConversationInfo[];
+  };
+  /** Pont de l'iframe (`conversations.get`, `.open`) : sans sorties d'outils ; un autre plugin : introuvable. */
+  plugin_conversation_get: { args: { plugin: string; id: string }; result: ConversationDetail };
   chat_send: { args: { input: ChatSendInput }; result: ChatSendResult };
   chat_interrupt: { args: { session: string }; result: null };
   /** Réponse à une question de l'IA (Codex, OpenCode). */

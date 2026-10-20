@@ -35,7 +35,15 @@ import { pickPaths } from "@/lib/platform";
 import { aiTileClass } from "@/components/domain/AiCard";
 import { aiLabels, aiOrder } from "@/lib/domain/ai";
 import { toolIcons, toolOfAi } from "@/lib/domain/tools";
-import { formatDuration, parseCadenceLink, type ChatItem } from "@/lib/domain/chat";
+import {
+  formatDuration,
+  groupReturnLabel,
+  localGroup,
+  originPlugin,
+  parseCadenceLink,
+  type ChatItem,
+} from "@/lib/domain/chat";
+import { useFrames } from "@/plugin-host/FramePool";
 import { defaultChatMode } from "@/lib/domain/chatModes";
 import {
   useAppSettings,
@@ -95,6 +103,10 @@ export default function ChatView({ view }: ViewProps<"chat">) {
   const ai = aiId ? aiLabels[aiId].name : null;
   const running = session?.state === "running" || session?.state === "waiting-approval";
   const n = plugins.length;
+  // Conversation de groupe (un sprint) : puce du groupe et retour à la vue du plugin.
+  const groupPluginId = session ? originPlugin(session.origin) : null;
+  const groupPlugin = plugins.find((p) => p.id === groupPluginId);
+  const group = groupPluginId && session ? localGroup(groupPluginId, session.group) : null;
 
   const open = (id: string | null) => navigate(id ? { id: "chat", session: id } : { id: "chat" });
   const onSend = async (text: string, attachments: string[]) => {
@@ -132,6 +144,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
           <span className="flex items-center gap-[9px]">
             <span className="truncate">{session?.title ?? "Nouvelle conversation"}</span>
             <ContextChip session={session} plugins={plugins} />
+            {group && <GroupChip label={group.label} />}
           </span>
         }
         subtitle={[
@@ -143,6 +156,15 @@ export default function ChatView({ view }: ViewProps<"chat">) {
         ].join(" · ")}
         actions={
           <>
+            {group && groupPlugin && (
+              <Button
+                variant="ghost"
+                icon={/^sprint[:/]/.test(group.id) ? "sprint" : "layers"}
+                onClick={() => navigate(returnRoute(groupPlugin))}
+              >
+                {groupReturnLabel(group, groupPlugin.name)}
+              </Button>
+            )}
             {session && (
               <label
                 title="Afficher ou masquer les commandes shell, appels d'outils et fichiers modifiés"
@@ -239,6 +261,27 @@ export default function ChatView({ view }: ViewProps<"chat">) {
       )}
     </>
   );
+}
+
+/** Puce du groupe d'une conversation (« Sprint 3 · owner/name »). */
+function GroupChip({ label }: { label: string }) {
+  return (
+    <span
+      title="Conversation rattachée : absente de la liste du chat, visible depuis la vue du plugin"
+      className="inline-flex h-[22px] min-w-0 items-center gap-1.5 rounded-md border border-line bg-p2 px-2 font-sans text-tiny font-normal tracking-normal whitespace-nowrap text-tx2"
+    >
+      <Icon name="sprint" size={12} />
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
+/** Vue du plugin où revenir : la dernière ouverte (iframe gardée), sinon sa vue d'accueil. */
+function returnRoute(plugin: InstalledPluginView) {
+  const last = useFrames.getState().routes[plugin.id];
+  const home = plugin.views.find((v) => v.home) ?? plugin.views.find((v) => !v.hidden);
+  const view = last?.view || home?.id || "";
+  return { id: "plugin" as const, plugin: plugin.id, view, params: last?.params ?? {} };
 }
 
 /** Puce de contexte : « Global · tous les plugins », ou le plugin d'où vient la conversation. */

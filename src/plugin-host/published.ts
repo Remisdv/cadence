@@ -4,14 +4,16 @@
  *
  * - enveloppe `{ channel: "cadence", api: 1, kind: "request" | "response" | "event" }` ;
  * - réponses `{ id, ok: true, result }` ou `{ id, ok: false, error }` ;
- * - événements `{ topic, data }` : `event` (backend), `run`, `route`, `theme`, `repos` ;
+ * - événements `{ topic, data }` : `event` (backend), `run`, `route`, `theme`, `repos`,
+ *   `conversations` ;
  * - méthodes `tool.call` (résultat MCP brut), `action.run`, `repos.*`, `tools.*`, `navigate`,
- *   `notify`, `openExternal`, `pickFiles`, `settings.*`, `secrets.*`.
+ *   `notify`, `openExternal`, `pickFiles`, `settings.*`, `secrets.*`, `conversations.*`.
  *
  * Le pont (`bridge.ts`) répond dans la variante de la requête reçue ; ce module ne fait que
  * traduire, sans DOM ni IPC (tout passe par `HostApi`).
  */
 import type { HostApi, NotifyKind } from "./bridge";
+import { conversationHandlers } from "./conversations";
 import { BridgeError, type HelloResult, type SdkError } from "./protocol";
 
 export const CHANNEL = "cadence";
@@ -54,7 +56,8 @@ export function publishedEvent(
   event: string,
   data: unknown,
 ): { topic: string; data: unknown } | null {
-  if (event === "route" || event === "theme" || event === "repos") return { topic: event, data };
+  if (event === "route" || event === "theme" || event === "repos" || event === "conversations")
+    return { topic: event, data };
   if (event === "run") {
     const run = (data ?? {}) as {
       runId: string;
@@ -232,5 +235,6 @@ export function publishedHandlers(
     },
     "tools.status": (params) => api.toolStatus(text(params, "tool"), false),
     "tools.ensure": (params) => api.toolStatus(text(params, "tool"), true),
+    ...conversationHandlers(api),
   };
 }

@@ -222,6 +222,8 @@ pub fn run() {
             commands::plugins::plugin_update,
             commands::chat::chat_sessions,
             commands::chat::chat_session_get,
+            commands::chat::plugin_conversations,
+            commands::chat::plugin_conversation_get,
             commands::chat::chat_send,
             commands::chat::chat_interrupt,
             commands::chat::chat_answer,

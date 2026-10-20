@@ -15,7 +15,10 @@ import type {
   ChatSessionRow,
   ChatState,
   ChatStatePayload,
+  ConversationDetail,
+  ConversationInfo,
 } from "@/lib/types";
+import { globalConversations, localGroup, originPlugin } from "@/lib/domain/chat";
 import { mockBus } from "./bus";
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
@@ -32,6 +35,131 @@ function session(id: string, title: string, minutesAgo: number, origin = "user")
     state: "idle",
     createdAt: at(minutesAgo + 5),
     updatedAt: at(minutesAgo),
+    group: null,
+    hidden: false,
+  };
+}
+
+/** Contexte d'action de chaque conversation ouverte par une action (le back le garde en base). */
+export const mockContexts = new Map<string, Record<string, unknown>>();
+
+/** Sprint de démonstration de Gestion de projet (`group` du contexte des actions). */
+export const MOCK_SPRINT_GROUP = {
+  id: "sprint:cadence-app/desktop:12",
+  label: "Sprint 12 · cadence-app/desktop",
+};
+
+/**
+ * Champ réservé `group` d'un contexte d'action, comme `action_group` côté Rust : id préfixé par
+ * le plugin, `hidden` vrai par défaut. Lève une erreur lisible si le groupe est mal formé.
+ */
+export function mockActionGroup(
+  plugin: string,
+  context: Record<string, unknown> | null,
+): { group: ChatSessionRow["group"]; hidden: boolean } {
+  const raw = context?.group;
+  if (raw === undefined || raw === null) return { group: null, hidden: false };
+  const group = raw as { id?: unknown; label?: unknown; hidden?: unknown };
+  if (typeof raw !== "object" || Array.isArray(raw))
+    throw new Error("Contexte d'action : « group » doit être un objet { id, label, hidden }.");
+  if (typeof group.id !== "string" || !/^[A-Za-z0-9:/._-]{1,120}$/.test(group.id))
+    throw new Error("Contexte d'action : « group » a un id invalide.");
+  if (group.hidden !== undefined && group.hidden !== null && typeof group.hidden !== "boolean")
+    throw new Error("Contexte d'action : « group » a un « hidden » qui n'est pas un booléen.");
+  const label =
+    typeof group.label === "string" && group.label.trim() ? group.label.trim() : group.id;
+  return {
+    group: { id: `${plugin}:${group.id}`, label: label.slice(0, 120) },
+    hidden: typeof group.hidden === "boolean" ? group.hidden : true,
+  };
+}
+
+/** `chat_sessions` : sans les cachées, sauf avec un filtre `group` explicite (id préfixé). */
+export function listMockChats(chats: Chats, group: string | null = null): ChatSessionRow[] {
+  const rows = [...chats.values()].map((c) => c.session);
+  return (group ? rows.filter((s) => s.group?.id === group) : globalConversations(rows)).sort(
+    (a, b) => b.updatedAt.localeCompare(a.updatedAt),
+  );
+}
+
+const ofPlugin = (plugin: string, row: ChatSessionRow) =>
+  row.origin.startsWith(`action:${plugin}/`);
+
+function conversationInfo(plugin: string, chat: ChatSessionDetail): ConversationInfo {
+  const row = chat.session;
+  const group = localGroup(plugin, row.group);
+  const context = mockContexts.get(row.id);
+  return {
+    id: row.id,
+    title: row.title,
+    ai: row.ai,
+    model: row.model,
+    state: row.state,
+    mode: row.mode,
+    action: row.origin.slice(`action:${plugin}/`.length),
+    ...(context ? { context } : {}),
+    ...(group ? { group } : {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    turns: Math.max(0, ...chat.events.map((e) => e.turn)),
+  };
+}
+
+/** `plugin_conversations` : conversations des actions du plugin (`group` : id vu par lui). */
+export function mockConversations(
+  chats: Chats,
+  plugin: string,
+  group: string | null,
+): ConversationInfo[] {
+  const rows = group
+    ? listMockChats(chats, `${plugin}:${group}`)
+    : listMockChats(chats).filter((row) => !row.hidden);
+  return rows
+    .filter((row) => ofPlugin(plugin, row))
+    .map((row) => conversationInfo(plugin, chats.get(row.id)!));
+}
+
+/** `plugin_conversation_get` : messages complets, outils sans sorties ; un autre plugin : `null`. */
+export function mockConversation(
+  chats: Chats,
+  plugin: string,
+  id: string,
+): ConversationDetail | null {
+  const chat = chats.get(id);
+  if (!chat || !ofPlugin(plugin, chat.session)) return null;
+  const names = new Map<string, string>();
+  const detail: ConversationDetail = {
+    info: conversationInfo(plugin, chat),
+    messages: [],
+    tools: [],
+  };
+  for (const { event, at } of chat.events) {
+    if (event.type === "user-message") detail.messages.push({ role: "user", text: event.text, at });
+    else if (event.type === "message-completed" && event.text.trim())
+      detail.messages.push({ role: "assistant", text: event.text, at });
+    else if (event.type === "tool-started") names.set(event.call, event.name);
+    else if (event.type === "tool-completed")
+      detail.tools.push({ name: names.get(event.call) ?? "outil", ok: event.ok, at });
+    else if (event.type === "command" && event.exitCode !== null)
+      detail.tools.push({ name: "shell", ok: event.exitCode === 0, at });
+    else if (event.type === "usage") {
+      const usage = (detail.usage ??= { inputTokens: 0, outputTokens: 0 });
+      usage.inputTokens += event.inputTokens;
+      usage.outputTokens += event.outputTokens;
+    }
+  }
+  return detail;
+}
+
+/** Charge de `chat://state`, avec le plugin et le groupe vu par lui (comme le back). */
+export function statePayload(row: ChatSessionRow, state: ChatState): ChatStatePayload {
+  const plugin = originPlugin(row.origin);
+  const group = plugin ? localGroup(plugin, row.group) : null;
+  return {
+    session: row.id,
+    state,
+    ...(plugin ? { plugin } : {}),
+    ...(group ? { group } : {}),
   };
 }
 
@@ -85,7 +213,96 @@ export function mockChats(empty: boolean): Map<string, ChatSessionDetail> {
       { type: "turn-completed", ok: true, interrupted: false, error: null, durationMs: 9100 },
     ]),
   );
+  for (const [id, chat, context] of sprintChats()) {
+    chats.set(id, chat);
+    mockContexts.set(id, context);
+  }
   return chats;
+}
+
+/**
+ * Conversations du sprint de démonstration (« Développer le sprint », « Développer l'issue »),
+ * rattachées au groupe et cachées du chat global : on les voit depuis la vue du sprint.
+ */
+function sprintChats(): [string, ChatSessionDetail, Record<string, unknown>][] {
+  const repo = "cadence-app/desktop";
+  const grouped = (row: ChatSessionRow, mode: ChatSessionRow["mode"] = "background") => ({
+    ...row,
+    mode,
+    permissions: mode === "background" ? ("auto-edit" as const) : ("ask" as const),
+    group: { id: `gestion-projet:${MOCK_SPRINT_GROUP.id}`, label: MOCK_SPRINT_GROUP.label },
+    hidden: true,
+  });
+  const done = { type: "turn-completed", ok: true, interrupted: false, error: null } as const;
+  const sprint = grouped(
+    session("s12", "Développer le sprint 12", 95, "action:gestion-projet/developper-sprint"),
+  );
+  const issue = grouped(
+    session("s12-214", "Développer l'issue #214", 40, "action:gestion-projet/developper-issue"),
+    "chat",
+  );
+  const failed = {
+    ...grouped(
+      session("s12-217", "Développer l'issue #217", 25, "action:gestion-projet/developper-issue"),
+    ),
+    state: "failed" as const,
+  };
+  return [
+    [
+      "s12",
+      detail(sprint, [
+        { type: "user-message", text: "/cadence:gestion-projet-developper-sprint\n\nSprint 12" },
+        {
+          type: "message-completed",
+          message: "s12:0",
+          text: "Sprint 12 : 3 issues prêtes. Je lance #214 et #217 ; #219 attend sa description.",
+        },
+        { type: "usage", inputTokens: 21_000, outputTokens: 420, costUsd: 0.05 },
+        { ...done, durationMs: 31_000 },
+      ]),
+      { type: "version", repo, version: "0.1.2", group: MOCK_SPRINT_GROUP },
+    ],
+    [
+      "s12-214",
+      detail(issue, [
+        { type: "user-message", text: "/cadence:gestion-projet-developper-issue\n\nIssue #214" },
+        {
+          type: "command",
+          call: "k1",
+          command: "pnpm test",
+          exitCode: 0,
+          output: "41 tests passés",
+        },
+        {
+          type: "message-completed",
+          message: "s12-214:0",
+          text: "L'issue **#214** est implémentée ; la PR #88 est ouverte et la CI passe.",
+        },
+        { type: "usage", inputTokens: 64_000, outputTokens: 2_100, costUsd: 0.21 },
+        { ...done, durationMs: 182_000 },
+      ]),
+      { type: "issue", repo, issue: 214, group: MOCK_SPRINT_GROUP },
+    ],
+    [
+      "s12-217",
+      detail(failed, [
+        { type: "user-message", text: "/cadence:gestion-projet-developper-issue\n\nIssue #217" },
+        {
+          type: "error",
+          kind: "quota",
+          message: "Quota de l'abonnement atteint : reprenez plus tard.",
+        },
+        {
+          type: "turn-completed",
+          ok: false,
+          interrupted: false,
+          error: "Quota atteint.",
+          durationMs: 4_000,
+        },
+      ]),
+      { type: "issue", repo, issue: 217, group: MOCK_SPRINT_GROUP },
+    ],
+  ];
 }
 
 type Chats = Map<string, ChatSessionDetail>;
@@ -94,7 +311,7 @@ function setState(chats: Chats, id: string, state: ChatState) {
   const chat = chats.get(id);
   if (!chat) return;
   chat.session = { ...chat.session, state, updatedAt: new Date().toISOString() };
-  mockBus.emit<ChatStatePayload>("chat://state", { session: id, state });
+  mockBus.emit<ChatStatePayload>("chat://state", statePayload(chat.session, state));
 }
 
 function record(chats: Chats, id: string, event: AiEvent) {

@@ -7,7 +7,12 @@ import { useMemo, useState } from "react";
 import { Icon } from "@/components/icons/Icon";
 import { NeutralTile, PluginTile } from "@/components/domain/PluginTile";
 import { Spinner } from "@/components/ui/Spinner";
-import { conversationGroup, conversationTime, originPlugin } from "@/lib/domain/chat";
+import {
+  conversationGroup,
+  conversationTime,
+  globalConversations,
+  originPlugin,
+} from "@/lib/domain/chat";
 import { useChatSessions, usePlugins } from "@/lib/query/queries";
 import type { ChatSessionRow, InstalledPluginView } from "@/lib/types";
 import {
@@ -36,7 +41,10 @@ export function ChatBar({
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const rows = (sessions.data ?? []).filter((s) => !q || s.title.toLowerCase().includes(q));
+    // Les conversations de groupe (un sprint) restent dans la vue de leur plugin.
+    const rows = globalConversations(sessions.data ?? []).filter(
+      (s) => !q || s.title.toLowerCase().includes(q),
+    );
     const now = new Date();
     // Exécutions de fond des actions : leur propre groupe, en tête (panneau Activité).
     const background = rows.filter((s) => s.mode === "background");

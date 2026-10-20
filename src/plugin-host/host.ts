@@ -2,12 +2,14 @@
  * L'hôte côté shell : adresse de l'interface d'un plugin, thème transmis à l'iframe, et
  * `HostApi` branchée sur l'IPC, la navigation et les toasts.
  */
+import { CommandError } from "@/lib/ipc/errors";
 import { call, isMockIpc } from "@/lib/ipc/transport";
 import { openExternal, pickPaths } from "@/lib/platform";
 import type { AiId, InstalledPluginView } from "@/lib/types";
 import { navigate } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 import type { HostApi } from "./bridge";
+import { BridgeError } from "./protocol";
 
 const isWindows = typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
 
@@ -61,6 +63,17 @@ export function shellTheme(): Record<string, string> {
 }
 
 const storageKey = (plugin: string, key: string) => `cadence.plugin.${plugin}.${key}`;
+
+/** Conversation d'un plugin ; celle d'un autre (ou absente) : erreur `not_found`. */
+async function conversationOf(plugin: string, conversation: string) {
+  try {
+    return await call("plugin_conversation_get", { plugin, id: conversation });
+  } catch (err) {
+    if (err instanceof CommandError && err.kind === "validation")
+      throw new BridgeError("not_found", err.message);
+    throw err;
+  }
+}
 
 /** `HostApi` d'un plugin : chaque méthode est liée à ce plugin, jamais à un autre. */
 /** Exécutions lancées par chaque plugin (`runId` → plugin), pour lui relayer leur suivi. */
@@ -128,6 +141,13 @@ export function hostApi(plugin: Pick<InstalledPluginView, "id" | "name">): HostA
         sessionId: result.mode === "chat" ? result.session : null,
         mode: result.mode,
       };
+    },
+    conversationsList: (group) => call("plugin_conversations", { plugin: id, group }),
+    conversationGet: (conversation) => conversationOf(id, conversation),
+    conversationOpen: async (conversation) => {
+      // Vérifiée d'abord : un plugin n'ouvre que ses propres conversations.
+      await conversationOf(id, conversation);
+      navigate({ id: "chat", session: conversation });
     },
     storageGet: (key) => {
       try {

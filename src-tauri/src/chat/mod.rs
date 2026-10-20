@@ -20,6 +20,7 @@
 //! worktree ouvert ; le tour en cours garde son mode. Une exécution de fond reste en édition
 //! auto (personne pour répondre aux demandes).
 
+pub mod conversations;
 pub mod store;
 
 use std::{
@@ -36,7 +37,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
 use ts_rs::TS;
 
-use self::store::{ChatEventRow, ChatMode, ChatSessionDetail, ChatSessionRow, ChatState, ChatStore};
+use self::{
+    conversations::{ConversationDetail, ConversationInfo},
+    store::{ChatEventRow, ChatGroup, ChatMode, ChatSessionDetail, ChatSessionRow, ChatState, ChatStore, SessionFilter, origin_action},
+};
 use crate::{
     ai::{
         claude_code::{Permissions, SessionMode},
@@ -70,6 +74,14 @@ pub struct ChatEventPayload {
 pub struct ChatStatePayload {
     pub session: String,
     pub state: ChatState,
+    /// Plugin dont une action a ouvert la conversation (relais de l'événement `conversations`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plugin: Option<String>,
+    /// Groupe de la conversation, vu par ce plugin (id sans le préfixe de l'hôte).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub group: Option<ChatGroup>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -156,6 +168,11 @@ pub struct ActionStart {
     /// `action:<plugin>/<action>`.
     pub origin: String,
     pub prompt: String,
+    /// Groupe (id déjà préfixé par le plugin) et visibilité dans le chat global.
+    pub group: Option<ChatGroup>,
+    pub hidden: bool,
+    /// Contexte de l'action, rendu au plugin par `conversations.list/get`.
+    pub context: Option<serde_json::Value>,
 }
 
 /// Ce que le chat pousse au front.
@@ -259,8 +276,32 @@ impl ChatService {
         Arc::new(Self { store: Arc::new(store), config, locate, skills, gateway, sink, live: Mutex::default(), background })
     }
 
-    pub async fn sessions(&self) -> AppResult<Vec<ChatSessionRow>> {
-        self.store.list().await
+    /// Conversations du chat global ; avec `group` (id préfixé), celles du groupe, cachées
+    /// comprises.
+    pub async fn sessions(&self, group: Option<&str>) -> AppResult<Vec<ChatSessionRow>> {
+        self.store.list(SessionFilter { plugin: None, group }).await
+    }
+
+    /// Conversations ouvertes par les actions d'un plugin (`conversations.list` du SDK) ; `group`
+    /// est l'id vu par le plugin.
+    pub async fn conversations(&self, plugin: &str, group: Option<&str>) -> AppResult<Vec<ConversationInfo>> {
+        let scoped = group.map(|g| ChatGroup::scoped_id(plugin, g));
+        let rows = self.store.list_with_turns(SessionFilter { plugin: Some(plugin), group: scoped.as_deref() }).await?;
+        Ok(rows.into_iter().map(|(row, turns)| ConversationInfo::of(plugin, &row, turns)).collect())
+    }
+
+    /// Une conversation d'un plugin (`conversations.get`) : messages complets, outils sans
+    /// leurs sorties. Celle d'un autre plugin est introuvable.
+    pub async fn conversation(&self, plugin: &str, id: &str) -> AppResult<ConversationDetail> {
+        let row = self.plugin_session(plugin, id).await?;
+        let turns = self.store.turns(id).await?;
+        Ok(ConversationDetail::of(ConversationInfo::of(plugin, &row, turns), &self.store.events(id).await?))
+    }
+
+    /// Conversation ouverte par une action de ce plugin, sinon « introuvable ».
+    pub async fn plugin_session(&self, plugin: &str, id: &str) -> AppResult<ChatSessionRow> {
+        let row = self.store.get(id).await.ok().filter(|row| origin_action(&row.origin).is_some_and(|(p, _)| p == plugin));
+        row.ok_or_else(|| AppError::Validation(format!("Conversation « {id} » introuvable.")))
     }
 
     pub async fn detail(&self, id: &str) -> AppResult<ChatSessionDetail> {
@@ -281,8 +322,15 @@ impl ChatService {
         self.store.set_permissions(id, permissions).await
     }
 
-    fn notify_state(&self, session: &str, state: ChatState) {
-        (self.sink)(ChatNotice::State(ChatStatePayload { session: session.into(), state }));
+    async fn notify_state(&self, session: &str, state: ChatState) {
+        // Plugin et groupe de la conversation : le front relaie l'état à l'iframe du plugin.
+        let row = self.store.get(session).await.ok();
+        let plugin = row.as_ref().and_then(|r| origin_action(&r.origin)).map(|(p, _)| p.to_string());
+        let group = match (&plugin, row.as_ref().and_then(|r| r.group.as_ref())) {
+            (Some(plugin), Some(group)) => group.local_to(plugin),
+            _ => None,
+        };
+        (self.sink)(ChatNotice::State(ChatStatePayload { session: session.into(), state, plugin, group }));
     }
 
     async fn record(&self, session: &str, turn: u32, event: AiEvent) -> AppResult<ChatEventRow> {
@@ -293,7 +341,7 @@ impl ChatService {
 
     async fn set_state(&self, session: &str, state: ChatState) -> AppResult<()> {
         self.store.set_state(session, state).await?;
-        self.notify_state(session, state);
+        self.notify_state(session, state).await;
         Ok(())
     }
 
@@ -319,6 +367,9 @@ impl ChatService {
                     state: ChatState::Idle,
                     created_at: now.clone(),
                     updated_at: now,
+                    group: None,
+                    hidden: false,
+                    context: None,
                 };
                 self.store.create(&row).await?;
                 row.id
@@ -382,6 +433,9 @@ impl ChatService {
             state: ChatState::Idle,
             created_at: now.clone(),
             updated_at: now,
+            group: start.group,
+            hidden: start.hidden,
+            context: start.context,
         };
         self.store.create(&row).await?;
         let id = row.id;

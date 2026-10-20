@@ -13,7 +13,12 @@
  * et celle du SDK publié `@cadence/plugin-sdk` (`published.ts`) ; chaque réponse part dans la
  * variante de la requête, les événements dans celle de la dernière poignée de main.
  */
-import type { PluginSettingsView, PluginToolResult } from "@/lib/types";
+import type {
+  ConversationDetail,
+  ConversationInfo,
+  PluginSettingsView,
+  PluginToolResult,
+} from "@/lib/types";
 import { CommandError } from "@/lib/ipc/errors";
 import {
   BridgeError,
@@ -24,6 +29,7 @@ import {
   type HelloResult,
   type SdkError,
 } from "./protocol";
+import { conversationHandlers } from "./conversations";
 import {
   asPublishedRequest,
   publishedEvent,
@@ -77,6 +83,15 @@ export interface HostApi {
     tool: string,
     ensure: boolean,
   ): Promise<{ installed: boolean; version: string | null; authenticated: boolean | null }>;
+  /**
+   * Conversations ouvertes par les actions du plugin ; avec `group` (id vu par lui), celles du
+   * groupe, cachées comprises.
+   */
+  conversationsList(group: string | null): Promise<ConversationInfo[]>;
+  /** Une conversation du plugin, sans sorties d'outils ; celle d'un autre plugin est introuvable. */
+  conversationGet(id: string): Promise<ConversationDetail>;
+  /** Ouvre la vue Chat sur une conversation du plugin (refusée si elle n'est pas à lui). */
+  conversationOpen(id: string): Promise<void>;
 }
 
 export interface BridgeOptions {
@@ -182,6 +197,7 @@ export function createBridge({ frame, api, hello }: BridgeOptions) {
       api.storageSet(text(params, "key"), params.value ?? null);
       return null;
     },
+    ...conversationHandlers(api),
   };
 
   const post = (message: Envelope) => frame.postMessage(message, "*");

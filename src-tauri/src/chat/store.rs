@@ -5,8 +5,9 @@
 use std::{path::Path, str::FromStr, time::Duration};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{
-    Row, SqlitePool,
+    AssertSqlSafe, Row, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
 };
 use ts_rs::TS;
@@ -30,7 +31,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     permissions TEXT NOT NULL DEFAULT 'ask',
     state TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    group_id TEXT,
+    group_label TEXT,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    context TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -65,6 +70,43 @@ pub enum ChatMode {
     Background,
 }
 
+/// Groupe d'une conversation lancée par une action (un sprint…). L'`id` est préfixé par l'id du
+/// plugin (`<plugin>:<id du plugin>`) : un plugin ne voit que ses groupes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChatGroup {
+    pub id: String,
+    pub label: String,
+}
+
+impl ChatGroup {
+    /// Id d'un groupe tel que l'hôte l'enregistre : préfixé par l'id du plugin.
+    pub fn scoped_id(plugin: &str, local: &str) -> String {
+        format!("{plugin}:{local}")
+    }
+
+    /// Le même groupe vu par son plugin (id sans préfixe) ; `None` s'il ne lui appartient pas.
+    pub fn local_to(&self, plugin: &str) -> Option<ChatGroup> {
+        let local = self.id.strip_prefix(plugin)?.strip_prefix(':')?;
+        Some(ChatGroup { id: local.to_string(), label: self.label.clone() })
+    }
+}
+
+/// Plugin et action d'une origine `action:<plugin>/<action>`.
+pub fn origin_action(origin: &str) -> Option<(&str, &str)> {
+    origin.strip_prefix("action:")?.split_once('/')
+}
+
+/// Filtre de la liste des conversations. Sans `group`, les conversations cachées sont exclues.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SessionFilter<'a> {
+    /// Conversations ouvertes par une action de ce plugin.
+    pub plugin: Option<&'a str>,
+    /// Groupe (id préfixé par le plugin) : ses conversations, cachées comprises.
+    pub group: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -81,6 +123,14 @@ pub struct ChatSessionRow {
     pub state: ChatState,
     pub created_at: String,
     pub updated_at: String,
+    /// Groupe de la conversation (sprint…), fixé par l'action qui l'a ouverte.
+    pub group: Option<ChatGroup>,
+    /// Absente du chat global (conversation de groupe) ; elle s'ouvre quand même dans le chat.
+    pub hidden: bool,
+    /// Contexte de l'action qui l'a ouverte (lu par son plugin, pas envoyé au chat).
+    #[serde(skip)]
+    #[ts(skip)]
+    pub context: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -139,19 +189,33 @@ impl ChatStore {
         // écritures d'une session suit l'ordre des événements.
         let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
-        // Historique d'avant les modes (0.3.0) : la colonne arrive avec « Demander ».
-        let has_permissions: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'permissions'").fetch_one(&pool).await?;
-        if has_permissions == 0 {
-            sqlx::query("ALTER TABLE sessions ADD COLUMN permissions TEXT NOT NULL DEFAULT 'ask'").execute(&pool).await?;
+        // Historique plus ancien : colonnes ajoutées au fil des versions. Le mode (0.3.0) arrive
+        // avec « Demander » ; les groupes (0.3.2) avec des conversations visibles, sans groupe.
+        for (column, definition) in [
+            ("permissions", "TEXT NOT NULL DEFAULT 'ask'"),
+            ("group_id", "TEXT"),
+            ("group_label", "TEXT"),
+            ("hidden", "INTEGER NOT NULL DEFAULT 0"),
+            ("context", "TEXT"),
+        ] {
+            let present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?")
+                .bind(column)
+                .fetch_one(&pool)
+                .await?;
+            if present == 0 {
+                // Noms et définitions constants, ci-dessus.
+                sqlx::query(AssertSqlSafe(format!("ALTER TABLE sessions ADD COLUMN {column} {definition}"))).execute(&pool).await?;
+            }
         }
+        sqlx::query("CREATE INDEX IF NOT EXISTS sessions_group ON sessions(group_id)").execute(&pool).await?;
         Ok(Self { pool })
     }
 
     pub async fn create(&self, session: &ChatSessionRow) -> AppResult<()> {
         sqlx::query(
-            "INSERT INTO sessions (id, title, ai, model, native_id, origin, mode, permissions, state, created_at, updated_at)
-             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions (id, title, ai, model, native_id, origin, mode, permissions, state, created_at, updated_at,
+                                   group_id, group_label, hidden, context)
+             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&session.id)
         .bind(&session.title)
@@ -163,6 +227,10 @@ impl ChatStore {
         .bind(kebab(&session.state))
         .bind(&session.created_at)
         .bind(&session.updated_at)
+        .bind(session.group.as_ref().map(|g| g.id.as_str()))
+        .bind(session.group.as_ref().map(|g| g.label.as_str()))
+        .bind(session.hidden)
+        .bind(session.context.as_ref().map(Value::to_string))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -180,13 +248,47 @@ impl ChatStore {
             state: parse(&row.try_get::<String, _>("state")?)?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
+            group: match row.try_get::<Option<String>, _>("group_id")? {
+                Some(id) => {
+                    let label = row.try_get::<Option<String>, _>("group_label")?.unwrap_or_else(|| id.clone());
+                    Some(ChatGroup { id, label })
+                }
+                None => None,
+            },
+            hidden: row.try_get("hidden")?,
+            // Un contexte abîmé est ignoré, pas bloquant.
+            context: row.try_get::<Option<String>, _>("context")?.and_then(|text| serde_json::from_str(&text).ok()),
         })
     }
 
-    /// Conversations, la plus récemment active d'abord.
-    pub async fn list(&self) -> AppResult<Vec<ChatSessionRow>> {
-        let rows = sqlx::query("SELECT * FROM sessions ORDER BY updated_at DESC, created_at DESC").fetch_all(&self.pool).await?;
-        rows.iter().map(Self::row).collect()
+    /// Conversations, la plus récemment active d'abord ; les cachées seulement avec un filtre
+    /// `group` explicite.
+    pub async fn list(&self, filter: SessionFilter<'_>) -> AppResult<Vec<ChatSessionRow>> {
+        Ok(self.list_with_turns(filter).await?.into_iter().map(|(row, _)| row).collect())
+    }
+
+    /// Comme `list`, avec le nombre de tours de chaque conversation.
+    pub async fn list_with_turns(&self, filter: SessionFilter<'_>) -> AppResult<Vec<(ChatSessionRow, u32)>> {
+        let prefix = filter.plugin.map(|plugin| format!("action:{plugin}/"));
+        let rows = sqlx::query(
+            "SELECT s.*, (SELECT COALESCE(MAX(e.turn), 0) FROM events e WHERE e.session_id = s.id) AS turns
+             FROM sessions s
+             WHERE (CASE WHEN ?1 IS NULL THEN s.hidden = 0 ELSE s.group_id = ?1 END)
+               AND (?2 IS NULL OR substr(s.origin, 1, length(?2)) = ?2)
+             ORDER BY s.updated_at DESC, s.created_at DESC",
+        )
+        .bind(filter.group)
+        .bind(prefix)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| Ok((Self::row(row)?, u32::try_from(row.try_get::<i64, _>("turns")?).unwrap_or(u32::MAX))))
+            .collect()
+    }
+
+    /// Nombre de tours d'une conversation.
+    pub async fn turns(&self, id: &str) -> AppResult<u32> {
+        Ok(self.next_turn(id).await?.saturating_sub(1))
     }
 
     pub async fn get(&self, id: &str) -> AppResult<ChatSessionRow> {
@@ -316,7 +418,69 @@ mod tests {
             state: ChatState::Idle,
             created_at: now.clone(),
             updated_at: now,
+            group: None,
+            hidden: false,
+            context: None,
         }
+    }
+
+    fn grouped(id: &str, origin: &str, group: Option<(&str, &str)>, hidden: bool) -> ChatSessionRow {
+        ChatSessionRow {
+            origin: origin.into(),
+            group: group.map(|(id, label)| ChatGroup { id: id.into(), label: label.into() }),
+            hidden,
+            context: Some(serde_json::json!({ "type": "issue", "issue": 42 })),
+            ..session(id)
+        }
+    }
+
+    #[tokio::test]
+    async fn hides_group_conversations_unless_the_group_is_asked() {
+        let store = ChatStore::in_memory().await.unwrap();
+        store.create(&session("libre")).await.unwrap();
+        let sprint = Some(("gestion-projet:sprint:o/n:3", "Sprint 3 · o/n"));
+        store.create(&grouped("cachee", "action:gestion-projet/developper-issue", sprint, true)).await.unwrap();
+        store.create(&grouped("visible", "action:gestion-projet/developper-issue", sprint, false)).await.unwrap();
+        store.create(&grouped("autre", "action:documents/fiche", Some(("documents:sprint:o/n:3", "Autre")), true)).await.unwrap();
+        store.create(&grouped("sans-groupe", "action:gestion-projet/estimer", None, false)).await.unwrap();
+        store.append("cachee", 1, &AiEvent::UserMessage { text: "go".into() }).await.unwrap();
+        store.append("cachee", 2, &AiEvent::UserMessage { text: "encore".into() }).await.unwrap();
+
+        let ids = |rows: Vec<ChatSessionRow>| {
+            let mut ids: Vec<String> = rows.into_iter().map(|r| r.id).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(ids(store.list(SessionFilter::default()).await.unwrap()), ["libre", "sans-groupe", "visible"], "chat global");
+        let group = SessionFilter { group: Some("gestion-projet:sprint:o/n:3"), ..SessionFilter::default() };
+        assert_eq!(ids(store.list(group).await.unwrap()), ["cachee", "visible"], "groupe explicite : cachées comprises");
+        let plugin = SessionFilter { plugin: Some("gestion-projet"), ..SessionFilter::default() };
+        assert_eq!(ids(store.list(plugin).await.unwrap()), ["sans-groupe", "visible"]);
+        // Isolation : le groupe d'un autre plugin, même demandé, reste vide pour ce plugin.
+        let foreign = SessionFilter { plugin: Some("gestion-projet"), group: Some("documents:sprint:o/n:3") };
+        assert!(store.list(foreign).await.unwrap().is_empty());
+        let documents = SessionFilter { plugin: Some("documents"), group: Some("gestion-projet:sprint:o/n:3") };
+        assert!(store.list(documents).await.unwrap().is_empty());
+
+        let with_turns = store.list_with_turns(group).await.unwrap();
+        let cachee = with_turns.iter().find(|(r, _)| r.id == "cachee").unwrap();
+        assert_eq!(cachee.1, 2);
+        assert_eq!(cachee.0.group.as_ref().unwrap().label, "Sprint 3 · o/n");
+        assert_eq!(cachee.0.context, Some(serde_json::json!({ "type": "issue", "issue": 42 })));
+        assert!(store.get("cachee").await.unwrap().hidden);
+        assert_eq!(store.turns("visible").await.unwrap(), 0);
+    }
+
+    #[test]
+    fn scopes_group_ids_by_plugin() {
+        let id = ChatGroup::scoped_id("gestion-projet", "sprint:o/n:3");
+        assert_eq!(id, "gestion-projet:sprint:o/n:3");
+        let group = ChatGroup { id, label: "Sprint 3".into() };
+        assert_eq!(group.local_to("gestion-projet").unwrap().id, "sprint:o/n:3");
+        assert!(group.local_to("gestion").is_none(), "préfixe exact, pas un début d'id");
+        assert!(group.local_to("documents").is_none());
+        assert_eq!(origin_action("action:gestion-projet/developper-issue"), Some(("gestion-projet", "developper-issue")));
+        assert_eq!(origin_action("user"), None);
     }
 
     #[tokio::test]
@@ -330,7 +494,7 @@ mod tests {
         assert_eq!((first.seq, second.seq), (1, 2));
         assert_eq!(store.next_turn("a").await.unwrap(), 2);
         assert_eq!(store.events("a").await.unwrap().len(), 2);
-        assert_eq!(store.list().await.unwrap()[0].id, "a", "la plus récemment active d'abord");
+        assert_eq!(store.list(SessionFilter::default()).await.unwrap()[0].id, "a", "la plus récemment active d'abord");
 
         store.set_native("a", "native-1", Some("haiku")).await.unwrap();
         store.set_state("a", ChatState::Running).await.unwrap();
@@ -347,11 +511,11 @@ mod tests {
         store.delete("a").await.unwrap();
         assert!(store.get("a").await.is_err());
         assert!(store.events("a").await.unwrap().is_empty());
-        assert_eq!(store.list().await.unwrap().len(), 1);
+        assert_eq!(store.list(SessionFilter::default()).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
-    async fn adds_the_mode_column_to_an_older_history() {
+    async fn adds_the_mode_and_group_columns_to_an_older_history() {
         let dir = crate::app_settings::temp_dir("chat-store-migration");
         let path = dir.join("chat.sqlite3");
         std::fs::create_dir_all(&dir).unwrap();
@@ -379,11 +543,19 @@ mod tests {
             pool.close().await;
         }
         let store = ChatStore::open(&path).await.unwrap();
-        assert_eq!(store.get("a").await.unwrap().permissions, Permissions::Ask, "« Demander » par défaut");
+        let old = store.get("a").await.unwrap();
+        assert_eq!(old.permissions, Permissions::Ask, "« Demander » par défaut");
+        assert_eq!((old.group, old.hidden, old.context), (None, false, None), "colonnes des groupes ajoutées, visible");
+        assert_eq!(store.list(SessionFilter::default()).await.unwrap().len(), 1, "reste dans le chat global");
         store.set_permissions("a", Permissions::Full).await.unwrap();
+        let mut grouped = session("b");
+        grouped.group = Some(ChatGroup { id: "gp:sprint:1".into(), label: "Sprint 1".into() });
+        grouped.hidden = true;
+        store.create(&grouped).await.unwrap();
         drop(store);
         let store = ChatStore::open(&path).await.unwrap();
         assert_eq!(store.get("a").await.unwrap().permissions, Permissions::Full, "mémorisé");
+        assert_eq!(store.get("b").await.unwrap().group.unwrap().label, "Sprint 1", "migration rejouée sans perte");
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
     }
