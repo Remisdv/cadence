@@ -40,6 +40,13 @@ Sans argument : demande le parcours (QCM court) puis lance-le.
    sur accord de l'utilisateur, à partir du rapport.
 6. **Ne jamais saisir de secret.** Si un écran demande un jeton ou un mot de passe, utilise la
    connexion existante proposée (ex. reprise de `gh`) ou arrête-toi et demande à l'utilisateur.
+7. **Jamais de clavier ni de souris globaux.** Interdits : `SendKeys`, `keybd_event`,
+   `SendInput`, AutoHotkey, déplacement du curseur système, ou toute frappe qui part vers « la
+   fenêtre au premier plan » : elle peut être l'app Claude ou une autre fenêtre de l'utilisateur.
+   Tout passe par `cdp.mjs` (WebView2 de Cadence QA). Une boîte de dialogue native (sélecteur de
+   fichier…) que le pilote ne voit pas est un **constat** ; seul contournement permis : des
+   messages Win32 adressés au handle de fenêtre de cette boîte, après avoir vérifié qu'elle
+   appartient au processus de Cadence QA. Sinon, arrête-toi et demande à l'utilisateur.
 
 ## Déroulé
 
