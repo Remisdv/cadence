@@ -1,10 +1,11 @@
 import { useEffect } from "react";
-import type { ChatSessionDetail } from "@/lib/types";
+import type { AppSettings, ChatSessionDetail } from "@/lib/types";
 import { useQueryClient } from "@tanstack/react-query";
 import { subscribe } from "@/lib/ipc/events";
 import { keys, keysForResource } from "./keys";
 import { useUiStore } from "@/stores/ui";
 import { applyRunEvent, type ToolRunLog } from "@/lib/domain/tools";
+import { applyReposChanged } from "@/lib/domain/plugins";
 
 /**
  * Pont événements Rust → cache front. Monté une fois à la racine de l'app.
@@ -39,6 +40,14 @@ export function useBackendEvents() {
         queryClient.setQueryData<ToolRunLog>(keys.toolRun(event.tool), (prev) =>
           applyRunEvent(prev, event),
         );
+      }),
+      // Dépôts suivis changés, quel que soit l'auteur (Réglages, onboarding, iframe du plugin) :
+      // les réglages en cache suivent, Réglages › Dépôts GitHub compte juste (N05).
+      subscribe("repos://changed", (change) => {
+        queryClient.setQueryData<AppSettings>(keys.appSettings(), (prev) =>
+          prev ? applyReposChanged(prev, change) : prev,
+        );
+        void queryClient.invalidateQueries({ queryKey: keys.reposStatus() });
       }),
       subscribe("catalog://updated", () => {
         void queryClient.invalidateQueries({ queryKey: keys.catalog(), refetchType: "none" });

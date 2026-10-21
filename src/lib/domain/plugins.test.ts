@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest";
 import { mockPlugins, mockSettingsSchema, validateMockSettings } from "@/lib/ipc/mock/plugins";
 import type { InstalledPluginView } from "@/lib/types";
 import { mockCatalogView } from "@/lib/ipc/mock/catalog";
-import { catalogCards, homeView, kitIcon, moveInRail, railGroups, viewSections } from "./plugins";
+import {
+  applyReposChanged,
+  catalogCards,
+  catalogTools,
+  homeView,
+  installedVersionNote,
+  kitIcon,
+  moveInRail,
+  pendingSetup,
+  pendingSetupLabel,
+  railGroups,
+  viewSections,
+} from "./plugins";
 
 const byId = (id: string) => mockPlugins.find((p) => p.id === id)!;
 
@@ -129,5 +141,107 @@ describe("catalogCards", () => {
     expect(exemple.entry).toBeNull();
     expect(cards.find((c) => c.id === "tests-couverture")!.installed).toBeNull();
     expect(cards.find((c) => c.id === "mobile-preview")!.entry?.compatible).toBe(false);
+  });
+});
+
+describe("installedVersionNote (N03)", () => {
+  it("se tait quand la version installée est celle du catalogue", () => {
+    expect(installedVersionNote("0.6.0", { version: "0.6.0", source: "catalog" })).toBeNull();
+  });
+
+  it("signale une version plus récente installée en développement ou par archive", () => {
+    expect(installedVersionNote("0.6.0", { version: "0.7.0", source: "dev" })).toBe(
+      "v0.7.0 installée en développement, plus récente que le catalogue (v0.6.0)",
+    );
+    expect(installedVersionNote("0.6.0", { version: "0.7.0", source: "file" })).toContain(
+      "depuis une archive locale, plus récente",
+    );
+    // Tri semver, pas lexical.
+    expect(installedVersionNote("0.10.0", { version: "0.9.0", source: "catalog" })).toBe(
+      "v0.9.0 installée depuis le catalogue · v0.10.0 au catalogue",
+    );
+  });
+});
+
+describe("pendingSetup (N03)", () => {
+  const gp = byId("gestion-projet");
+
+  it("propose le service Dépôts, les secrets puis les étapes [[setup]]", () => {
+    const plugin = {
+      ...gp,
+      status: "needs-setup" as const,
+      setup: [{ id: "depots", title: "Dépôts du plugin", view: "setup-repos", required: true }],
+    };
+    const pending = pendingSetup(plugin, { githubConnected: false, trackedRepos: [] });
+    expect(pending.map((p) => p.kind)).toEqual(["github", "repos", "secrets", "view"]);
+    expect(pending.map(pendingSetupLabel)).toEqual([
+      "Connecter le compte GitHub",
+      "Choisir les dépôts suivis",
+      "Renseigner les secrets requis",
+      "Dépôts du plugin",
+    ]);
+  });
+
+  it("n'a rien à proposer quand tout est prêt, ni pour un plugin désactivé", () => {
+    const ready = { ...gp, status: "ok" as const, setup: [] };
+    expect(pendingSetup(ready, { githubConnected: true, trackedRepos: ["o/n"] })).toEqual([]);
+    expect(
+      pendingSetup({ ...ready, enabled: false }, { githubConnected: false, trackedRepos: [] }),
+    ).toEqual([]);
+  });
+});
+
+describe("catalogTools (P02)", () => {
+  const catalog = { version: "0.6.0", tools: ["a", "b"] };
+
+  it("montre les outils du serveur installé quand il tourne, et l'écart avec le catalogue", () => {
+    const tools = catalogTools(
+      catalog,
+      { version: "0.7.0" },
+      { state: "ready", toolNames: ["a", "b", "c"], uiTools: 3 },
+    );
+    expect(tools.names).toEqual(["a", "b", "c"]);
+    expect(tools.uiTools).toBe(3);
+    expect(tools.note).toBe(
+      "Outils de la v0.7.0 installée ; le catalogue en annonce 2 pour la v0.6.0.",
+    );
+  });
+
+  it("garde la liste du catalogue quand le serveur ne tourne pas", () => {
+    const stopped = catalogTools(catalog, { version: "0.7.0" }, { state: "stopped" });
+    expect(stopped.names).toEqual(["a", "b"]);
+    expect(stopped.note).toContain("Liste du catalogue (v0.6.0)");
+    expect(catalogTools(catalog, null, null)).toEqual({ names: ["a", "b"], uiTools: 0, note: null });
+    const same = catalogTools(catalog, { version: "0.6.0" }, { state: "ready", toolNames: ["a", "b"] });
+    expect(same.note).toBeNull();
+  });
+});
+
+describe("applyReposChanged (N05)", () => {
+  const settings = {
+    trackedRepos: { autre: ["o/a"] } as Record<string, string[]>,
+    repoSelection: {} as Record<string, string>,
+    onboarded: true,
+  };
+
+  it("reporte un dépôt suivi depuis l'iframe du plugin dans les réglages en cache", () => {
+    const next = applyReposChanged(settings, {
+      plugin: "gestion-projet",
+      repos: ["Remisdv/linear-test"],
+      selection: "Remisdv/linear-test",
+    });
+    expect(next.trackedRepos).toEqual({ autre: ["o/a"], "gestion-projet": ["Remisdv/linear-test"] });
+    expect(next.repoSelection["gestion-projet"]).toBe("Remisdv/linear-test");
+    expect(next.onboarded).toBe(true);
+    expect(settings.trackedRepos["gestion-projet"]).toBeUndefined();
+  });
+
+  it("retire la liste et la sélection vidées", () => {
+    const next = applyReposChanged(
+      { ...settings, repoSelection: { autre: "o/a" } },
+      { plugin: "autre", repos: [], selection: null },
+    );
+    expect(next.trackedRepos).toEqual({});
+    expect(next.repoSelection).toEqual({});
   });
 });

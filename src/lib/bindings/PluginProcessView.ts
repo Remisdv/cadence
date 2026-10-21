@@ -16,6 +16,14 @@ restarts: number,
  */
 tools: number, 
 /**
+ * Noms (sans préfixe, triés) des outils visibles des IA, pour la fiche du catalogue.
+ */
+toolNames?: Array<string>, 
+/**
+ * Outils réservés à l'interface du plugin, annoncés à part (jamais exposés aux IA).
+ */
+uiTools?: number, 
+/**
  * Raison du dernier arrêt inattendu ou de l'échec.
  */
 message: string | null, 

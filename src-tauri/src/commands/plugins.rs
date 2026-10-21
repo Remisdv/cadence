@@ -171,13 +171,14 @@ pub async fn plugin_install_zip(
 
     // Windows refuse de remplacer l'exécutable d'un serveur en cours d'exécution.
     let id = prepared.id.clone();
+    let warnings = prepared.warnings.clone();
     state.plugin_host.stop(&id).await;
     let registry = state.plugins.clone();
     tauri::async_runtime::spawn_blocking(move || prepared.commit(&registry)).await.map_err(interrupted)??;
     let done = PluginInstallEvent { id: id.clone(), received: 0, total: 0, phase: InstallPhase::Done };
     events::emit(&app, events::PLUGIN_INSTALL, done);
     tools_changed(&state).await;
-    view(&state, &id)
+    Ok(InstalledPluginView { install_warnings: warnings, ..view(&state, &id)? })
 }
 
 /// Inscrit un dossier local non zippé comme plugin de développement et le retient dans
@@ -301,13 +302,14 @@ pub async fn install_from_catalog(app: &AppHandle, state: &AppState, id: &str) -
         })
         .await?;
     // Windows refuse de remplacer l'exécutable d'un serveur en cours d'exécution.
+    let warnings = prepared.warnings.clone();
     state.plugin_host.stop(&id).await;
     let registry = state.plugins.clone();
     tauri::async_runtime::spawn_blocking(move || prepared.commit(&registry)).await.map_err(interrupted)??;
     let done = PluginInstallEvent { id: id.clone(), received: 0, total: 0, phase: InstallPhase::Done };
     events::emit(app, events::PLUGIN_INSTALL, done);
     tools_changed(state).await;
-    view(state, &id)
+    Ok(InstalledPluginView { install_warnings: warnings, ..view(state, &id)? })
 }
 
 /// Plugins du catalogue (hors plugins de dev) dont une version compatible plus récente est

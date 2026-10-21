@@ -183,6 +183,8 @@ impl PluginHost {
                 pid: None,
                 restarts: 0,
                 tools: 0,
+                tool_names: Vec::new(),
+                ui_tools: 0,
                 message: None,
                 log_path: None,
             },

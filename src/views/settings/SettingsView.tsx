@@ -37,6 +37,7 @@ import {
   useAppSettings,
   useAppStatus,
   useExportConfig,
+  useInstallPlugin,
   usePlugins,
   usePluginSecret,
   usePluginSettings,
@@ -47,7 +48,7 @@ import {
   useSetPluginSecret,
   useTools,
 } from "@/lib/query/queries";
-import { pickSavePath } from "@/lib/platform";
+import { pickPluginFolder, pickSavePath } from "@/lib/platform";
 import { useNavigation, type SettingsSection } from "@/stores/navigation";
 import { AboutSection, AppVersionLine } from "./AboutSection";
 import { AiSettings } from "./AiSettings";
@@ -386,6 +387,67 @@ function StatusBullet() {
 
 /* ---------- Plugins activés ---------- */
 
+/**
+ * « Installer un dossier de développement… » (recette du 21/10, N01) : un plugin non publié,
+ * lu sur place dans son dossier (`plugin_install_dev`), sans copie ni archive.
+ */
+function DevFolderRow() {
+  const install = useInstallPlugin();
+  const run = async () => {
+    const path = await pickPluginFolder();
+    if (path) install.mutate({ kind: "dev", path });
+  };
+  return (
+    <SettingRow
+      title="Plugin en développement"
+      description={
+        install.error ? (
+          <span className="text-red">Dossier refusé : {install.error.message}</span>
+        ) : install.data ? (
+          <span className="text-green">
+            {install.data.name} {install.data.version} est installé depuis son dossier.
+            {install.data.problem ? ` ${install.data.problem}` : ""}
+          </span>
+        ) : (
+          "Le dossier qui porte le plugin.toml du plugin, lu sur place : « Recharger » relit le manifeste et redémarre son serveur après une modification."
+        )
+      }
+      control={
+        <Button
+          variant="ghost"
+          size="sm"
+          icon="folder"
+          disabled={install.isPending}
+          onClick={() => void run()}
+        >
+          {install.isPending && <Spinner />}
+          Installer un dossier de développement…
+        </Button>
+      }
+    />
+  );
+}
+
+/** « Recharger » un plugin de développement : manifeste relu, serveur redémarré. */
+function ReloadDevButton({ plugin }: { plugin: InstalledPluginView }) {
+  const reload = useInstallPlugin();
+  if (plugin.source !== "dev" || !plugin.devPath) return null;
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      icon="refresh"
+      disabled={reload.isPending}
+      title={
+        reload.error?.message ?? `Relit ${plugin.devPath} et redémarre le serveur du plugin`
+      }
+      onClick={() => reload.mutate({ kind: "dev", path: plugin.devPath! })}
+    >
+      {reload.isError ? "Échec" : "Recharger"}
+    </Button>
+  );
+}
+
 function PluginsSection() {
   const plugins = usePlugins();
   const reorder = useReorderPlugins();
@@ -403,7 +465,15 @@ function PluginsSection() {
       </SectionTitle>
       {all.length === 0 ? (
         <Callout tone="info" className="mt-[18px]">
-          Aucun plugin installé. Le catalogue public arrive avec la prochaine étape.
+          Aucun plugin installé.{" "}
+          <button
+            type="button"
+            className="text-clay hover:text-clay-hover"
+            onClick={() => navigate({ id: "catalog" })}
+          >
+            Ouvrir le catalogue
+          </button>{" "}
+          pour en installer un, ou installez un dossier de développement ci-dessous.
         </Callout>
       ) : (
         <Card className="mt-[18px] overflow-hidden">
@@ -429,6 +499,7 @@ function PluginsSection() {
                 </button>
                 {p.status === "needs-setup" && <Badge tone="amber">À configurer</Badge>}
                 {p.status === "invalid" && <Badge tone="red">Invalide</Badge>}
+                <ReloadDevButton plugin={p} />
                 <Button
                   variant="quiet"
                   size="xs"
@@ -465,6 +536,24 @@ function PluginsSection() {
           {(reorder.error ?? setEnabled.error)?.message}
         </Callout>
       )}
+      <SectionLabel className="mt-6">Installer</SectionLabel>
+      <div className="mt-1">
+        <SettingRow
+          title="Catalogue"
+          description="Plugins publiés sur RemiSDV/cadence-plugins, ou une archive locale (.zip)."
+          control={
+            <Button
+              variant="ghost"
+              size="sm"
+              icon="grid"
+              onClick={() => navigate({ id: "catalog" })}
+            >
+              Ouvrir le catalogue
+            </Button>
+          }
+        />
+        <DevFolderRow />
+      </div>
     </>
   );
 }
@@ -491,6 +580,7 @@ function PluginSection({ plugin }: { plugin: InstalledPluginView }) {
             }
           </div>
         </div>
+        <ReloadDevButton plugin={plugin} />
         <span className="text-caption text-tx2">{plugin.enabled ? "Activé" : "Désactivé"}</span>
         <Switch
           checked={plugin.enabled}

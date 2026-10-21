@@ -37,8 +37,17 @@ uiEntry: string | null,
 /**
  * Plugin de dev avec `ui.dev_url` : l'iframe charge son serveur de dev (rechargement à chaud).
  */
-uiDevUrl: string | null, enabled: boolean, source: PluginSource, status: PluginStatus, 
+uiDevUrl: string | null, enabled: boolean, source: PluginSource, 
+/**
+ * Dossier d'un plugin de développement (« Recharger » le réinscrit).
+ */
+devPath?: string, status: PluginStatus, 
 /**
  * Erreur du manifeste (statut `invalid`), ou avertissements en mode dev.
  */
-problem: string | null, };
+problem: string | null, 
+/**
+ * Avertissements de l'installation qui vient d'avoir lieu (cibles annoncées sans binaire…) :
+ * rendus seulement par les commandes d'installation.
+ */
+installWarnings?: Array<string>, };

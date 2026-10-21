@@ -466,19 +466,26 @@ const handlers: Handlers = {
     }
     stopProcess(id);
     const plugin = addPlugin("plugin_install_zip", mockInstalledPlugin(id, version, "file"));
+    // Archive construite pour cette machine seulement (`--allow-missing-targets`).
+    const warnings = /windows/i.test(path)
+      ? ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"].map(
+          (t) =>
+            `Binaire du serveur absent pour \`${t}\` : le plugin ne fonctionnera pas sur cette plateforme.`,
+        )
+      : [];
     mockBus.emit<PluginInstallEvent>("plugin://install", {
       id,
       received: 0,
       total: 0,
       phase: "done",
     });
-    return plugin;
+    return warnings.length ? { ...plugin, installWarnings: warnings } : plugin;
   },
   plugin_install_dev: ({ path }) => {
-    const plugin = addPlugin(
-      "plugin_install_dev",
-      mockInstalledPlugin(baseName(path), "0.1.0", "dev"),
-    );
+    const plugin = addPlugin("plugin_install_dev", {
+      ...mockInstalledPlugin(baseName(path), "0.1.0", "dev"),
+      devPath: path,
+    });
     if (!state.settings.devPlugins.includes(path)) state.settings.devPlugins.push(path);
     stopProcess(plugin.id);
     return plugin;

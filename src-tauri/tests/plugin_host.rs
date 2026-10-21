@@ -132,6 +132,10 @@ async fn starts_on_demand_calls_in_parallel_and_stops() {
     let status = f.status();
     // `ui_only` n'est pas compté : le nombre montré est celui des outils visibles des IA (P02).
     assert_eq!((status.state, status.tools), (ProcessState::Ready, 9));
+    // Liste montrée par la fiche du catalogue : mêmes 9 outils, triés ; `ui_only` annoncé à part.
+    assert_eq!(status.tool_names.len(), 9);
+    assert!(status.tool_names.windows(2).all(|w| w[0] <= w[1]) && !status.tool_names.contains(&"ui_only".to_string()));
+    assert_eq!(status.ui_tools, 1);
     assert!(status.pid.is_some());
     assert_eq!(f.call("echo", json!({ "text": "bonjour" })).await.unwrap(), json!({ "echo": { "text": "bonjour" } }));
 

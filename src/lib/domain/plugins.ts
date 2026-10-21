@@ -4,11 +4,13 @@
  */
 import type { IconName } from "@/components/icons/Icon";
 import { iconNames } from "@/components/icons/Icon";
+import { compareVersions } from "@/lib/domain/versions";
 import type {
   CatalogEntryView,
   InstalledPluginView,
   PluginCategory,
   PluginColor,
+  PluginProcessView,
   PluginViewInfo,
 } from "@/lib/types";
 
@@ -241,4 +243,128 @@ export function catalogCards(
     });
   }
   return cards;
+}
+
+const sourceLabel: Record<InstalledPluginView["source"], string> = {
+  catalog: "depuis le catalogue",
+  file: "depuis une archive locale",
+  dev: "en développement",
+};
+
+/**
+ * Version installée comparée à celle du catalogue (recette du 21/10, N03) : `null` si ce sont
+ * les mêmes. Sinon une phrase pour la fiche (« v0.7.0 installée en développement, plus récente
+ * que le catalogue (v0.6.0) »).
+ */
+export function installedVersionNote(
+  catalogVersion: string,
+  installed: Pick<InstalledPluginView, "version" | "source">,
+): string | null {
+  const order = compareVersions(installed.version, catalogVersion);
+  if (order === 0) return null;
+  const head = `v${installed.version} installée ${sourceLabel[installed.source]}`;
+  return order > 0
+    ? `${head}, plus récente que le catalogue (v${catalogVersion})`
+    : `${head} · v${catalogVersion} au catalogue`;
+}
+
+/** Ce qui reste à configurer après l'installation d'un plugin. */
+export type PendingSetup =
+  | { kind: "github" }
+  | { kind: "repos" }
+  | { kind: "secrets" }
+  | { kind: "view"; step: InstalledPluginView["setup"][number] };
+
+/**
+ * Configuration à proposer après l'installation (N03) : service Dépôts (compte GitHub, dépôts
+ * suivis) s'il est déclaré, secrets requis manquants, puis les étapes `[[setup]]` du manifeste.
+ */
+export function pendingSetup(
+  plugin: Pick<InstalledPluginView, "services" | "status" | "setup" | "enabled">,
+  context: { githubConnected: boolean; trackedRepos: string[] },
+): PendingSetup[] {
+  if (!plugin.enabled || plugin.status === "invalid") return [];
+  const pending: PendingSetup[] = [];
+  if (plugin.services.includes("repos")) {
+    if (!context.githubConnected) pending.push({ kind: "github" });
+    if (context.trackedRepos.length === 0) pending.push({ kind: "repos" });
+  }
+  if (plugin.status === "needs-setup") pending.push({ kind: "secrets" });
+  for (const step of plugin.setup) pending.push({ kind: "view", step });
+  return pending;
+}
+
+/** Libellé d'une configuration restante (bouton de la fiche du plugin). */
+export function pendingSetupLabel(item: PendingSetup): string {
+  switch (item.kind) {
+    case "github":
+      return "Connecter le compte GitHub";
+    case "repos":
+      return "Choisir les dépôts suivis";
+    case "secrets":
+      return "Renseigner les secrets requis";
+    case "view":
+      return item.step.title;
+  }
+}
+
+/** Outils MCP montrés par la fiche d'un plugin, et d'où vient la liste. */
+export interface CatalogTools {
+  /** Noms sans préfixe, visibles des IA (outils `ui` exclus, comme partout). */
+  names: string[];
+  /** Outils réservés à l'interface du plugin, annoncés à part. */
+  uiTools: number;
+  /** Écart entre la liste montrée et l'autre source, s'il y en a un. */
+  note: string | null;
+}
+
+/**
+ * Liste d'outils d'une fiche (recette du 21/10, P02) : celle du serveur installé quand il
+ * tourne (le même nombre que la session de chat), sinon celle du catalogue. Les deux comptent
+ * les outils visibles des IA ; une version installée différente du catalogue est signalée.
+ */
+export function catalogTools(
+  catalog: Pick<CatalogEntryView, "version" | "tools"> | null,
+  installed: Pick<InstalledPluginView, "version"> | null,
+  process: Pick<PluginProcessView, "state" | "toolNames" | "uiTools"> | null,
+): CatalogTools {
+  const live = installed && process?.state === "ready" ? (process.toolNames ?? []) : null;
+  const uiTools = (installed && process?.uiTools) || 0;
+  if (live && (live.length > 0 || !catalog)) {
+    const differs =
+      catalog && (catalog.tools.length !== live.length || catalog.version !== installed!.version);
+    return {
+      names: live,
+      uiTools,
+      note: differs
+        ? `Outils de la v${installed!.version} installée ; le catalogue en annonce ${catalog.tools.length} pour la v${catalog.version}.`
+        : null,
+    };
+  }
+  const names = catalog?.tools ?? [];
+  return {
+    names,
+    uiTools,
+    note:
+      catalog && installed && installed.version !== catalog.version
+        ? `Liste du catalogue (v${catalog.version}) : celle de la v${installed.version} installée s'affiche quand son serveur tourne.`
+        : null,
+  };
+}
+
+/**
+ * Réglages en cache après `repos://changed` (recette du 21/10, N05) : la liste suivie par un
+ * plugin peut changer hors des mutations du front (pont de l'iframe, `cadence.repos.follow`) ;
+ * Réglages › Dépôts GitHub et la barre du plugin la relisent ici.
+ */
+export function applyReposChanged<
+  T extends { trackedRepos: Record<string, string[]>; repoSelection: Record<string, string> },
+>(settings: T, change: { plugin: string; repos: string[]; selection: string | null }): T {
+  const trackedRepos = { ...settings.trackedRepos };
+  if (change.repos.length > 0) trackedRepos[change.plugin] = [...change.repos];
+  else delete trackedRepos[change.plugin];
+  const repoSelection = { ...settings.repoSelection };
+  if (change.selection) repoSelection[change.plugin] = change.selection;
+  else delete repoSelection[change.plugin];
+  return { ...settings, trackedRepos, repoSelection };
 }

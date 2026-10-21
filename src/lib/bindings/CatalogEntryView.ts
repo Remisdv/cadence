@@ -4,6 +4,7 @@ import type { CatalogViewInfo } from "./CatalogViewInfo";
 import type { PluginCategory } from "./PluginCategory";
 import type { PluginColor } from "./PluginColor";
 import type { PluginService } from "./PluginService";
+import type { PluginSource } from "./PluginSource";
 
 /**
  * Plugin du catalogue, comparé à ce qui est installé sur cette machine.
@@ -34,6 +35,11 @@ compatible: boolean,
  */
 incompatibility: string | null, 
 /**
- * Version installée, si le plugin l'est.
+ * Version installée, si le plugin l'est (elle peut différer de `version` : archive locale,
+ * dossier de développement plus récent que le catalogue…).
  */
-installed: string | null, updateAvailable: boolean, enabled: boolean | null, };
+installed: string | null, 
+/**
+ * Provenance de la version installée.
+ */
+installedSource: PluginSource | null, updateAvailable: boolean, enabled: boolean | null, };

@@ -7,7 +7,7 @@ import type { CatalogEntryView, CatalogView, InstalledPluginView } from "@/lib/t
 
 type Base = Omit<
   CatalogEntryView,
-  "installed" | "updateAvailable" | "enabled" | "compatible" | "incompatibility"
+  "installed" | "installedSource" | "updateAvailable" | "enabled" | "compatible" | "incompatibility"
 >;
 
 const entry = (
@@ -158,6 +158,7 @@ export function mockCatalogView(
     return {
       ...e,
       installed: local?.version ?? null,
+      installedSource: local?.source ?? null,
       updateAvailable: !!local && local.source !== "dev" && newer(e.version, local.version),
       enabled: local?.enabled ?? null,
       compatible: incompatibility === null,

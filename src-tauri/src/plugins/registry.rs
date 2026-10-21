@@ -106,9 +106,18 @@ pub struct InstalledPluginView {
     pub ui_dev_url: Option<String>,
     pub enabled: bool,
     pub source: PluginSource,
+    /// Dossier d'un plugin de développement (« Recharger » le réinscrit).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub dev_path: Option<String>,
     pub status: PluginStatus,
     /// Erreur du manifeste (statut `invalid`), ou avertissements en mode dev.
     pub problem: Option<String>,
+    /// Avertissements de l'installation qui vient d'avoir lieu (cibles annoncées sans binaire…) :
+    /// rendus seulement par les commandes d'installation.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    pub install_warnings: Vec<String>,
 }
 
 pub struct PluginRegistry {
@@ -238,6 +247,7 @@ impl PluginRegistry {
     pub fn view(&self, id: &str, has_secret: impl Fn(&str) -> bool) -> AppResult<InstalledPluginView> {
         let entry = self.entry(id)?;
         let dir = self.plugin_dir(id, &entry);
+        let dev_path = (entry.source == PluginSource::Dev).then(|| dir.to_string_lossy().into_owned());
         Ok(match manifest::load(&dir, &self.app_version) {
             Ok(m) => {
                 let missing = m.secrets.iter().any(|s| s.required && !has_secret(&s.id));
@@ -261,8 +271,10 @@ impl PluginRegistry {
                     skills: m.skills,
                     enabled: entry.enabled,
                     source: entry.source,
+                    dev_path,
                     status: if missing { PluginStatus::NeedsSetup } else { PluginStatus::Ok },
                     problem,
+                    install_warnings: Vec::new(),
                 }
             }
             Err(err) => InstalledPluginView {
@@ -284,8 +296,10 @@ impl PluginRegistry {
                 ui_dev_url: None,
                 enabled: entry.enabled,
                 source: entry.source,
+                dev_path,
                 status: PluginStatus::Invalid,
                 problem: Some(err.to_string()),
+                install_warnings: Vec::new(),
             },
         })
     }

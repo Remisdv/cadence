@@ -79,6 +79,18 @@ export async function pickArchive(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+/** Choix du dossier d'un plugin en développement (il porte `plugin.toml`) ; `null` si annulé. */
+export async function pickPluginFolder(): Promise<string | null> {
+  if (!isTauri) return "C:/Users/moi/projets/cadence-plugins/plugins/minuteur";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    title: "Installer un plugin depuis son dossier de développement",
+    multiple: false,
+    directory: true,
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
 /** Montre un dossier dans l'explorateur de fichiers (worktree d'un agent). */
 export async function revealPath(path: string): Promise<void> {
   if (isTauri) {

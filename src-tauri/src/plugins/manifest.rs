@@ -414,8 +414,9 @@ fn invalid(message: impl Into<String>) -> AppError {
 
 /// Lit `plugin.toml` dans `dir`, puis ses skills, et vérifie les fichiers qu'il désigne.
 ///
-/// Le binaire du serveur n'est exigé que pour la cible de la machine (un plugin de dev n'est
-/// compilé que pour elle) ; `check_all_targets` vérifie les autres à l'installation d'une archive.
+/// Le binaire du serveur n'est exigé que pour la cible de la machine (un plugin de dev ou une
+/// archive locale n'est souvent compilé que pour elle) ; `check_all_targets` signale les autres
+/// à l'installation d'une archive.
 pub fn load(dir: &Path, app_version: &str) -> AppResult<Manifest> {
     let text = std::fs::read_to_string(dir.join(FILE_NAME))
         .map_err(|e| invalid(format!("{FILE_NAME} illisible ({e}).")))?;
@@ -461,16 +462,19 @@ fn check_dir(dir: &Path, m: &mut Manifest) -> AppResult<()> {
     Ok(())
 }
 
-/// Binaire présent pour chaque cible annoncée (règle d'une archive publiée).
-pub fn check_all_targets(dir: &Path, m: &Manifest) -> AppResult<()> {
-    let Some(server) = &m.server else { return Ok(()) };
-    for target in &server.targets {
-        let bin = server.binary(dir, target);
-        if !bin.is_file() {
-            return Err(invalid(format!("Binaire du serveur absent : `bin/{target}/{}`.", file_name(&bin))));
-        }
-    }
-    Ok(())
+/// Binaires des autres cibles annoncées (recette du 21/10, N02). Seul celui de la machine est
+/// exigé, par `load` : une archive locale ou du catalogue construite pour cette plateforme
+/// s'installe. Les cibles annoncées sans binaire reviennent en avertissements, un par cible
+/// (« Binaire absent pour `aarch64-apple-darwin` »), à montrer après l'installation.
+pub fn check_all_targets(dir: &Path, m: &Manifest) -> Vec<String> {
+    let Some(server) = &m.server else { return Vec::new() };
+    let current = current_target();
+    server
+        .targets
+        .iter()
+        .filter(|target| Some(target.as_str()) != current && !server.binary(dir, target).is_file())
+        .map(|target| format!("Binaire du serveur absent pour `{target}` : le plugin ne fonctionnera pas sur cette plateforme."))
+        .collect()
 }
 
 fn file_name(path: &Path) -> String {
@@ -960,12 +964,16 @@ mode = "background"
         let m = load(&dir, "0.3.0").unwrap();
         assert_eq!(m.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["preparer-issue", "rapport-version"]);
         assert!(m.warnings.is_empty(), "{:?}", m.warnings);
-        assert!(check_all_targets(&dir, &m).is_err(), "les autres cibles manquent");
+        // Les autres cibles manquent : un avertissement par cible, jamais la machine courante.
+        let missing = check_all_targets(&dir, &m);
+        let declared = m.server.as_ref().unwrap().targets.len();
+        assert_eq!(missing.len(), declared - 1, "{missing:?}");
+        assert!(missing.iter().all(|w| !w.contains(target)), "{missing:?}");
         for t in TARGETS {
             let bin = if t.contains("windows") { "cadence-gestion-projet.exe" } else { "cadence-gestion-projet" };
             write(&format!("bin/{t}/{bin}"), "");
         }
-        assert!(check_all_targets(&dir, &m).is_ok());
+        assert!(check_all_targets(&dir, &m).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

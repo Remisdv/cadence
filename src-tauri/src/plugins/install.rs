@@ -4,7 +4,8 @@
 //! Une archive est vérifiée (sha256 attendu et fichier `<archive>.sha256` voisin), extraite
 //! sans risque dans `<plugins>/.tmp/` (chemins normalisés, ni `..` ni racine ni flux NTFS, liens
 //! symboliques refusés, 500 Mo au plus une fois extraite), validée (manifeste, skills, binaire
-//! de chaque cible annoncée), puis renommée d'un bloc vers `<plugins>/<id>/<version>/` et
+//! de la machine ; les autres cibles annoncées sans binaire ne donnent qu'un avertissement),
+//! puis renommée d'un bloc vers `<plugins>/<id>/<version>/` et
 //! inscrite au registre. Aucun processus n'est lancé. L'installation se fait en deux temps,
 //! `prepare_zip` puis `Prepared::commit`, pour que l'appelant arrête le serveur du plugin entre
 //! les deux (Windows refuse de remplacer un exécutable en cours d'exécution).
@@ -79,6 +80,8 @@ pub struct Prepared {
     staging: PathBuf,
     /// Provenance inscrite au registre (`file` pour une archive locale).
     source: PluginSource,
+    /// Avertissements de l'installation : cibles annoncées sans binaire, fichiers absents.
+    pub warnings: Vec<String>,
 }
 
 impl Drop for Prepared {
@@ -237,8 +240,14 @@ fn prepare_zip_limited(
 
     let staging = registry.root().join(".tmp").join(format!("{id}-{version}-{}", nonce()));
     fs::create_dir_all(&staging)?;
-    let mut prepared =
-        Prepared { id: id.clone(), version: version.clone(), root: staging.join(&id), staging, source: PluginSource::File };
+    let mut prepared = Prepared {
+        id: id.clone(),
+        version: version.clone(),
+        root: staging.join(&id),
+        staging,
+        source: PluginSource::File,
+        warnings: Vec::new(),
+    };
     fs::create_dir_all(&prepared.root)?;
 
     let mut written = 0u64;
@@ -278,7 +287,8 @@ fn prepare_zip_limited(
     if (extracted.id.as_str(), extracted.version.as_str()) != (id.as_str(), version.as_str()) {
         return Err(invalid("Archive refusée : le manifeste extrait ne correspond pas."));
     }
-    manifest::check_all_targets(&prepared.root, &extracted)?;
+    prepared.warnings = extracted.warnings.clone();
+    prepared.warnings.extend(manifest::check_all_targets(&prepared.root, &extracted));
     make_binaries_executable(&prepared.root, &extracted)?;
     prepared.version = extracted.version;
     Ok(prepared)
@@ -289,7 +299,10 @@ fn make_binaries_executable(dir: &Path, m: &Manifest) -> AppResult<()> {
     use std::os::unix::fs::PermissionsExt;
     if let Some(server) = &m.server {
         for target in &server.targets {
-            fs::set_permissions(server.binary(dir, target), fs::Permissions::from_mode(0o755))?;
+            let bin = server.binary(dir, target);
+            if bin.is_file() {
+                fs::set_permissions(bin, fs::Permissions::from_mode(0o755))?;
+            }
         }
     }
     Ok(())
@@ -534,8 +547,9 @@ pub(crate) mod tests {
         refuse("flux", with(("ui/index.html:secret", b"x")), "", "chemin dangereux");
         refuse("sans-manifeste", plugin_files("journal", "0.1.0").into_iter().skip(1).collect(), "", "introuvable");
         refuse("mauvais-dossier", plugin_files("journal", "0.1.0"), "autre/", "ne porte pas l'id");
-        let no_linux: Vec<_> = plugin_files("journal", "0.1.0").into_iter().filter(|(n, _)| !n.contains("linux")).collect();
-        refuse("cible-manquante", no_linux, "", "Binaire du serveur absent");
+        let current = manifest::current_target().unwrap();
+        let no_current: Vec<_> = plugin_files("journal", "0.1.0").into_iter().filter(|(n, _)| !n.contains(current)).collect();
+        refuse("cible-courante-manquante", no_current, "", "Binaire du serveur absent");
         let no_skill: Vec<_> = plugin_files("journal", "0.1.0").into_iter().filter(|(n, _)| !n.starts_with("skills")).collect();
         refuse("skill-manquant", no_skill, "", "skill");
 
@@ -575,6 +589,31 @@ pub(crate) mod tests {
         let err = prepare_zip_limited(&registry, &zip_path, None, &mut |_| {}, 64 * 1024).unwrap_err();
         assert!(err.to_string().contains("500 Mo"), "{err}");
         assert!(prepare_zip_limited(&registry, &zip_path, None, &mut |_| {}, 256 * 1024).is_ok());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Recette du 21/10, N02 : `pnpm package --allow-missing-targets` ne livre que le binaire
+    /// de la machine ; l'archive s'installe, avec un avertissement par cible manquante.
+    #[test]
+    fn installs_an_archive_built_for_this_machine_only() {
+        let (root, registry) = setup("plugin-install-one-target");
+        let current = manifest::current_target().unwrap();
+        let files: Vec<_> =
+            plugin_files("journal", "0.1.0").into_iter().filter(|(n, _)| !n.starts_with("bin/") || n.contains(current)).collect();
+        let zip = root.join("journal-0.1.0.zip");
+        write_zip(&zip, "", &files);
+        let prepared = prepare_zip(&registry, &zip, None, &mut |_| {}).unwrap();
+        let missing: Vec<&String> = prepared.warnings.iter().filter(|w| w.contains("Binaire du serveur absent")).collect();
+        assert_eq!(missing.len(), manifest::TARGETS.len() - 1, "{:?}", prepared.warnings);
+        assert!(missing.iter().all(|w| !w.contains(current)));
+        prepared.commit(&registry).unwrap();
+        assert_eq!(registry.entry("journal").unwrap().version, "0.1.0");
+        assert!(registry.root().join("journal/0.1.0/bin").join(current).is_dir());
+
+        // Archive complète : aucun avertissement.
+        let full = root.join("journal-0.2.0.zip");
+        write_zip(&full, "", &plugin_files("journal", "0.2.0"));
+        assert!(prepare_zip(&registry, &full, None, &mut |_| {}).unwrap().warnings.is_empty());
         let _ = fs::remove_dir_all(&root);
     }
 

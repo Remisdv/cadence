@@ -34,23 +34,31 @@ import { cn } from "@/lib/cn";
 import { formatAgo } from "@/lib/domain/format";
 import {
   catalogCards,
+  catalogTools,
   categoryOrder,
+  installedVersionNote,
   kitIcon,
+  pendingSetup,
+  pendingSetupLabel,
   pluginCategories,
   type CatalogCard,
+  type PendingSetup,
 } from "@/lib/domain/plugins";
 import { subscribe } from "@/lib/ipc/events";
-import { openExternal, pickArchive } from "@/lib/platform";
+import { openExternal, pickArchive, pickPluginFolder } from "@/lib/platform";
 import {
+  useAppSettings,
+  useAuthStatus,
   useCatalog,
   useInstallFromCatalog,
   useInstallPlugin,
   usePlugins,
+  usePluginStatus,
   useRefreshCatalog,
   useSetPluginEnabled,
   useUninstallPlugin,
 } from "@/lib/query/queries";
-import type { PluginCategory, PluginInstallEvent } from "@/lib/types";
+import type { InstalledPluginView, PluginCategory, PluginInstallEvent } from "@/lib/types";
 import { useNavigation } from "@/stores/navigation";
 
 type Tab = "catalog" | "installed" | "updates";
@@ -70,6 +78,8 @@ export default function CatalogView({ view }: ViewProps<"catalog">) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"category" | "name">("category");
   const [selected, setSelected] = useState<string | null>(view.plugin ?? null);
+  /** Plugin installé à l'instant : sa fiche propose sa configuration. */
+  const [fresh, setFresh] = useState<InstalledPluginView | null>(null);
 
   const cards = useMemo(
     () => catalogCards(catalog.data?.plugins ?? [], plugins.data ?? []),
@@ -110,9 +120,17 @@ export default function CatalogView({ view }: ViewProps<"catalog">) {
         .join(" · ")
     : "RemiSDV/cadence-plugins";
 
+  const onInstalled = (plugin: InstalledPluginView) => {
+    setSelected(plugin.id);
+    setFresh(plugin);
+  };
   const onArchive = async () => {
     const path = await pickArchive();
-    if (path) installArchive.mutate({ kind: "zip", path }, { onSuccess: (p) => setSelected(p.id) });
+    if (path) installArchive.mutate({ kind: "zip", path }, { onSuccess: onInstalled });
+  };
+  const onDevFolder = async () => {
+    const path = await pickPluginFolder();
+    if (path) installArchive.mutate({ kind: "dev", path }, { onSuccess: onInstalled });
   };
 
   return (
@@ -178,6 +196,15 @@ export default function CatalogView({ view }: ViewProps<"catalog">) {
           <>
             <Button
               variant="ghost"
+              icon="folder"
+              disabled={installArchive.isPending}
+              title="Plugin non publié : le dossier qui porte son plugin.toml, lu sur place"
+              onClick={() => void onDevFolder()}
+            >
+              Dossier de développement…
+            </Button>
+            <Button
+              variant="ghost"
               icon="download"
               disabled={installArchive.isPending}
               onClick={() => void onArchive()}
@@ -238,7 +265,13 @@ export default function CatalogView({ view }: ViewProps<"catalog">) {
             </Callout>
           )}
           {installArchive.error && (
-            <Callout tone="danger">Archive refusée : {installArchive.error.message}</Callout>
+            <Callout tone="danger">
+              {installArchive.variables?.kind === "dev" ? "Dossier refusé" : "Archive refusée"} :{" "}
+              {installArchive.error.message}
+            </Callout>
+          )}
+          {fresh && (fresh.installWarnings?.length ?? 0) > 0 && (
+            <InstallWarnings plugin={fresh} />
           )}
 
           {catalog.isPending || plugins.isPending ? (
@@ -290,7 +323,14 @@ export default function CatalogView({ view }: ViewProps<"catalog">) {
             .
           </Callout>
         </div>
-        {current && <PluginDetail key={current.id} card={current} />}
+        {current && (
+          <PluginDetail
+            key={current.id}
+            card={current}
+            fresh={fresh?.id === current.id}
+            onInstalled={onInstalled}
+          />
+        )}
       </Page>
     </>
   );
@@ -428,16 +468,29 @@ function useInstallProgress(id: string) {
   return event;
 }
 
-function PluginDetail({ card }: { card: CatalogCard }) {
+function PluginDetail({
+  card,
+  fresh,
+  onInstalled,
+}: {
+  card: CatalogCard;
+  /** Installé à l'instant : la fiche propose sa configuration. */
+  fresh: boolean;
+  onInstalled: (plugin: InstalledPluginView) => void;
+}) {
   const navigate = useNavigation((s) => s.navigate);
   const install = useInstallFromCatalog();
+  const reload = useInstallPlugin();
   const setEnabled = useSetPluginEnabled();
   const [confirm, setConfirm] = useState(false);
   const progress = useInstallProgress(card.id);
+  const process = (usePluginStatus().data ?? []).find((p) => p.plugin === card.id) ?? null;
   const { entry, installed } = card;
   const size = megabytes(entry?.size);
-  const busy = install.isPending || progress !== null;
+  const busy = install.isPending || reload.isPending || progress !== null;
   const percent = progress && progress.total > 0 ? (progress.received / progress.total) * 100 : 100;
+  const versionNote = entry && installed ? installedVersionNote(entry.version, installed) : null;
+  const tools = catalogTools(entry, installed, process);
 
   return (
     <aside className="flex w-[400px] shrink-0 flex-col gap-[13px] overflow-y-auto border-l border-line bg-panel px-5 py-[18px]">
@@ -457,8 +510,13 @@ function PluginDetail({ card }: { card: CatalogCard }) {
                 <Badge tone="muted">Communauté</Badge>
               ))}
             <Badge tone="neutral" mono>
-              v{entry?.version ?? card.version}
+              v{installed?.version ?? entry?.version ?? card.version}
             </Badge>
+            {versionNote && (
+              <Badge tone="muted" mono>
+                catalogue v{entry!.version}
+              </Badge>
+            )}
             <CategoryPill category={card.category} />
           </div>
         </div>
@@ -482,7 +540,7 @@ function PluginDetail({ card }: { card: CatalogCard }) {
             size="tall"
             icon="download"
             disabled={!entry.compatible || busy}
-            onClick={() => install.mutate({ id: card.id, update: false })}
+            onClick={() => install.mutate({ id: card.id, update: false }, { onSuccess: onInstalled })}
           >
             {entry.compatible ? `Installer et activer${size ? ` · ${size}` : ""}` : "Incompatible"}
           </Button>
@@ -492,7 +550,7 @@ function PluginDetail({ card }: { card: CatalogCard }) {
             size="tall"
             icon="download"
             disabled={!entry.compatible || busy}
-            onClick={() => install.mutate({ id: card.id, update: true })}
+            onClick={() => install.mutate({ id: card.id, update: true }, { onSuccess: onInstalled })}
           >
             Mettre à jour vers {entry.version}
             {size ? ` · ${size}` : ""}
@@ -529,6 +587,18 @@ function PluginDetail({ card }: { card: CatalogCard }) {
             >
               Réglages
             </Button>
+            {installed.source === "dev" && installed.devPath && (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="refresh"
+                disabled={busy}
+                title={`Relit ${installed.devPath} et redémarre le serveur du plugin`}
+                onClick={() => reload.mutate({ kind: "dev", path: installed.devPath! })}
+              >
+                Recharger
+              </Button>
+            )}
             <Button size="sm" variant="danger" onClick={() => setConfirm(true)}>
               Désinstaller
             </Button>
@@ -538,21 +608,27 @@ function PluginDetail({ card }: { card: CatalogCard }) {
           {entry?.incompatibility ??
             [
               `Activé pour toute l'app, dans le groupe ${pluginCategories[card.category].label} du rail`,
+              versionNote,
               entry ? (
                 <span key="a" className="mono">
-                  {entry.archive}
+                  {versionNote ? `catalogue : ${entry.archive}` : entry.archive}
                 </span>
               ) : null,
               entry?.minCadence ? `Cadence ${entry.minCadence} minimum` : null,
-              installed?.source === "dev" ? "dossier de développement" : null,
-              installed?.source === "file" ? "installé depuis une archive" : null,
+              installed?.source === "dev" && !versionNote ? "dossier de développement" : null,
+              installed?.source === "file" && !versionNote ? "installé depuis une archive" : null,
             ]
               .filter(Boolean)
               .flatMap((part, i) => (i === 0 ? [part] : [" · ", part]))}
           .
         </div>
-        {install.error && <p className="text-caption text-red">{install.error.message}</p>}
+        {(install.error ?? reload.error) && (
+          <p className="text-caption text-red">{(install.error ?? reload.error)!.message}</p>
+        )}
+        {reload.isSuccess && <p className="text-caption text-green">Plugin rechargé.</p>}
       </div>
+
+      {installed && <SetupSection plugin={installed} fresh={fresh} />}
 
       {card.description && (
         <p className="text-body-sm leading-[1.6] text-tx2">{card.description}</p>
@@ -618,11 +694,19 @@ function PluginDetail({ card }: { card: CatalogCard }) {
         </DetailSection>
       )}
 
-      {entry && entry.tools.length > 0 && (
-        <DetailSection title={`Outils MCP · ${entry.tools.length}`}>
+      {(tools.names.length > 0 || tools.uiTools > 0) && (
+        <DetailSection title={`Outils MCP · ${tools.names.length}`}>
+          {tools.note && <div className="mt-1 text-caption text-tx3">{tools.note}</div>}
           <div className="mt-[7px] mono text-caption leading-[1.8] break-all text-tx2">
-            {entry.tools.map((t) => `${card.id}__${t}`).join(" · ")}
+            {tools.names.map((t) => `${card.id}__${t}`).join(" · ")}
           </div>
+          {tools.uiTools > 0 && (
+            <div className="mt-1 text-caption text-tx3">
+              {tools.uiTools > 1
+                ? `+ ${tools.uiTools} outils réservés à l'interface du plugin, jamais montrés aux IA.`
+                : "+ 1 outil réservé à l'interface du plugin, jamais montré aux IA."}
+            </div>
+          )}
         </DetailSection>
       )}
 
@@ -652,6 +736,73 @@ function PluginDetail({ card }: { card: CatalogCard }) {
         />
       )}
     </aside>
+  );
+}
+
+/** Avertissements de l'installation qui vient d'avoir lieu (cibles sans binaire…). */
+function InstallWarnings({ plugin }: { plugin: InstalledPluginView }) {
+  return (
+    <Callout tone="warning" icon="warning">
+      {plugin.name} {plugin.version} est installé, avec des avertissements :
+      <ul className="mt-1 list-disc pl-4">
+        {(plugin.installWarnings ?? []).map((w) => (
+          <li key={w}>{w}</li>
+        ))}
+      </ul>
+    </Callout>
+  );
+}
+
+/**
+ * Configuration restante d'un plugin installé (N03) : service Dépôts, secrets, étapes
+ * `[[setup]]`. Montrée juste après une installation, puis tant que le service ou un secret
+ * manque.
+ */
+function SetupSection({ plugin, fresh }: { plugin: InstalledPluginView; fresh: boolean }) {
+  const navigate = useNavigation((s) => s.navigate);
+  const auth = useAuthStatus().data;
+  const settings = useAppSettings().data;
+  const pending = pendingSetup(plugin, {
+    githubConnected: auth?.github?.status === "connected",
+    trackedRepos: settings?.trackedRepos[plugin.id] ?? [],
+  });
+  const blocking = pending.some((p) => p.kind !== "view");
+  if (pending.length === 0 || (!fresh && !blocking)) return null;
+  const open = (item: PendingSetup) => {
+    if (item.kind === "view")
+      navigate({
+        id: "plugin",
+        plugin: plugin.id,
+        view: item.step.view,
+        params: { setup: item.step.id },
+      });
+    else if (item.kind === "secrets")
+      navigate({ id: "settings", section: "plugin", plugin: plugin.id });
+    else navigate({ id: "settings", section: "repos" });
+  };
+  return (
+    <DetailSection title="Configuration">
+      <div className="mt-2 flex flex-col gap-1.5 rounded-[10px] border border-amber-line bg-amber-d px-3 py-[11px]">
+        <span className="text-caption leading-[1.55] text-tx2">
+          {fresh ? `${plugin.name} est installé. ` : ""}
+          {pending.length > 1 ? "Étapes restantes :" : "Étape restante :"}
+        </span>
+        {pending.map((item) => (
+          <button
+            key={item.kind === "view" ? item.step.id : item.kind}
+            type="button"
+            onClick={() => open(item)}
+            className="inline-flex items-center gap-[7px] text-left text-body-sm text-clay hover:text-clay-hover"
+          >
+            <Icon name="arrowRight" size={12} />
+            {pendingSetupLabel(item)}
+            {item.kind === "view" && !item.step.required && (
+              <span className="text-caption text-tx3">(facultatif)</span>
+            )}
+          </button>
+        ))}
+      </div>
+    </DetailSection>
   );
 }
 

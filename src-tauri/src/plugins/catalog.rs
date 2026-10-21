@@ -165,8 +165,11 @@ pub struct CatalogEntryView {
     pub compatible: bool,
     /// Pourquoi il ne l'est pas.
     pub incompatibility: Option<String>,
-    /// Version installée, si le plugin l'est.
+    /// Version installée, si le plugin l'est (elle peut différer de `version` : archive locale,
+    /// dossier de développement plus récent que le catalogue…).
     pub installed: Option<String>,
+    /// Provenance de la version installée.
+    pub installed_source: Option<PluginSource>,
     pub update_available: bool,
     pub enabled: Option<bool>,
 }
@@ -279,6 +282,7 @@ pub fn entry_view(raw: &RawEntry, registry: &PluginRegistry) -> CatalogEntryView
         compatible: incompatibility.is_none(),
         incompatibility,
         installed,
+        installed_source: entry.as_ref().map(|e| e.source),
         update_available,
         enabled: entry.map(|e| e.enabled),
     }
@@ -561,6 +565,9 @@ mod tests {
 
         let docs = entry_view(&entry("documents", "0.1.1"), &registry);
         assert_eq!((docs.installed.as_deref(), docs.update_available, docs.compatible), (Some("0.1.0"), true, true));
+        assert_eq!(docs.installed_source, Some(PluginSource::Catalog));
+        let dev = entry_view(&entry("journal", "0.0.9"), &registry);
+        assert_eq!((dev.installed.as_deref(), dev.installed_source), (Some("0.1.0"), Some(PluginSource::Dev)), "dev plus récent");
         assert_eq!((docs.category, docs.rail_icon.as_str(), docs.archive.as_str()), (PluginCategory::Etudes, "book", "documents-0.1.1.zip"));
         assert_eq!(docs.actions[0].mode, ActionMode::Background);
         assert!(!entry_view(&entry("journal", "9.0.0"), &registry).update_available, "un plugin de dev n'est jamais mis à jour");

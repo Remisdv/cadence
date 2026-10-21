@@ -82,10 +82,22 @@ pub struct PluginProcessView {
     /// prêt). Les outils réservés à l'interface du plugin (`cadence/visibility = "ui"`) ne
     /// comptent pas : même nombre que la fiche du catalogue.
     pub tools: u32,
+    /// Noms (sans préfixe, triés) des outils visibles des IA, pour la fiche du catalogue.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    pub tool_names: Vec<String>,
+    /// Outils réservés à l'interface du plugin, annoncés à part (jamais exposés aux IA).
+    #[serde(skip_serializing_if = "is_zero")]
+    #[ts(as = "Option<u32>", optional)]
+    pub ui_tools: u32,
     /// Raison du dernier arrêt inattendu ou de l'échec.
     pub message: Option<String>,
     /// Journal du serveur, pour « Voir le journal ».
     pub log_path: Option<String>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Fin d'une exécution du processus.
@@ -166,13 +178,17 @@ impl PluginProcess {
 
     pub fn view(&self) -> PluginProcessView {
         let inner = self.inner.lock().unwrap();
+        let (ui, visible): (Vec<&Tool>, Vec<&Tool>) = inner.tools.iter().partition(|tool| crate::gateway::scope::is_ui_only(tool));
+        let mut tool_names: Vec<String> = visible.iter().map(|tool| tool.name.to_string()).collect();
+        tool_names.sort();
         PluginProcessView {
             plugin: self.id.clone(),
             state: inner.state,
             pid: inner.pid,
             restarts: inner.restarts,
-            tools: u32::try_from(inner.tools.iter().filter(|tool| !crate::gateway::scope::is_ui_only(tool)).count())
-                .unwrap_or(u32::MAX),
+            tools: u32::try_from(tool_names.len()).unwrap_or(u32::MAX),
+            tool_names,
+            ui_tools: u32::try_from(ui.len()).unwrap_or(u32::MAX),
             message: inner.message.clone(),
             log_path: inner.log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
         }
