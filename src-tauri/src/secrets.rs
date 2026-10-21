@@ -15,6 +15,12 @@ use crate::error::{AppError, AppResult};
 /// Service sous lequel Cadence range ses entrées.
 pub const SERVICE: &str = "app.cadence.desktop";
 
+/// Service effectif : `CADENCE_SECRETS_SERVICE` le remplace pour une instance de test isolée
+/// (skill `tester-cadence`), afin qu'elle ne lise ni n'écrive jamais les secrets de l'utilisateur.
+pub fn service() -> String {
+    std::env::var("CADENCE_SECRETS_SERVICE").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| SERVICE.to_string())
+}
+
 pub trait SecretStore: Send + Sync {
     fn get(&self, account: &str) -> AppResult<Option<SecretString>>;
     fn set(&self, account: &str, value: &str) -> AppResult<()>;
@@ -48,7 +54,7 @@ pub struct KeyringSecrets;
 
 impl KeyringSecrets {
     fn entry(account: &str) -> AppResult<keyring::Entry> {
-        keyring::Entry::new(SERVICE, account).map_err(keychain_error)
+        keyring::Entry::new(&service(), account).map_err(keychain_error)
     }
 }
 
