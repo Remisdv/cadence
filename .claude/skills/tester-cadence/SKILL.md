@@ -16,7 +16,7 @@ Sans argument : demande le parcours (QCM court) puis lance-le.
 ## Règles
 
 1. **Uniquement par l'interface.** Clique, tape, glisse comme un humain avec `scripts/cdp.mjs`
-   (`voir`, `clic`, `saisir`, `touche`). N'appelle jamais une commande IPC, un outil MCP ni l'API
+   (`voir`, `clic`, `saisir`, `cocher`, `defiler`, `touche` ; voir « Pilote » plus bas). N'appelle jamais une commande IPC, un outil MCP ni l'API
    GitHub pour faire avancer le parcours : si tu en as besoin, c'est un constat (« action
    impossible depuis l'interface »). `eval`, `gh` en lecture et les journaux servent seulement à
    **vérifier** un résultat ou diagnostiquer.
@@ -26,11 +26,16 @@ Sans argument : demande le parcours (QCM court) puis lance-le.
    `app.cadence.desktop` ni à l'app installée de l'utilisateur.
 3. **Vrai projet, mais bac à sable.** Les écritures GitHub ne se font que sur un dépôt de test
    (défaut : `Remisdv/linear-test` ; un autre seulement si l'utilisateur le donne). Jamais sur un
-   dépôt de travail de l'utilisateur. Annonce le dépôt utilisé au début du rapport.
+   dépôt de travail de l'utilisateur. Annonce le dépôt utilisé au début du rapport. Le bac à
+   sable a souvent déjà servi : fais l'inventaire au début (voir Déroulé, étape 1).
 4. **Vraies IA, budget limité.** Les parcours lancent de vraies sessions (Claude Code, Codex,
    OpenCode installées) avec l'abonnement de l'utilisateur. Annonce-le avant de commencer, garde
    les demandes petites (issues minuscules, sprint d'un jour, un ou deux tours de chat), arrête
-   une exécution qui part en boucle.
+   une exécution qui part en boucle. **Compter les exécutions** : un tour d'IA = une exécution
+   (un message envoyé dans un chat et sa réponse complète ; un bouton qui lance un skill ; chaque
+   issue d'un « Développer le sprint » ; une relance automatique). Une conversation de trois
+   échanges compte trois. Note-les au fil de l'eau (heure, écran, IA, ce qui l'a lancée) et
+   reporte le total par IA dans l'en-tête du rapport.
 5. **Ne corrige rien pendant le test.** Tu observes et tu notes. Les corrections viennent après,
    sur accord de l'utilisateur, à partir du rapport.
 6. **Ne jamais saisir de secret.** Si un écran demande un jeton ou un mot de passe, utilise la
@@ -43,19 +48,43 @@ Sans argument : demande le parcours (QCM court) puis lance-le.
    publiées, comme un utilisateur) ou `dev` (dossiers de `../cadence-plugins`, installés depuis
    Réglages › Développeur — par l'interface). Dossier du rapport :
    `qa/rapports/AAAA-MM-JJ-<parcours>/` (captures dans `captures/`).
+   **Inventaire du bac à sable** (lecture seule, `gh`) : sprint en cours (issue d'état du plugin,
+   milestone ouvert à échéance proche), milestones, issues et PR ouvertes, branches `release/*`.
+   Note-le en tête du rapport. Puis, au choix de l'utilisateur (QCM court) :
+   - **travailler à côté** (défaut) : tes issues, ton milestone et ta branche sont nouveaux et
+     préfixés (ex. « QA 21/10 — … ») ; ne ferme, ne déplace, ne renomme rien d'existant ; si un
+     sprint automatique tourne déjà, ne le termine pas, crée le tien à côté ou teste dans le sien
+     en le signalant ;
+   - **repartir d'un dépôt neuf** : l'utilisateur crée lui-même un dépôt vide (`owner/linear-test-2`…)
+     et te le donne ; tu ne crées jamais de dépôt.
+   Tout ce que tu as écrit sur GitHub va dans la section « Écritures » du rapport.
 2. **Lancer** : `powershell -NoProfile -ExecutionPolicy Bypass -File .claude/skills/tester-cadence/scripts/lancer.ps1 -Reinitialiser`
-   (en arrière-plan ; la première compilation prend plusieurs minutes). Attendre « PRÊT ».
+   (en arrière-plan ; compilation : ~30 s si rien n'a changé, 5 min ou plus sinon ; un point
+   d'avancement par minute). Attendre « PRÊT ». En cas d'« ÉCHEC », le script affiche les erreurs
+   de compilation : c'est un constat bloquant, pas à corriger pendant la recette.
+   - L'instance ne se recompile **pas** quand `src-tauri` change (`--no-watch`) : un autre agent
+     qui modifie le Rust ne la redémarre pas en pleine recette. `-Surveiller` rétablit le
+     rechargement. Le front (Vite) se recharge toujours à chaud.
+   - Journal horodaté (compilation, Vite, traces `cadence_lib` en debug : plugins, serveurs de
+     plugin, sessions d'IA, passerelle) : `%TEMP%\cadence-qa.log` ; `-RustLog "<filtre>"` pour
+     l'ajuster.
+   - En arrière-plan dès le début : `cdp.mjs console --ecouter` (tampon des erreurs du front).
 3. **Parcourir** pas à pas. À chaque étape :
    - `node .claude/skills/tester-cadence/scripts/cdp.mjs voir` puis agir (`clic "#12"`, `saisir`…) ;
    - `capture captures/NN-etape.png` avant/après les étapes clés ;
    - noter ce que l'utilisateur **attendrait** avant de cliquer, puis comparer à ce qui arrive ;
-   - après une action longue (IA, sync GitHub) : `attendre "<texte>" 120`, puis vérifier le résultat
-     réel (`gh issue view`, `gh pr view` en lecture) ;
-   - `console` de temps en temps pour les erreurs du front.
+   - après une action longue (IA, sync GitHub) : `attendre "<texte>" 120` (ou `--absent` pour un
+     « En cours… » qui doit partir), puis vérifier le résultat réel (`gh issue view`, `gh pr view`
+     en lecture) ;
+   - **suivre une exécution de fond** comme un utilisateur : revenir à la vue qui la montre (vue du
+     sprint, conversation du sprint), `attendre` sa fin, puis contrôler le résultat ;
+   - `console` de temps en temps pour les erreurs du front (app et plugins).
 4. **Constater** : pour chaque problème, une capture **annotée** :
    `capture captures/P03.png --cadre "#12" --note "Aucun bouton pour relire depuis le kanban"`
-   (`--cadre x,y,l,h` pour une zone sans élément ; plusieurs `--cadre` possibles).
+   (`--cadre x,y,l,h` pour une zone sans élément, `--cadre "<texte>"` pour un élément par son
+   libellé ; plusieurs `--cadre` possibles ; l'étiquette se place d'elle-même sans masquer le cadre).
 5. **Arrêter** : `scripts/arreter.ps1` (garder les données pour reproduire ; `-Effacer` sinon).
+   Il arrête tout l'arbre lancé par `lancer.ps1`, jamais l'app de l'utilisateur ni le port 1420.
 6. **Rapport** puis bilan à l'utilisateur (voir plus bas). Proposer les corrections, par lots.
 
 ## Parcours
@@ -92,11 +121,40 @@ Adapter à ce qui existe dans la version testée ; un parcours = un récit d'uti
 - **Maquettes** : écart visible avec la page « Cadence 2 » du canvas (artifact
   4fX3USQ4tZEKxFxwaWoDpj) : mise en page, tailles, couleurs (tokens), icônes.
 - **Robustesse visuelle** : textes longs, chemins, commandes ; rien ne déborde ni n'est coupé ;
-  fenêtre étroite (`taille 1100 760`) ; états vides, chargement, erreur, hors ligne.
+  fenêtre étroite (`taille 1100 760`, puis `taille max`) ; états vides, chargement, erreur, hors ligne.
 - **Sécurité perçue** : action irréversible sans confirmation (fusion, suppression) ; écriture
   GitHub sans que l'utilisateur le sache.
 - **Langue** : tout en français, pas de clé technique ni d'anglais brut affiché.
 - **Performance ressentie** : attente > 2 s sans indicateur, écran figé.
+
+## Pilote (`scripts/cdp.mjs`)
+
+`node .claude/skills/tester-cadence/scripts/cdp.mjs <commande>` (détail en tête du fichier). Il
+voit la page de Cadence (« app ») **et les iframes des plugins** (« plugin <id> », hors
+processus) ; les coordonnées sont celles de la fenêtre, pour les deux.
+
+| Commande | Effet |
+| --- | --- |
+| `voir [--tout] [--cadre app\|plugin\|<id>]` | éléments cliquables **à l'écran**, numérotés ; hors écran et recouverts (modale) seulement comptés, `--tout` les liste |
+| `clic <#n\|texte> [rang] [--cadre …]` | amène l'élément dans la vue puis vrai clic souris ; texte : exact > début > inclusion, plugin affiché avant l'app ; signale les autres correspondances |
+| `saisir <#n\|texte> <valeur>` | remplace le contenu d'un champ ; sur un `<select>`, choisit l'option par libellé |
+| `cocher <#n\|texte> [oui\|non]` | case, radio, interrupteur (ne clique que si l'état doit changer) |
+| `defiler <#n\|texte\|haut\|bas\|+px\|-px> [--cadre …]` | amène un élément au centre, ou fait défiler la zone principale du cadre actif (le plugin s'il est affiché) |
+| `taper <texte>`, `touche <Enter\|Escape\|ctrl+a…> [n]` | clavier, là où est le focus (y compris dans un plugin) |
+| `attendre <texte> [s] [--absent] [--cadre …]` | attend qu'un texte apparaisse ou parte (code de sortie 1 sinon) |
+| `texte [max] [--cadre …] [--delai s]` | texte visible par cadre ; délai par cadre (5 s), un cadre figé est signalé « illisible » |
+| `capture <f.png> [--cadre #n\|texte\|x,y,l,h]… [--note …]` | capture annotée ; l'étiquette va dessous, sinon dessus, sinon à côté, sans couvrir le cadre |
+| `console [--effacer]` / `console --ecouter [s]` | erreurs depuis le chargement de chaque cadre (relecture CDP + collecteur injecté) ; écoute continue vers `%TEMP%\cadence-qa-pilote\console.log` |
+| `taille [<l> <h>\|max]` | redimensionne la vraie fenêtre (Win32) pour une zone de rendu de l×h px CSS ; durable ; `taille max` pour revenir |
+| `eval <expr> [--cadre …]` | diagnostic seulement, jamais pour faire avancer le parcours |
+
+Pièges : relancer `voir` après chaque changement d'écran (un `#n` périmé est retrouvé par son
+libellé s'il est unique, sinon erreur) ; juste après une transition, `voir` peut être vide : le
+relancer. Si un autre agent modifie le front pendant la recette, Vite recharge la page (et les
+iframes) : écran vide quelques secondes, retour à l'écran d'accueil, état perdu. Ce n'est pas un
+constat ; attendre, relancer `voir`, reprendre l'étape. Une liste déroulante maison (`role=combobox`) se pilote par `clic` puis `clic` sur
+l'option. L'état du pilote (numérotation, tampon console) vit dans `%TEMP%\cadence-qa-pilote`,
+jamais dans le dépôt.
 
 ## Rapport
 
@@ -106,7 +164,8 @@ Adapter à ce qui existe dans la version testée ; un parcours = un récit d'uti
 # Recette <parcours> — <date>
 
 Version : Cadence <x.y.z> (<branche>@<commit>), plugins <source + versions>, IA <laquelle>,
-dépôt bac à sable <owner/name>. Durée, nombre d'exécutions d'IA lancées.
+dépôt bac à sable <owner/name> (état de départ : sprint en cours, milestones, issues ouvertes).
+Durée, nombre d'exécutions d'IA (tours) par IA.
 
 ## Résumé
 <3 phrases : ce qui marche, les 3 problèmes les plus gênants.>
@@ -126,6 +185,12 @@ dépôt bac à sable <owner/name>. Durée, nombre d'exécutions d'IA lancées.
 
 ## Ce qui fonctionne
 <liste courte, pour ne pas le casser.>
+
+## Écritures sur <owner/name>
+<issues, PR, milestones, branches créés ou modifiés, et leur état final.>
+
+## Outil de recette
+<ce qui a gêné dans le pilote ou ce skill, pour l'améliorer.>
 ```
 
 Gravités : **bloquant** (parcours impossible), **majeur** (contournable mais pénible, ou donnée
