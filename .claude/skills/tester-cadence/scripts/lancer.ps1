@@ -33,10 +33,14 @@ if (Get-NetTCPConnection -LocalPort 1439 -State Listen -ErrorAction SilentlyCont
     Write-Host "ÉCHEC : le port 1439 (Vite de l'instance de test) est déjà pris. Lancez arreter.ps1."
     exit 1
 }
+. "$PSScriptRoot\trousseau.ps1"
 if ($Reinitialiser) {
     foreach ($d in @("$env:APPDATA\$id", "$env:LOCALAPPDATA\$id")) {
         if (Test-Path $d) { Remove-Item -Recurse -Force $d; Write-Host "Données de test effacées : $d" }
     }
+    # Trousseau de l'instance de test (jeton GitHub, secrets des plugins) : sans cela, la
+    # connexion de la recette précédente est reprise et l'onboarding n'est jamais « à neuf ».
+    Clear-TrousseauQa -Service $id
 }
 
 # Configuration Tauri de l'instance de test, passée par fichier (pas de JSON sur la ligne de commande).

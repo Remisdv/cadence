@@ -66,6 +66,9 @@ Sans argument : demande le parcours (QCM court) puis lance-le.
      et te le donne ; tu ne crées jamais de dépôt.
    Tout ce que tu as écrit sur GitHub va dans la section « Écritures » du rapport.
 2. **Lancer** : `powershell -NoProfile -ExecutionPolicy Bypass -File .claude/skills/tester-cadence/scripts/lancer.ps1 -Reinitialiser`
+   (`-Reinitialiser` efface les données **et le trousseau** de l'instance de test : entrées
+   `<compte>.app.cadence.desktop.qa` du Gestionnaire d'identifiants, via `scripts/trousseau.ps1` ;
+   jamais celles de `app.cadence.desktop`)
    (en arrière-plan ; compilation : ~30 s si rien n'a changé, 5 min ou plus sinon ; un point
    d'avancement par minute). Attendre « PRÊT ». En cas d'« ÉCHEC », le script affiche les erreurs
    de compilation : c'est un constat bloquant, pas à corriger pendant la recette.
