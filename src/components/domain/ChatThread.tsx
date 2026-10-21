@@ -737,6 +737,7 @@ export function ApprovalCard({
         {answered && (
           <Badge tone={item.decision === "deny" ? "red" : "green"}>
             {decisionLabel[item.decision!]}
+            {item.decision === "allow-session" && item.scope ? ` · ${item.scope}` : ""}
           </Badge>
         )}
       </div>
@@ -754,6 +755,11 @@ export function ApprovalCard({
           <Button
             variant="secondary"
             size="sm"
+            title={
+              item.scope
+                ? `Plus de demande pour les ${item.scope} dans cette conversation`
+                : "Plus de demande pour ce type d'action dans cette conversation"
+            }
             onClick={() => onApprove?.(item.key, "allow-session")}
           >
             Autoriser pour la session
@@ -766,6 +772,9 @@ export function ApprovalCard({
           >
             Refuser
           </Button>
+          {item.scope && (
+            <span className="text-caption text-tx3">Pour la session : {item.scope}</span>
+          )}
         </div>
       )}
     </div>

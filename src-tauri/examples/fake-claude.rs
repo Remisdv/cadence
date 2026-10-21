@@ -4,6 +4,9 @@
 //! Selon le message reçu :
 //! - par défaut : répond « écho : <message> » (deltas mot à mot, message complet, résultat) ;
 //! - « approbation » : demande `can_use_tool` (Write) et répond selon la décision ;
+//! - « commandes a ;; b ;; c » : une demande `can_use_tool` (Bash) par commande, l'une après
+//!   l'autre, et répond « commandes : autorisé | refusé | … [règles : git:* …] » (règles
+//!   `<programme>:*` reçues dans `updatedPermissions`) ;
 //! - « question » : pose deux questions `AskUserQuestion` (par `can_use_tool`, s'il y a un
 //!   `--permission-prompt-tool`) et répond « réponses (2 questions) : Quel format ?=… | … » ou
 //!   « question refusée : <message> » ;
@@ -177,6 +180,39 @@ fn main() {
                         format!("question refusée : {}", response["message"].as_str().unwrap_or_default())
                     };
                     session.text(&reply);
+                    session.result(false);
+                    continue;
+                }
+                if let Some(list) = text.strip_prefix("commandes ") {
+                    // Une demande `can_use_tool` (Bash) par commande, l'une après l'autre.
+                    let mut decisions = Vec::new();
+                    let mut rules = Vec::new();
+                    for (n, command) in list.split(" ;; ").enumerate() {
+                        let request = format!("bash-{}-{n}", session.turn);
+                        emit(json!({ "type": "control_request", "request_id": request, "request": {
+                            "subtype": "can_use_tool", "tool_name": "Bash", "display_name": "Bash",
+                            "input": { "command": command },
+                            "permission_suggestions": [{ "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": command }], "behavior": "allow", "destination": "session" }],
+                            "tool_use_id": format!("toolu_bash_{n}") } }));
+                        let answer = loop {
+                            match rx.recv() {
+                                Ok(m) if m["type"] == "control_response" && m["response"]["request_id"] == request.as_str() => break m,
+                                Ok(_) => continue,
+                                Err(_) => return,
+                            }
+                        };
+                        let response = &answer["response"]["response"];
+                        decisions.push(if response["behavior"] == "allow" { "autorisé" } else { "refusé" });
+                        for update in response["updatedPermissions"].as_array().into_iter().flatten() {
+                            for rule in update["rules"].as_array().into_iter().flatten() {
+                                if let Some(content) = rule["ruleContent"].as_str().filter(|c| c.ends_with(":*")) {
+                                    rules.push(content.to_string());
+                                }
+                            }
+                        }
+                    }
+                    session.start_text();
+                    session.text(&format!("commandes : {} [règles : {}]", decisions.join(" | "), rules.join(" ")));
                     session.result(false);
                     continue;
                 }

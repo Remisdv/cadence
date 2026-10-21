@@ -92,7 +92,10 @@ export function parseMarkdown(source: string, { breaks = false } = {}): Block[] 
   return blocks;
 }
 
-/** `**gras**`, `*italique*`, `` `code` ``, `[texte](url)` ; le reste est du texte. */
+/**
+ * `**gras**`, `*italique*`, `` `code` ``, `[texte](url)` ; le reste est du texte. Le gras et
+ * l'italique se lisent à leur tour (`` **`owner/name`** `` : code en gras, sans accents graves).
+ */
 type LinkHandler = (href: string) => boolean;
 
 function inlineWith(text: string, onLink?: LinkHandler): ReactNode[] {
@@ -112,10 +115,10 @@ function inlineWith(text: string, onLink?: LinkHandler): ReactNode[] {
     else if (t.startsWith("**"))
       out.push(
         <strong key={key} className="font-semibold text-tx">
-          {t.slice(2, -2)}
+          {inlineWith(t.slice(2, -2), onLink)}
         </strong>,
       );
-    else if (t.startsWith("*")) out.push(<em key={key}>{t.slice(1, -1)}</em>);
+    else if (t.startsWith("*")) out.push(<em key={key}>{inlineWith(t.slice(1, -1), onLink)}</em>);
     else {
       const [, label, href] = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(t)!;
       out.push(

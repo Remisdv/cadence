@@ -153,7 +153,14 @@ impl CodexStream {
                         Vec::new()
                     },
                 }),
-                CodexItem::Event(AiEvent::ApprovalRequested { request: request.clone(), kind, title, detail: params.clone() }),
+                CodexItem::Event(AiEvent::ApprovalRequested {
+                    request: request.clone(),
+                    kind,
+                    title,
+                    detail: params.clone(),
+                    tool: None,
+                    scope: None,
+                }),
             ]
         };
         match method {

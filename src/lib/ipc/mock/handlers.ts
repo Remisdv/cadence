@@ -35,6 +35,7 @@ import {
   answerApproval,
   answerQuestion,
   listMockChats,
+  allowPendingApprovals,
   mockActionGroup,
   mockChats,
   mockContexts,
@@ -492,7 +493,7 @@ const handlers: Handlers = {
       state.settings.devPlugins = state.settings.devPlugins.filter((d) => baseName(d) !== id);
     return null;
   },
-  chat_sessions: ({ group }) => listMockChats(state.chats, group ?? null),
+  chat_sessions: ({ group, all }) => listMockChats(state.chats, group ?? null, all ?? false),
   plugin_conversations: ({ plugin, group }) => mockConversations(state.chats, plugin, group),
   plugin_conversation_get: ({ plugin, id }) =>
     mockConversation(state.chats, plugin, id) ??
@@ -506,7 +507,8 @@ const handlers: Handlers = {
     const text = input.text.trim();
     if (!text) fail("chat_send", "Le message est vide.");
     const ai = input.ai ?? state.settings.defaultAi ?? "claude-code";
-    const id = input.session ?? newChat(state.chats, text, ai, input.permissions).id;
+    const origin = input.plugin ? `plugin:${input.plugin}` : "user";
+    const id = input.session ?? newChat(state.chats, text, ai, input.permissions, origin).id;
     const chat = state.chats.get(id);
     if (!chat) fail("chat_send", `Conversation « ${id} » introuvable.`);
     if (chat.session.state === "running" || chat.session.state === "waiting-approval")
@@ -594,6 +596,7 @@ const handlers: Handlers = {
     const chat = state.chats.get(session);
     if (!chat) fail("chat_set_permissions", `Conversation « ${session} » introuvable.`);
     chat.session = { ...chat.session, permissions };
+    if (permissions === "full") allowPendingApprovals(session);
     return chat.session;
   },
   chat_session_delete: ({ id }) => {

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { AiEvent, AiQuestion, ChatEventRow } from "@/lib/types";
+import type { AiEvent, AiQuestion, ChatEventRow, ChatSessionRow } from "@/lib/types";
 import {
   activitySummary,
   buildThread,
+  chatBarSections,
+  contextPlugin,
+  conversationOriginLabel,
+  pluginConversations,
   compactArgs,
   composeAnswer,
   conversationGroup,
@@ -292,5 +296,98 @@ describe("activité d'un tour", () => {
       "1 fichier modifié",
     );
     expect(activitySummary([])).toBe("");
+  });
+});
+
+describe("colonne du chat et barre du plugin (recette du 21/10)", () => {
+  const now = new Date("2026-10-21T12:00:00");
+  const row = (id: string, extra: Partial<ChatSessionRow> = {}): ChatSessionRow => ({
+    id,
+    title: id,
+    ai: "claude-code",
+    model: null,
+    origin: "user",
+    mode: "chat",
+    permissions: "ask",
+    state: "idle",
+    createdAt: "2026-10-21T09:00:00",
+    updatedAt: "2026-10-21T09:00:00",
+    group: null,
+    hidden: false,
+    ...extra,
+  });
+  const sprint = { id: "gestion-projet:sprint:o/n:3", label: "Sprint 0.2.0 · o/n" };
+  const all = [
+    row("libre"),
+    row("Relire et valider", {
+      hidden: true,
+      group: sprint,
+      origin: "action:gestion-projet/relire",
+    }),
+    row("Développer le sprint", {
+      hidden: true,
+      group: sprint,
+      origin: "action:gestion-projet/developper-sprint",
+      state: "waiting-approval",
+    }),
+    row("fond", { mode: "background" }),
+  ];
+  const titles = (sections: ReturnType<typeof chatBarSections<ChatSessionRow>>) =>
+    sections.map((s) => `${s.title}: ${s.rows.map((r) => r.id).join(", ")}`);
+
+  it("garde les conversations de sprint hors de la liste, sauf ouverte ou en attente", () => {
+    expect(titles(chatBarSections(all, "", null, now))).toEqual([
+      "Rattachées: Développer le sprint",
+      "En fond: fond",
+      "Aujourd'hui: libre",
+    ]);
+    const opened = chatBarSections(all, "", "Relire et valider", now);
+    expect(opened[0]!.attached).toBe(true);
+    expect(opened[0]!.rows.map((r) => r.id)).toEqual(["Relire et valider", "Développer le sprint"]);
+  });
+
+  it("la recherche trouve les conversations de sprint par titre ou nom du sprint (P18)", () => {
+    expect(titles(chatBarSections(all, "relire", null, now))).toEqual([
+      "Rattachées: Relire et valider",
+    ]);
+    expect(chatBarSections(all, "sprint 0.2.0", null, now)[0]!.rows).toHaveLength(2);
+    expect(chatBarSections(all, "introuvable", null, now)).toEqual([]);
+  });
+
+  it("liste les conversations non cachées d'un plugin et leur origine (P19)", () => {
+    const rows = [
+      row("a", { origin: "action:gestion-projet/extraire-issues" }),
+      row("b", { origin: "plugin:gestion-projet" }),
+      row("c", { origin: "action:gestion-projet/relire", hidden: true, group: sprint }),
+      row("d", { origin: "plugin:documents" }),
+      row("e"),
+    ];
+    expect(pluginConversations(rows, "gestion-projet").map((r) => r.id)).toEqual(["a", "b"]);
+    expect(contextPlugin("plugin:gestion-projet")).toBe("gestion-projet");
+    expect(contextPlugin("action:documents/fiche")).toBe("documents");
+    expect(contextPlugin("user")).toBeNull();
+    const plugin = { actions: [{ id: "extraire-issues", label: "Créer des issues" }] };
+    expect(conversationOriginLabel("action:gestion-projet/extraire-issues", plugin)).toBe(
+      "Créer des issues",
+    );
+    expect(conversationOriginLabel("action:gestion-projet/autre", plugin)).toBe("autre");
+    expect(conversationOriginLabel("plugin:gestion-projet", plugin)).toBe("Conversation libre");
+  });
+
+  it("garde la portée de « pour la session » sur la carte d'approbation (P12)", () => {
+    const items = buildThread(
+      rows([
+        {
+          type: "approval-requested",
+          request: "r1",
+          kind: "command",
+          title: "Bash : git status",
+          detail: { command: "git status" },
+          tool: "Bash",
+          scope: "commande git",
+        },
+      ]),
+    );
+    expect(items[0]).toMatchObject({ kind: "approval", scope: "commande git", decision: null });
   });
 });

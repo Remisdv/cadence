@@ -330,9 +330,13 @@ export function useRestartPlugin() {
 
 /* ---------- Chat du cœur ---------- */
 
-/** Conversations, la plus récemment active d'abord. */
+/**
+ * Conversations, la plus récemment active d'abord, cachées comprises (rangées dans un groupe,
+ * un sprint) : la liste du chat les écarte (`globalConversations`), la recherche et l'alerte
+ * « attend votre réponse » les voient.
+ */
 export const useChatSessions = () =>
-  useQuery({ queryKey: keys.chatSessions(), queryFn: () => call("chat_sessions", {}) });
+  useQuery({ queryKey: keys.chatSessions(), queryFn: () => call("chat_sessions", { all: true }) });
 
 /** Historique d'une conversation, tenu à jour par `chat://event` (useBackendEvents). */
 export const useChatSession = (id: string | null) =>

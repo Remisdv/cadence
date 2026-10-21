@@ -76,12 +76,22 @@ export function mockActionGroup(
   };
 }
 
-/** `chat_sessions` : sans les cachées, sauf avec un filtre `group` explicite (id préfixé). */
-export function listMockChats(chats: Chats, group: string | null = null): ChatSessionRow[] {
+/**
+ * `chat_sessions` : sans les cachées, sauf avec un filtre `group` explicite (id préfixé) ou
+ * `all`.
+ */
+export function listMockChats(
+  chats: Chats,
+  group: string | null = null,
+  all = false,
+): ChatSessionRow[] {
   const rows = [...chats.values()].map((c) => c.session);
-  return (group ? rows.filter((s) => s.group?.id === group) : globalConversations(rows)).sort(
-    (a, b) => b.updatedAt.localeCompare(a.updatedAt),
-  );
+  const listed = group
+    ? rows.filter((s) => s.group?.id === group)
+    : all
+      ? rows
+      : globalConversations(rows);
+  return listed.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 const ofPlugin = (plugin: string, row: ChatSessionRow) =>
@@ -335,7 +345,10 @@ function delta(chats: Chats, id: string, message: string, text: string) {
   });
 }
 
-const pendingApprovals = new Map<string, (decision: ApprovalDecision) => void>();
+const pendingApprovals = new Map<
+  string,
+  { session: string; resolve: (decision: ApprovalDecision) => void }
+>();
 const interrupts = new Set<string>();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -379,10 +392,12 @@ export async function simulateTurn(chats: Chats, id: string, text: string) {
       kind: "command",
       title: "Bash : pnpm test",
       detail: { command: "pnpm test" },
+      tool: "Bash",
+      scope: "commande pnpm",
     });
     setState(chats, id, "waiting-approval");
     const decision = await new Promise<ApprovalDecision>((resolve) =>
-      pendingApprovals.set(request, resolve),
+      pendingApprovals.set(request, { session: id, resolve }),
     );
     record(chats, id, { type: "approval-answered", request, decision });
     setState(chats, id, "running");
@@ -553,11 +568,17 @@ export function answerQuestion(request: string, answers: QuestionAnswer[]): stri
 }
 
 export function answerApproval(request: string, decision: ApprovalDecision): boolean {
-  const resolve = pendingApprovals.get(request);
-  if (!resolve) return false;
+  const pending = pendingApprovals.get(request);
+  if (!pending) return false;
   pendingApprovals.delete(request);
-  resolve(decision);
+  pending.resolve(decision);
   return true;
+}
+
+/** Mode « Auto » choisi pendant un tour : les demandes en attente sont acceptées (comme le back). */
+export function allowPendingApprovals(session: string) {
+  for (const [request, pending] of pendingApprovals)
+    if (pending.session === session) answerApproval(request, "allow");
 }
 
 export function requestInterrupt(id: string) {
@@ -569,6 +590,7 @@ export function newChat(
   text: string,
   ai: AiId = "claude-code",
   permissions: ChatPermissions = "ask",
+  origin = "user",
 ): ChatSessionRow {
   const line =
     text
@@ -579,6 +601,7 @@ export function newChat(
     `c${Date.now().toString(36)}`,
     line.length > 60 ? `${line.slice(0, 59)}…` : line,
     0,
+    origin,
   );
   row.ai = ai;
   row.permissions = permissions;

@@ -2,17 +2,16 @@
  * Colonne des conversations du chat global (V2-Chat.dc.html) : recherche, conversations par
  * jour avec leur puce de contexte (« Global · tous les plugins », ou le plugin d'où une action
  * l'a ouverte), nouvelle conversation.
+ *
+ * Les conversations rattachées à un groupe (un sprint) restent dans la vue de leur plugin ; la
+ * colonne ne les montre (section « Rattachées ») que si elles sont ouvertes, attendent votre
+ * réponse ou répondent à la recherche.
  */
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/icons/Icon";
 import { NeutralTile, PluginTile } from "@/components/domain/PluginTile";
 import { Spinner } from "@/components/ui/Spinner";
-import {
-  conversationGroup,
-  conversationTime,
-  globalConversations,
-  originPlugin,
-} from "@/lib/domain/chat";
+import { chatBarSections, contextPlugin, conversationTime } from "@/lib/domain/chat";
 import { useChatSessions, usePlugins } from "@/lib/query/queries";
 import type { ChatSessionRow, InstalledPluginView } from "@/lib/types";
 import {
@@ -23,8 +22,6 @@ import {
   ContextBarSection,
   ConversationItem,
 } from "./ContextBar";
-
-const GROUPS = ["Aujourd'hui", "Hier", "Cette semaine", "Plus ancien"];
 
 export function ChatBar({
   active,
@@ -39,24 +36,10 @@ export function ChatBar({
   const plugins = usePlugins().data ?? [];
   const [query, setQuery] = useState("");
 
-  const groups = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    // Les conversations de groupe (un sprint) restent dans la vue de leur plugin.
-    const rows = globalConversations(sessions.data ?? []).filter(
-      (s) => !q || s.title.toLowerCase().includes(q),
-    );
-    const now = new Date();
-    // Exécutions de fond des actions : leur propre groupe, en tête (panneau Activité).
-    const background = rows.filter((s) => s.mode === "background");
-    const chats = rows.filter((s) => s.mode !== "background");
-    return [
-      { title: "En fond", rows: background },
-      ...GROUPS.map((title) => ({
-        title,
-        rows: chats.filter((s) => conversationGroup(s.updatedAt, now) === title),
-      })),
-    ].filter((g) => g.rows.length > 0);
-  }, [sessions.data, query]);
+  const groups = useMemo(
+    () => chatBarSections(sessions.data ?? [], query, active ?? null),
+    [sessions.data, query, active],
+  );
 
   return (
     <ContextBar
@@ -79,7 +62,7 @@ export function ChatBar({
       footer={
         <ContextBarHint>
           Les conversations ouvertes depuis un plugin apparaissent aussi ici, avec leur puce de
-          contexte.
+          contexte. Celles d'un sprint restent dans sa vue : la recherche les retrouve.
         </ContextBarHint>
       }
     >
@@ -115,7 +98,13 @@ export function ChatBar({
               time={conversationTime(s.updatedAt)}
               active={s.id === active}
               onClick={() => onSelect(s.id)}
-              context={<SessionContext session={s} plugins={plugins} />}
+              context={
+                <SessionContext
+                  session={s}
+                  plugins={plugins}
+                  group={group.attached ? s.group?.label : undefined}
+                />
+              }
             />
           ))}
         </ContextBarSection>
@@ -128,11 +117,14 @@ export function ChatBar({
 export function SessionContext({
   session,
   plugins,
+  group,
 }: {
   session: Pick<ChatSessionRow, "origin" | "state">;
   plugins: InstalledPluginView[];
+  /** Groupe d'une conversation rattachée (« Sprint 0.2.0 · owner/name »), montré à la place. */
+  group?: string;
 }) {
-  const plugin = plugins.find((p) => p.id === originPlugin(session.origin));
+  const plugin = plugins.find((p) => p.id === contextPlugin(session.origin));
   return (
     <>
       {plugin ? (
@@ -140,7 +132,10 @@ export function SessionContext({
       ) : (
         <NeutralTile icon="chat" size={13} />
       )}
-      <span className="truncate">{plugin ? plugin.name : "Global · tous les plugins"}</span>
+      {group && <Icon name="sprint" size={11} className="shrink-0" />}
+      <span className="truncate">
+        {group ?? (plugin ? plugin.name : "Global · tous les plugins")}
+      </span>
       {(session.state === "running" || session.state === "waiting-approval") && (
         <span className="ml-auto flex shrink-0 text-clay">
           {session.state === "running" ? <Spinner size={11} /> : <Icon name="warning" size={11} />}

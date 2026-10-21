@@ -10,7 +10,9 @@ export type PluginProcessView = { plugin: string, state: ProcessState, pid: numb
  */
 restarts: number, 
 /**
- * Outils annoncés par `tools/list` (0 tant que le serveur n'est pas prêt).
+ * Outils annoncés par `tools/list` et visibles des IA (0 tant que le serveur n'est pas
+ * prêt). Les outils réservés à l'interface du plugin (`cadence/visibility = "ui"`) ne
+ * comptent pas : même nombre que la fiche du catalogue.
  */
 tools: number, 
 /**

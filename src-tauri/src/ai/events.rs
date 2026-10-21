@@ -248,6 +248,15 @@ pub enum AiEvent {
         title: String,
         #[ts(type = "unknown")]
         detail: Value,
+        /// Outil de la CLI (`Bash`, `WebFetch`, `mcp__…`), quand elle le donne.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        tool: Option<String>,
+        /// Ce que couvrirait « Autoriser pour la session » (« commandes git, python »), écrit
+        /// par Cadence.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        scope: Option<String>,
     },
     /// Réponse donnée à une demande d'approbation (écrit par Cadence).
     ApprovalAnswered { request: String, decision: ApprovalDecision },

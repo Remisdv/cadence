@@ -69,7 +69,7 @@ async fn service(dir: PathBuf, tweak: impl FnOnce(&mut ChatConfig)) -> Fixture {
 
 impl Fixture {
     async fn send(&self, session: Option<&str>, text: &str) -> String {
-        let input = ChatSendInput { session: session.map(str::to_string), text: text.into(), ai: None, attachments: None, permissions: None };
+        let input = ChatSendInput { session: session.map(str::to_string), text: text.into(), ai: None, attachments: None, permissions: None, plugin: None };
         self.chat.send(input).await.unwrap().session
     }
 
@@ -161,6 +161,87 @@ async fn relays_approvals_both_ways() {
     f.chat.shutdown().await;
 }
 
+impl Fixture {
+    /// Demandes d'accord encore sans réponse : (requête, portée de « pour la session »).
+    async fn open_approvals(&self, id: &str) -> Vec<(String, Option<String>)> {
+        let events = self.events(id).await;
+        let answered: Vec<String> =
+            events.iter().filter_map(|e| if let AiEvent::ApprovalAnswered { request, .. } = e { Some(request.clone()) } else { None }).collect();
+        events
+            .into_iter()
+            .filter_map(|e| match e {
+                AiEvent::ApprovalRequested { request, scope, .. } if !answered.contains(&request) => Some((request, scope)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    async fn asked(&self, id: &str) -> usize {
+        self.events(id).await.iter().filter(|e| matches!(e, AiEvent::ApprovalRequested { .. })).count()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn allows_a_command_family_for_the_rest_of_the_session() {
+    let f = fixture("session-rules", |_| {}).await;
+    let id = f.send(None, "commandes cd /r; git fetch origin ;; git -C /r log --oneline ;; python3 a.py ;; git status").await;
+    f.wait(&id, ChatState::WaitingApproval).await;
+    let open = f.open_approvals(&id).await;
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].1.as_deref(), Some("commande git"), "portée affichée sous la demande");
+    f.chat.approve(&id, &open[0].0, ApprovalDecision::AllowSession).await.unwrap();
+
+    // `git log` passe d'office ; `python3` n'est pas couvert : nouvelle demande.
+    f.wait(&id, ChatState::WaitingApproval).await;
+    let open = f.open_approvals(&id).await;
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].1.as_deref(), Some("commande python3"));
+    f.chat.approve(&id, &open[0].0, ApprovalDecision::Allow).await.unwrap();
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await, ["commandes : autorisé | autorisé | autorisé | autorisé [règles : git:*]"]);
+    assert_eq!(f.asked(&id).await, 2, "git log et git status n'ont pas de carte");
+
+    // Tour suivant : l'accord tient toujours ; python3 (accordé une fois) redemande.
+    f.send(Some(&id), "commandes git push origin main ;; python3 b.py").await;
+    f.wait(&id, ChatState::WaitingApproval).await;
+    assert_eq!(f.asked(&id).await, 3);
+    let open = f.open_approvals(&id).await;
+    f.chat.approve(&id, &open[0].0, ApprovalDecision::Deny).await.unwrap();
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "commandes : autorisé | refusé [règles : ]");
+
+    // Une autre conversation n'hérite de rien.
+    let other = f.send(None, "commandes git status").await;
+    f.wait(&other, ChatState::WaitingApproval).await;
+    let open = f.open_approvals(&other).await;
+    f.chat.approve(&other, &open[0].0, ApprovalDecision::Allow).await.unwrap();
+    f.wait(&other, ChatState::Idle).await;
+    f.chat.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn auto_chosen_during_a_turn_accepts_the_pending_and_following_requests() {
+    let f = fixture("auto-pending", |_| {}).await;
+    let id = f.send(None, "commandes rm -rf build ;; npm test ;; curl https://exemple.test").await;
+    f.wait(&id, ChatState::WaitingApproval).await;
+    // « Édition auto » n'accepte que les modifications de fichiers : la commande attend toujours.
+    f.chat.set_permissions(&id, Permissions::AutoEdit).await.unwrap();
+    assert_eq!(f.chat.detail(&id).await.unwrap().session.state, ChatState::WaitingApproval);
+    assert_eq!(f.open_approvals(&id).await.len(), 1);
+
+    let row = f.chat.set_permissions(&id, Permissions::Full).await.unwrap();
+    assert_eq!(row.permissions, Permissions::Full);
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await, ["commandes : autorisé | autorisé | autorisé [règles : ]"]);
+    assert_eq!(f.asked(&id).await, 1, "les demandes suivantes du tour n'ont pas de carte");
+    assert!(f.open_approvals(&id).await.is_empty(), "la demande en attente est acceptée et marquée");
+    assert!(
+        f.events(&id).await.iter().any(|e| matches!(e, AiEvent::ApprovalAnswered { decision: ApprovalDecision::Allow, .. })),
+        "réponse enregistrée pour la carte"
+    );
+    f.chat.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn interrupts_a_turn_and_survives_a_crash() {
     let f = fixture("interrupt", |_| {}).await;
@@ -197,21 +278,21 @@ async fn closes_idle_processes_caps_them_and_deletes_conversations() {
 
     assert_eq!(f.chat.close_idle().await.len(), 1);
     assert_eq!(f.chat.live_count().await, 0);
-    assert_eq!(f.chat.sessions(None).await.unwrap().len(), 2, "les conversations restent");
+    assert_eq!(f.chat.sessions(None, false).await.unwrap().len(), 2, "les conversations restent");
 
     assert!(f.dir.join("sessions").join(&a).is_dir());
     f.chat.delete(&a).await.unwrap();
     assert!(!f.dir.join("sessions").join(&a).exists(), "dossier de travail supprimé");
     assert!(f.chat.detail(&a).await.is_err());
     assert_eq!(f.chat.rename(&b, "Renommée").await.unwrap().title, "Renommée");
-    assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None, attachments: None, permissions: None }).await.is_err());
+    assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None, attachments: None, permissions: None, plugin: None }).await.is_err());
     f.chat.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn applies_a_new_mode_from_the_next_turn_by_resuming_the_session() {
     let f = fixture("modes", |_| {}).await;
-    let input = ChatSendInput { session: None, text: "mode".into(), ai: None, attachments: None, permissions: Some(Permissions::AutoEdit) };
+    let input = ChatSendInput { session: None, text: "mode".into(), ai: None, attachments: None, permissions: Some(Permissions::AutoEdit), plugin: None };
     let id = f.chat.send(input).await.unwrap().session;
     f.wait(&id, ChatState::Idle).await;
     assert_eq!(f.replies(&id).await, ["mode : acceptEdits"], "mode choisi à la création");
@@ -412,10 +493,12 @@ async fn keeps_group_conversations_out_of_the_global_chat_and_inside_their_plugi
     f.wait(&sprint, ChatState::Idle).await;
     f.wait(&free, ChatState::Idle).await;
 
-    let global: Vec<String> = f.chat.sessions(None).await.unwrap().into_iter().map(|s| s.id).collect();
+    let global: Vec<String> = f.chat.sessions(None, false).await.unwrap().into_iter().map(|s| s.id).collect();
     assert_eq!(global, std::slice::from_ref(&free), "conversation de groupe cachée du chat global");
-    let explicit = f.chat.sessions(Some("gestion-projet:sprint:o/n:3")).await.unwrap();
+    let explicit = f.chat.sessions(Some("gestion-projet:sprint:o/n:3"), false).await.unwrap();
     assert_eq!(explicit.len(), 1, "visible avec un filtre de groupe explicite");
+    let all: Vec<String> = f.chat.sessions(None, true).await.unwrap().into_iter().map(|s| s.id).collect();
+    assert!(all.contains(&sprint) && all.contains(&free), "toutes sur demande (recherche du chat)");
     assert!(f.chat.detail(&sprint).await.is_ok(), "elle s'ouvre quand même dans le chat");
 
     let listed = f.chat.conversations("gestion-projet", Some("sprint:o/n:3")).await.unwrap();
@@ -470,7 +553,7 @@ async fn asks_choice_questions_and_returns_the_answers_even_in_auto_mode() {
     let answer = |id: &str, answers: &[&str]| QuestionAnswer { id: id.into(), answers: answers.iter().map(|s| s.to_string()).collect() };
     // « Auto » (bypassPermissions) compris : la question est posée à l'utilisateur.
     for permissions in [Permissions::Ask, Permissions::Full] {
-        let input = ChatSendInput { session: None, text: "question".into(), ai: None, attachments: None, permissions: Some(permissions) };
+        let input = ChatSendInput { session: None, text: "question".into(), ai: None, attachments: None, permissions: Some(permissions), plugin: None };
         let id = f.chat.send(input).await.unwrap().session;
         f.wait(&id, ChatState::WaitingApproval).await;
         let (request, questions) = f

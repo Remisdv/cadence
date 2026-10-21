@@ -179,6 +179,7 @@ async fn ai_smoke_chat_calls_a_tool_then_resumes_after_a_restart() {
         ai: None,
         attachments: None,
         permissions: None,
+        plugin: None,
     };
     let id = chat.send(input).await.unwrap().session;
     assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle, "{:?}", chat.detail(&id).await.unwrap().events);
@@ -192,7 +193,7 @@ async fn ai_smoke_chat_calls_a_tool_then_resumes_after_a_restart() {
 
     // Nouveau service (redémarrage de l'app) : la conversation reprend la session native.
     let chat = chat_service(&dir, &gateway).await;
-    let follow = ChatSendInput { session: Some(id.clone()), text: "Quel mot as-tu envoyé à l'outil ? Réponds par ce mot seulement.".into(), ai: None, attachments: None, permissions: None };
+    let follow = ChatSendInput { session: Some(id.clone()), text: "Quel mot as-tu envoyé à l'outil ? Réponds par ce mot seulement.".into(), ai: None, attachments: None, permissions: None, plugin: None };
     chat.send(follow).await.unwrap();
     assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle);
     let last = chat.detail(&id).await.unwrap().events.into_iter().rev().find_map(|e| match e.event {
@@ -259,6 +260,7 @@ async fn ai_smoke_opencode_chat_calls_a_tool_then_resumes() {
         ai: Some(cadence_lib::app_settings::AiId::Opencode),
         attachments: None,
         permissions: None,
+        plugin: None,
     };
     let id = chat.send(input).await.unwrap().session;
     assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle, "{:?}", chat.detail(&id).await.unwrap().events);
@@ -272,7 +274,7 @@ async fn ai_smoke_opencode_chat_calls_a_tool_then_resumes() {
     chat.shutdown().await;
 
     let chat = chat_for(&dir, &gateway, cli).await;
-    let follow = ChatSendInput { session: Some(id.clone()), text: "Quel mot as-tu envoyé à l'outil ? Réponds par ce mot seulement.".into(), ai: None, attachments: None, permissions: None };
+    let follow = ChatSendInput { session: Some(id.clone()), text: "Quel mot as-tu envoyé à l'outil ? Réponds par ce mot seulement.".into(), ai: None, attachments: None, permissions: None, plugin: None };
     chat.send(follow).await.unwrap();
     assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle);
     let events: Vec<AiEvent> = chat.detail(&id).await.unwrap().events.into_iter().map(|e| e.event).collect();
@@ -337,6 +339,7 @@ async fn reads_a_granted_worktree(ai: cadence_lib::app_settings::AiId, cli: Path
         ai: Some(ai),
         attachments: None,
         permissions: None,
+        plugin: None,
     };
     let id = chat.send(input).await.unwrap().session;
     assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle, "{:?}", chat.detail(&id).await.unwrap().events);
@@ -389,6 +392,7 @@ async fn ai_smoke_codex_chat_calls_a_tool() {
         ai: Some(cadence_lib::app_settings::AiId::Codex),
         attachments: None,
         permissions: None,
+        plugin: None,
     };
     let id = chat.send(input).await.unwrap().session;
     assert_eq!(wait_idle(&chat, &id).await, ChatState::Idle, "{:?}", chat.detail(&id).await.unwrap().events);
@@ -414,7 +418,7 @@ async fn ai_smoke_codex_reports_a_missing_login() {
     unsafe { std::env::set_var("CODEX_HOME", dir.join("codex-home")) };
     let (host, gateway) = fake_gateway(&dir).await;
     let chat = chat_for(&dir, &gateway, cli).await;
-    let input = ChatSendInput { session: None, text: "Réponds OK".into(), ai: Some(cadence_lib::app_settings::AiId::Codex), attachments: None, permissions: None };
+    let input = ChatSendInput { session: None, text: "Réponds OK".into(), ai: Some(cadence_lib::app_settings::AiId::Codex), attachments: None, permissions: None, plugin: None };
     let id = chat.send(input).await.unwrap().session;
     assert_eq!(wait_idle(&chat, &id).await, ChatState::Failed);
     let events: Vec<AiEvent> = chat.detail(&id).await.unwrap().events.into_iter().map(|e| e.event).collect();

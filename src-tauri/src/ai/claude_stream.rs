@@ -21,6 +21,7 @@ use super::events::{
     AiErrorKind, AiEvent, AiQuestion, ApprovalDecision, ApprovalKind, FileChange, PlanItem, PlanStatus, QuestionAnswer,
     BACKGROUND_ANSWER, ToolSource, question_options, saturating_u32, truncate,
 };
+use super::session_rules;
 
 /// Ce qu'une ligne du flux demande.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,10 +47,32 @@ pub fn approval_response(pending: &PendingApproval, decision: ApprovalDecision) 
         ApprovalDecision::Deny => json!({ "behavior": "deny", "message": "Refusé par l'utilisateur dans Cadence." }),
         ApprovalDecision::Allow => json!({ "behavior": "allow", "updatedInput": pending.input }),
         ApprovalDecision::AllowSession => {
-            json!({ "behavior": "allow", "updatedInput": pending.input, "updatedPermissions": pending.suggestions })
+            json!({ "behavior": "allow", "updatedInput": pending.input, "updatedPermissions": session_permissions(pending) })
         }
     };
     json!({ "type": "control_response", "response": { "subtype": "success", "request_id": pending.request_id, "response": response } })
+}
+
+/// Règles de « Autoriser pour la session » : les `permission_suggestions` de Claude Code, plus
+/// une règle par famille (`Bash(git:*)` pour chaque programme de la commande, l'outil entier
+/// pour un outil qui n'est ni une commande ni une modification de fichier), pour la session.
+pub fn session_permissions(pending: &PendingApproval) -> Value {
+    let mut updates = pending.suggestions.as_array().cloned().unwrap_or_default();
+    let rules: Vec<Value> = match pending.tool.as_str() {
+        "Bash" | "PowerShell" => {
+            let command = str_at(&pending.input, "command").unwrap_or_default();
+            session_rules::command_programs(command)
+                .into_iter()
+                .map(|program| json!({ "toolName": pending.tool, "ruleContent": format!("{program}:*") }))
+                .collect()
+        }
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "" => Vec::new(),
+        tool => vec![json!({ "toolName": tool })],
+    };
+    if !rules.is_empty() {
+        updates.push(json!({ "type": "addRules", "rules": rules, "behavior": "allow", "destination": "session" }));
+    }
+    Value::Array(updates)
 }
 
 /// Accord d'office d'un accès à un worktree ouvert à la session : le dossier rejoint les
@@ -234,7 +257,15 @@ impl ClaudeStream {
                         (_, _, Some(description)) if !description.is_empty() => format!("{shown} {description}"),
                         _ => shown.to_string(),
                     };
-                    event(&mut out, AiEvent::ApprovalRequested { request: request_id.clone(), kind, title, detail: input.clone() });
+                    let requested = AiEvent::ApprovalRequested {
+                        request: request_id.clone(),
+                        kind,
+                        title,
+                        detail: input.clone(),
+                        tool: Some(tool.to_string()),
+                        scope: None,
+                    };
+                    event(&mut out, requested);
                     out.push(StreamItem::Approval(PendingApproval {
                         request_id,
                         tool: tool.to_string(),
@@ -430,6 +461,26 @@ mod tests {
         let mut stream = ClaudeStream::default();
         let items = text.lines().flat_map(|line| stream.push_line(line)).collect();
         (stream, items)
+    }
+
+    #[test]
+    fn allow_for_the_session_adds_a_rule_per_program_or_tool() {
+        let pending = |tool: &str, input: Value| PendingApproval {
+            request_id: "r".into(),
+            tool: tool.into(),
+            input,
+            suggestions: json!([{ "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "git fetch origin" }], "behavior": "allow", "destination": "session" }]),
+        };
+        let bash = pending("Bash", json!({ "command": "cd /r; git fetch origin; python3 a.py" }));
+        let updates = approval_response(&bash, ApprovalDecision::AllowSession)["response"]["response"]["updatedPermissions"].clone();
+        assert_eq!(updates[0]["rules"][0]["ruleContent"], "git fetch origin", "suggestions de Claude Code gardées");
+        assert_eq!(updates[1]["rules"], json!([{ "toolName": "Bash", "ruleContent": "git:*" }, { "toolName": "Bash", "ruleContent": "python3:*" }]));
+        assert_eq!(updates[1]["destination"], "session");
+        let fetch = session_permissions(&pending("WebFetch", json!({ "url": "https://x" })));
+        assert_eq!(fetch[1]["rules"], json!([{ "toolName": "WebFetch" }]));
+        assert_eq!(session_permissions(&pending("Write", json!({}))).as_array().unwrap().len(), 1, "fichiers : la suggestion setMode suffit");
+        let allow = approval_response(&bash, ApprovalDecision::Allow);
+        assert!(allow["response"]["response"].get("updatedPermissions").is_none(), "une fois : aucune règle");
     }
 
     fn events(items: &[StreamItem]) -> Vec<&AiEvent> {

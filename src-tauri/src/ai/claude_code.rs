@@ -246,15 +246,21 @@ impl ClaudeSession {
                             tracing::warn!(%err, "réponse d'office non transmise à Claude Code");
                         }
                     }
+                    // Demandes gardées avant la diffusion de leur événement : le chat peut y
+                    // répondre d'office dès qu'il le reçoit (accord de session, mode Auto).
+                    for item in &items {
+                        if let StreamItem::Approval(pending) = item
+                            && !answered.contains(&pending.request_id)
+                        {
+                            shared.approvals.lock().unwrap().insert(pending.request_id.clone(), pending.clone());
+                        }
+                    }
                     for item in items {
                         match item {
-                            StreamItem::Approval(pending) if answered.contains(&pending.request_id) => {}
+                            StreamItem::Approval(_) => {}
                             StreamItem::Event(
                                 AiEvent::ApprovalRequested { request, .. } | AiEvent::Question { request, .. },
                             ) if answered.contains(&request) => {}
-                            StreamItem::Approval(pending) => {
-                                shared.approvals.lock().unwrap().insert(pending.request_id.clone(), pending);
-                            }
                             StreamItem::Event(event) => {
                                 match &event {
                                     AiEvent::SessionStarted { native_id, .. } => {

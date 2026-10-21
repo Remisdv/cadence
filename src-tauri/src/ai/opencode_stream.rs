@@ -119,7 +119,14 @@ impl OpencodeStream {
                 let patterns: Vec<&str> =
                     props.get("patterns").and_then(Value::as_array).map(|p| p.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
                 let title = if patterns.is_empty() { permission.to_string() } else { format!("{permission} : {}", patterns.join(", ")) };
-                vec![AiEvent::ApprovalRequested { request: id.into(), kind, title, detail: props.clone() }]
+                vec![AiEvent::ApprovalRequested {
+                    request: id.into(),
+                    kind,
+                    title,
+                    detail: props.clone(),
+                    tool: Some(permission.to_string()),
+                    scope: None,
+                }]
             }
             "question.asked" => {
                 let Some(id) = str_of(props, "id") else { return Vec::new() };

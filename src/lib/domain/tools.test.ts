@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { aiRailState } from "./ai";
 import type { ToolInfo } from "@/lib/types";
 import {
   applyRunEvent,
@@ -120,5 +121,18 @@ describe("journal d'installation", () => {
     expect(recipePackage("winget install --id GitHub.cli -e --source winget")).toBe("GitHub.cli");
     expect(recipePackage("npm install -g @openai/codex")).toBe("@openai/codex");
     expect(recipePackage("pkexec apt-get install -y git")).toBe("git");
+  });
+});
+
+describe("état de l'IA par défaut dans le rail (recette P02)", () => {
+  it("lit le rapport d'outils comme l'onboarding", () => {
+    expect(aiRailState("claude-code", { status: "ready" })).toEqual({
+      label: "connectée",
+      tone: "green",
+    });
+    expect(aiRailState("claude-code", { status: "not-connected" }).label).toBe("à connecter");
+    expect(aiRailState("codex", { status: "missing" }).tone).toBe("amber");
+    expect(aiRailState("codex", undefined).label).toBe("détection…");
+    expect(aiRailState(null, undefined).label).toBe("à choisir");
   });
 });

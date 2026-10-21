@@ -125,7 +125,11 @@ export interface Commands {
   repos_link: { args: { repo: string; path: string | null }; result: RepoCloneView };
   // Chat du cœur (réponses par `chat://event` et `chat://state`)
   /** Sans les conversations cachées (de groupe), sauf avec `group` (id préfixé par le plugin). */
-  chat_sessions: { args: { group?: string | null }; result: ChatSessionRow[] };
+  chat_sessions: {
+    /** `group` : celles du groupe (id préfixé) ; `all` : cachées comprises. */
+    args: { group?: string | null; all?: boolean };
+    result: ChatSessionRow[];
+  };
   chat_session_get: { args: { id: string }; result: ChatSessionDetail };
   /** Pont de l'iframe (`conversations.list`) : conversations des actions du plugin ; `group` = id vu par lui. */
   plugin_conversations: {

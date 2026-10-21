@@ -19,4 +19,9 @@ attachments?: Array<string>,
  * Mode d'une nouvelle conversation (défaut : Demander) ; ignoré pour une conversation
  * existante (`chat_set_permissions`).
  */
-permissions?: ChatPermissions, };
+permissions?: ChatPermissions, 
+/**
+ * Nouvelle conversation ouverte depuis la barre d'un plugin (« + » de ses conversations) :
+ * origine `plugin:<id>`, listée dans cette barre avec la puce du plugin.
+ */
+plugin?: string, };

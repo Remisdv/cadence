@@ -98,13 +98,16 @@ pub fn origin_action(origin: &str) -> Option<(&str, &str)> {
     origin.strip_prefix("action:")?.split_once('/')
 }
 
-/// Filtre de la liste des conversations. Sans `group`, les conversations cachées sont exclues.
+/// Filtre de la liste des conversations. Sans `group` ni `hidden`, les conversations cachées
+/// sont exclues.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SessionFilter<'a> {
     /// Conversations ouvertes par une action de ce plugin.
     pub plugin: Option<&'a str>,
     /// Groupe (id préfixé par le plugin) : ses conversations, cachées comprises.
     pub group: Option<&'a str>,
+    /// Sans `group` : les conversations cachées aussi (recherche du chat, demandes en attente).
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -273,12 +276,13 @@ impl ChatStore {
         let rows = sqlx::query(
             "SELECT s.*, (SELECT COALESCE(MAX(e.turn), 0) FROM events e WHERE e.session_id = s.id) AS turns
              FROM sessions s
-             WHERE (CASE WHEN ?1 IS NULL THEN s.hidden = 0 ELSE s.group_id = ?1 END)
+             WHERE (CASE WHEN ?1 IS NULL THEN (?3 = 1 OR s.hidden = 0) ELSE s.group_id = ?1 END)
                AND (?2 IS NULL OR substr(s.origin, 1, length(?2)) = ?2)
              ORDER BY s.updated_at DESC, s.created_at DESC",
         )
         .bind(filter.group)
         .bind(prefix)
+        .bind(filter.hidden)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
@@ -452,14 +456,16 @@ mod tests {
             ids
         };
         assert_eq!(ids(store.list(SessionFilter::default()).await.unwrap()), ["libre", "sans-groupe", "visible"], "chat global");
+        let all = SessionFilter { hidden: true, ..SessionFilter::default() };
+        assert_eq!(ids(store.list(all).await.unwrap()), ["autre", "cachee", "libre", "sans-groupe", "visible"], "cachées comprises sur demande");
         let group = SessionFilter { group: Some("gestion-projet:sprint:o/n:3"), ..SessionFilter::default() };
         assert_eq!(ids(store.list(group).await.unwrap()), ["cachee", "visible"], "groupe explicite : cachées comprises");
         let plugin = SessionFilter { plugin: Some("gestion-projet"), ..SessionFilter::default() };
         assert_eq!(ids(store.list(plugin).await.unwrap()), ["sans-groupe", "visible"]);
         // Isolation : le groupe d'un autre plugin, même demandé, reste vide pour ce plugin.
-        let foreign = SessionFilter { plugin: Some("gestion-projet"), group: Some("documents:sprint:o/n:3") };
+        let foreign = SessionFilter { plugin: Some("gestion-projet"), group: Some("documents:sprint:o/n:3"), hidden: false };
         assert!(store.list(foreign).await.unwrap().is_empty());
-        let documents = SessionFilter { plugin: Some("documents"), group: Some("gestion-projet:sprint:o/n:3") };
+        let documents = SessionFilter { plugin: Some("documents"), group: Some("gestion-projet:sprint:o/n:3"), hidden: false };
         assert!(store.list(documents).await.unwrap().is_empty());
 
         let with_turns = store.list_with_turns(group).await.unwrap();

@@ -24,10 +24,11 @@ fn chat(state: &AppState) -> AppResult<Arc<ChatService>> {
 }
 
 /// Conversations, la plus récemment active d'abord. Les conversations cachées (de groupe) n'y
-/// sont qu'avec un filtre `group` explicite (id préfixé par le plugin).
+/// sont qu'avec un filtre `group` explicite (id préfixé par le plugin), ou avec `all` (le chat
+/// les cherche et signale leurs demandes, sans les lister par défaut).
 #[tauri::command]
-pub async fn chat_sessions(state: State<'_, AppState>, group: Option<String>) -> AppResult<Vec<ChatSessionRow>> {
-    chat(&state)?.sessions(group.as_deref()).await
+pub async fn chat_sessions(state: State<'_, AppState>, group: Option<String>, all: Option<bool>) -> AppResult<Vec<ChatSessionRow>> {
+    chat(&state)?.sessions(group.as_deref(), all.unwrap_or(false)).await
 }
 
 /// Pont de l'iframe (`conversations.list`) : conversations ouvertes par les actions du plugin,

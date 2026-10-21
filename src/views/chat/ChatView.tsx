@@ -73,6 +73,8 @@ import type { ViewProps } from "@/views/registry";
 
 export default function ChatView({ view }: ViewProps<"chat">) {
   const sessionId = view.session ?? null;
+  /** Nouvelle conversation ouverte depuis la barre d'un plugin (« + » de ses conversations). */
+  const fromPlugin = sessionId ? null : (view.plugin ?? null);
   const replace = useNavigation((s) => s.replace);
   const settings = useAppSettings().data;
   const plugins = (usePlugins().data ?? []).filter((p) => p.enabled && p.status !== "invalid");
@@ -122,6 +124,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
       ai: sessionId ? null : aiId,
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(sessionId ? {} : { permissions: pickedMode }),
+      ...(fromPlugin ? { plugin: fromPlugin } : {}),
     });
     if (id !== sessionId) replace({ id: "chat", session: id });
   };
@@ -149,12 +152,18 @@ export default function ChatView({ view }: ViewProps<"chat">) {
         title={
           <span className="flex items-center gap-[9px]">
             <span className="truncate">{session?.title ?? "Nouvelle conversation"}</span>
-            <ContextChip session={session} plugins={plugins} />
+            <ContextChip
+              session={
+                session ??
+                (fromPlugin ? { origin: `plugin:${fromPlugin}`, state: "idle" } : undefined)
+              }
+              plugins={plugins}
+            />
             {group && <GroupChip label={group.label} />}
           </span>
         }
         subtitle={[
-          "Chat global",
+          group ? `Rattachée à ${group.label}` : "Chat global",
           ai ?? "aucune IA choisie",
           n > 0
             ? `voit les outils des ${n} plugin${n > 1 ? "s" : ""} activé${n > 1 ? "s" : ""}`

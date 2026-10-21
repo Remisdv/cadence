@@ -78,7 +78,9 @@ pub struct PluginProcessView {
     pub pid: Option<u32>,
     /// Redémarrages automatiques depuis le lancement de l'app.
     pub restarts: u32,
-    /// Outils annoncés par `tools/list` (0 tant que le serveur n'est pas prêt).
+    /// Outils annoncés par `tools/list` et visibles des IA (0 tant que le serveur n'est pas
+    /// prêt). Les outils réservés à l'interface du plugin (`cadence/visibility = "ui"`) ne
+    /// comptent pas : même nombre que la fiche du catalogue.
     pub tools: u32,
     /// Raison du dernier arrêt inattendu ou de l'échec.
     pub message: Option<String>,
@@ -169,7 +171,8 @@ impl PluginProcess {
             state: inner.state,
             pid: inner.pid,
             restarts: inner.restarts,
-            tools: u32::try_from(inner.tools.len()).unwrap_or(u32::MAX),
+            tools: u32::try_from(inner.tools.iter().filter(|tool| !crate::gateway::scope::is_ui_only(tool)).count())
+                .unwrap_or(u32::MAX),
             message: inner.message.clone(),
             log_path: inner.log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
         }

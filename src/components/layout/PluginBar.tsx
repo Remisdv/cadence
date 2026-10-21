@@ -16,8 +16,11 @@ import {
   MenuTrigger,
 } from "@/components/ui/Menu";
 import { homeView, kitIcon, moveInRail, viewSections } from "@/lib/domain/plugins";
+import { conversationTime, conversationOriginLabel, pluginConversations } from "@/lib/domain/chat";
+import { Spinner } from "@/components/ui/Spinner";
 import {
   useAppSettings,
+  useChatSessions,
   usePlugins,
   useReorderPlugins,
   useRunAction,
@@ -34,6 +37,7 @@ import {
   ContextBarIconButton,
   ContextBarItem,
   ContextBarSection,
+  ConversationItem,
 } from "./ContextBar";
 
 export function PluginBar({ plugin, view }: { plugin: InstalledPluginView; view: string }) {
@@ -84,23 +88,61 @@ export function PluginBar({ plugin, view }: { plugin: InstalledPluginView; view:
       ))}
 
       <PluginActions plugin={plugin} />
-
-      <ContextBarSection
-        title="Conversations"
-        action={
-          <ContextBarIconButton
-            icon="plus"
-            label="Nouvelle conversation (arrive avec le chat)"
-            size={20}
-            disabled
-          />
-        }
-      >
-        <ContextBarHint>
-          Les conversations ouvertes depuis {plugin.name} apparaîtront ici, avec leur contexte.
-        </ContextBarHint>
-      </ContextBarSection>
+      <PluginConversations plugin={plugin} />
     </ContextBar>
+  );
+}
+
+/**
+ * Conversations ouvertes depuis le plugin (ses actions, ou « + ») hors groupes cachés (celles
+ * d'un sprint restent dans sa vue), les plus récentes d'abord ; « + » ouvre une nouvelle
+ * conversation avec la puce du plugin.
+ */
+function PluginConversations({ plugin }: { plugin: InstalledPluginView }) {
+  const navigate = useNavigation((s) => s.navigate);
+  const rows = pluginConversations(useChatSessions().data ?? [], plugin.id);
+  return (
+    <ContextBarSection
+      title="Conversations"
+      action={
+        <ContextBarIconButton
+          icon="plus"
+          label={`Nouvelle conversation avec ${plugin.name}`}
+          size={20}
+          onClick={() => navigate({ id: "chat", plugin: plugin.id })}
+        />
+      }
+    >
+      {rows.length === 0 && (
+        <ContextBarHint>
+          Les conversations ouvertes depuis {plugin.name} apparaîtront ici ; celles d'un sprint
+          restent dans sa vue.
+        </ContextBarHint>
+      )}
+      {rows.map((row) => (
+        <ConversationItem
+          key={row.id}
+          title={row.title}
+          time={conversationTime(row.updatedAt)}
+          onClick={() => navigate({ id: "chat", session: row.id })}
+          context={
+            <>
+              <span className="truncate">{conversationOriginLabel(row.origin, plugin)}</span>
+              {row.state === "running" && (
+                <span className="ml-auto flex shrink-0 text-clay">
+                  <Spinner size={11} />
+                </span>
+              )}
+              {row.state === "waiting-approval" && (
+                <span className="ml-auto flex shrink-0 text-clay" title="Attend votre réponse">
+                  <Icon name="warning" size={11} />
+                </span>
+              )}
+            </>
+          }
+        />
+      ))}
+    </ContextBarSection>
   );
 }
 

@@ -1,6 +1,8 @@
 /**
  * Sélecteur du mode d'une conversation, dans le composeur du chat (comme les modes de Claude
- * Code) : Demander, Édition auto, Auto. Le choix s'applique au tour suivant.
+ * Code) : Demander, Édition auto, Auto. Choisi pendant un tour, il vaut tout de suite pour les
+ * demandes d'accord (« Auto » accepte celles en attente et les suivantes) ; la CLI le reçoit au
+ * tour suivant.
  */
 import { Icon } from "@/components/icons/Icon";
 import {
@@ -18,7 +20,7 @@ import type { ChatPermissions } from "@/lib/types";
 export interface ChatModeMenuProps {
   value: ChatPermissions;
   onChange: (mode: ChatPermissions) => void;
-  /** Un tour est en cours : le nouveau mode attendra le suivant (dit dans le menu). */
+  /** Un tour est en cours : le nouveau mode vaut pour ses demandes d'accord (dit dans le menu). */
   running?: boolean;
   disabled?: boolean;
 }
@@ -42,7 +44,9 @@ export function ChatModeMenu({ value, onChange, running, disabled }: ChatModeMen
         </button>
       </MenuTrigger>
       <MenuContent className="w-[300px]">
-        <MenuLabel>{running ? "Mode · au tour suivant" : "Mode de la conversation"}</MenuLabel>
+        <MenuLabel>
+          {running ? "Mode · vaut aussi pour les demandes en cours" : "Mode de la conversation"}
+        </MenuLabel>
         <MenuRadioGroup value={value} onValueChange={(mode) => onChange(mode as ChatPermissions)}>
           {chatModeOrder.map((mode) => {
             const info = chatModes[mode];

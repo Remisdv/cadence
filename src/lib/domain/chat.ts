@@ -46,6 +46,8 @@ export type ChatItem =
       approval: ApprovalKind;
       title: string;
       detail: unknown;
+      /** Ce que couvre « Autoriser pour la session » (« commandes git, python »). */
+      scope: string | null;
       decision: ApprovalDecision | null;
     }
   | { kind: "error"; key: string; error: AiErrorKind; message: string }
@@ -157,6 +159,7 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
         approval: event.kind,
         title: event.title,
         detail: event.detail,
+        scope: event.scope ?? null,
         decision: null,
       });
     case "approval-answered": {
@@ -337,9 +340,80 @@ export function originPlugin(origin: string): string | null {
   return /^action:([a-z0-9-]+)\//.exec(origin)?.[1] ?? null;
 }
 
+/**
+ * Plugin de la puce de contexte : celui d'une action (`action:<plugin>/…`) ou de la barre d'où
+ * la conversation a été ouverte (`plugin:<plugin>`).
+ */
+export function contextPlugin(origin: string): string | null {
+  return originPlugin(origin) ?? /^plugin:([a-z0-9-]+)$/.exec(origin)?.[1] ?? null;
+}
+
+/** Conversations d'un plugin montrées dans sa barre : les siennes, hors groupes cachés. */
+export function pluginConversations<T extends Pick<ChatSessionRow, "origin" | "hidden">>(
+  rows: T[],
+  plugin: string,
+  max = 6,
+): T[] {
+  return rows.filter((row) => !row.hidden && contextPlugin(row.origin) === plugin).slice(0, max);
+}
+
+/** Ce qui a ouvert une conversation d'un plugin : le libellé de son action, sinon « Conversation libre ». */
+export function conversationOriginLabel(
+  origin: string,
+  plugin: { actions: { id: string; label: string }[] },
+): string {
+  const action = /^action:[a-z0-9-]+\/(.+)$/.exec(origin)?.[1];
+  if (!action) return "Conversation libre";
+  return plugin.actions.find((a) => a.id === action)?.label ?? action;
+}
+
 /** Conversations du chat global : sans les conversations cachées (rattachées à un groupe). */
 export function globalConversations<T extends Pick<ChatSessionRow, "hidden">>(rows: T[]): T[] {
   return rows.filter((row) => !row.hidden);
+}
+
+const DAY_GROUPS = ["Aujourd'hui", "Hier", "Cette semaine", "Plus ancien"];
+
+/** Section de la colonne des conversations ; `attached` : conversations rangées dans un groupe. */
+export interface ChatBarSection<T> {
+  title: string;
+  rows: T[];
+  attached?: boolean;
+}
+
+type BarRow = Pick<
+  ChatSessionRow,
+  "id" | "title" | "hidden" | "group" | "mode" | "state" | "updatedAt"
+>;
+
+/**
+ * Sections de la colonne du chat. Les conversations rattachées à un groupe (un sprint) restent
+ * hors de la liste, sauf celle ouverte, celles qui attendent votre réponse et, pendant une
+ * recherche, celles qui correspondent (titre ou nom du groupe) : section « Rattachées », en tête.
+ */
+export function chatBarSections<T extends BarRow>(
+  rows: T[],
+  query: string,
+  active: string | null,
+  now = new Date(),
+): ChatBarSection<T>[] {
+  const q = query.trim().toLowerCase();
+  const matches = (s: T) =>
+    !q || s.title.toLowerCase().includes(q) || !!s.group?.label.toLowerCase().includes(q);
+  const attached = rows.filter(
+    (s) => s.hidden && (q ? matches(s) : s.id === active || s.state === "waiting-approval"),
+  );
+  const listed = globalConversations(rows).filter(matches);
+  const chats = listed.filter((s) => s.mode !== "background");
+  return [
+    { title: "Rattachées", rows: attached, attached: true },
+    // Exécutions de fond des actions : leur propre groupe (panneau Activité).
+    { title: "En fond", rows: listed.filter((s) => s.mode === "background") },
+    ...DAY_GROUPS.map((title) => ({
+      title,
+      rows: chats.filter((s) => conversationGroup(s.updatedAt, now) === title),
+    })),
+  ].filter((section) => section.rows.length > 0);
 }
 
 /** Groupe d'une conversation vu par son plugin : l'id sans le préfixe `<plugin>:` de l'hôte. */

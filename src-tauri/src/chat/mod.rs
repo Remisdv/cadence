@@ -18,7 +18,13 @@
 //! le composeur et mémorisé avec elle. Les trois CLI le reçoivent au lancement : un changement
 //! en cours de route relance le processus (reprise par `native_id`) au tour suivant, comme un
 //! worktree ouvert ; le tour en cours garde son mode. Une exécution de fond reste en édition
-//! auto (personne pour répondre aux demandes).
+//! auto (personne pour répondre aux demandes). Exception : les demandes d'accord encore en
+//! attente, et celles du tour en cours, suivent tout de suite le nouveau mode (« Auto » les
+//! accepte, « Édition auto » accepte les modifications de fichiers).
+//!
+//! « Autoriser pour la session » vaut pour la famille de la demande (`ai::session_rules` :
+//! programmes d'une commande, modifications de fichiers, outil) jusqu'à la fermeture de Cadence :
+//! les demandes couvertes reçoivent un accord d'office, sans carte.
 
 pub mod conversations;
 pub mod store;
@@ -28,6 +34,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Weak,
+        Mutex as StdMutex,
         atomic::{AtomicU32, Ordering},
     },
     time::{Duration, Instant},
@@ -45,10 +52,11 @@ use crate::{
     ai::{
         claude_code::{Permissions, SessionMode},
         events::{
-            AiErrorKind, AiEvent, AiQuestion, ApprovalDecision, QuestionAnswer, QuestionOption, answers_summary, check_answers,
+            AiErrorKind, AiEvent, AiQuestion, ApprovalDecision, ApprovalKind, QuestionAnswer, QuestionOption, answers_summary, check_answers,
         },
         grants::DirGrants,
         session::{AiLaunch, AiSession},
+        session_rules::{ApprovalInfo, SessionRules},
         staging::{self, StagedSkill},
     },
     app_settings::AiId,
@@ -104,6 +112,22 @@ pub struct ChatSendInput {
     #[serde(default)]
     #[ts(optional)]
     pub permissions: Option<Permissions>,
+    /// Nouvelle conversation ouverte depuis la barre d'un plugin (« + » de ses conversations) :
+    /// origine `plugin:<id>`, listée dans cette barre avec la puce du plugin.
+    #[serde(default)]
+    #[ts(optional)]
+    pub plugin: Option<String>,
+}
+
+/// Origine d'une nouvelle conversation : `plugin:<id>` depuis la barre d'un plugin, sinon `user`.
+pub fn send_origin(plugin: Option<&str>) -> AppResult<String> {
+    match plugin.map(str::trim).filter(|p| !p.is_empty()) {
+        None => Ok("user".into()),
+        Some(id) if id.len() <= 64 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') => {
+            Ok(format!("plugin:{id}"))
+        }
+        Some(id) => Err(AppError::Validation(format!("« {id} » n'est pas un id de plugin."))),
+    }
 }
 
 /// Dossier des pièces jointes, dans le dossier de travail de la conversation.
@@ -241,6 +265,13 @@ struct Live {
     _permit: Option<OwnedSemaphorePermit>,
 }
 
+/// Demande de la CLI qui attend l'utilisateur.
+#[derive(Debug, Clone)]
+enum Waiting {
+    Approval(ApprovalInfo),
+    Question,
+}
+
 pub struct ChatService {
     store: Arc<ChatStore>,
     config: ChatConfig,
@@ -250,6 +281,10 @@ pub struct ChatService {
     sink: ChatSink,
     live: Mutex<HashMap<String, Live>>,
     background: Arc<Semaphore>,
+    /// Accords « pour la session » de chaque conversation (jusqu'à la fermeture de Cadence).
+    rules: StdMutex<HashMap<String, SessionRules>>,
+    /// Demandes en attente de chaque conversation (tour en cours), dans l'ordre.
+    waiting: StdMutex<HashMap<String, Vec<(String, Waiting)>>>,
 }
 
 /// Titre d'une conversation : la première ligne du premier message, 60 caractères au plus.
@@ -275,20 +310,31 @@ impl ChatService {
         sink: ChatSink,
     ) -> Arc<Self> {
         let background = Arc::new(Semaphore::new(config.max_background.max(1)));
-        Arc::new(Self { store: Arc::new(store), config, locate, skills, gateway, sink, live: Mutex::default(), background })
+        Arc::new(Self {
+            store: Arc::new(store),
+            config,
+            locate,
+            skills,
+            gateway,
+            sink,
+            live: Mutex::default(),
+            background,
+            rules: StdMutex::default(),
+            waiting: StdMutex::default(),
+        })
     }
 
     /// Conversations du chat global ; avec `group` (id préfixé), celles du groupe, cachées
-    /// comprises.
-    pub async fn sessions(&self, group: Option<&str>) -> AppResult<Vec<ChatSessionRow>> {
-        self.store.list(SessionFilter { plugin: None, group }).await
+    /// comprises ; avec `hidden`, toutes (recherche du chat, demandes en attente).
+    pub async fn sessions(&self, group: Option<&str>, hidden: bool) -> AppResult<Vec<ChatSessionRow>> {
+        self.store.list(SessionFilter { plugin: None, group, hidden }).await
     }
 
     /// Conversations ouvertes par les actions d'un plugin (`conversations.list` du SDK) ; `group`
     /// est l'id vu par le plugin.
     pub async fn conversations(&self, plugin: &str, group: Option<&str>) -> AppResult<Vec<ConversationInfo>> {
         let scoped = group.map(|g| ChatGroup::scoped_id(plugin, g));
-        let rows = self.store.list_with_turns(SessionFilter { plugin: Some(plugin), group: scoped.as_deref() }).await?;
+        let rows = self.store.list_with_turns(SessionFilter { plugin: Some(plugin), group: scoped.as_deref(), hidden: false }).await?;
         Ok(rows.into_iter().map(|(row, turns)| ConversationInfo::of(plugin, &row, turns)).collect())
     }
 
@@ -318,10 +364,79 @@ impl ChatService {
         self.store.rename(id, title).await
     }
 
-    /// Change le mode de la conversation. Il s'applique au tour suivant : le processus vivant,
-    /// lancé avec l'ancien mode, est relancé (reprise de la session native) à ce moment-là.
+    /// Change le mode de la conversation. La CLI le reçoit au tour suivant : le processus
+    /// vivant, lancé avec l'ancien mode, est relancé (reprise de la session native) à ce
+    /// moment-là. Les demandes d'accord en attente, et celles qui arrivent d'ici la fin du tour,
+    /// suivent le nouveau mode tout de suite.
     pub async fn set_permissions(&self, id: &str, permissions: Permissions) -> AppResult<ChatSessionRow> {
-        self.store.set_permissions(id, permissions).await
+        let row = self.store.set_permissions(id, permissions).await?;
+        self.answer_covered(id).await?;
+        Ok(self.store.get(id).await.unwrap_or(row))
+    }
+
+    /// Accord d'office pour une demande : mode Auto, Édition auto pour une modification de
+    /// fichier, ou famille déjà accordée pour la session.
+    async fn allowed_now(&self, id: &str, info: &ApprovalInfo) -> bool {
+        let permissions = self.store.get(id).await.map(|row| row.permissions).unwrap_or_default();
+        let by_mode = match permissions {
+            Permissions::Full => true,
+            Permissions::AutoEdit => info.kind == ApprovalKind::FileChange,
+            Permissions::Ask => false,
+        };
+        by_mode || self.rules.lock().unwrap().get(id).is_some_and(|rules| rules.covers(info))
+    }
+
+    fn wait_for(&self, id: &str, request: &str, waiting: Waiting) {
+        self.waiting.lock().unwrap().entry(id.to_string()).or_default().push((request.to_string(), waiting));
+    }
+
+    fn take_waiting(&self, id: &str, request: &str) -> Option<Waiting> {
+        let mut all = self.waiting.lock().unwrap();
+        let list = all.get_mut(id)?;
+        let at = list.iter().position(|(r, _)| r == request)?;
+        Some(list.remove(at).1)
+    }
+
+    fn still_waiting(&self, id: &str) -> bool {
+        self.waiting.lock().unwrap().get(id).is_some_and(|list| !list.is_empty())
+    }
+
+    /// Répond d'office aux demandes en attente que le mode ou les accords de session couvrent
+    /// désormais ; la conversation repart si plus rien n'attend l'utilisateur.
+    async fn answer_covered(&self, id: &str) -> AppResult<()> {
+        let pending: Vec<(String, ApprovalInfo)> = self
+            .waiting
+            .lock()
+            .unwrap()
+            .get(id)
+            .into_iter()
+            .flatten()
+            .filter_map(|(request, waiting)| match waiting {
+                Waiting::Approval(info) => Some((request.clone(), info.clone())),
+                Waiting::Question => None,
+            })
+            .collect();
+        let Some(session) = self.live_session(id).await else { return Ok(()) };
+        let mut covered = Vec::new();
+        for (request, info) in pending {
+            if self.allowed_now(id, &info).await {
+                self.take_waiting(id, &request);
+                covered.push(request);
+            }
+        }
+        // L'état change avant les réponses : la CLI repart aussitôt et peut redemander.
+        if !covered.is_empty() && !self.still_waiting(id) {
+            self.set_state(id, ChatState::Running).await?;
+        }
+        for request in covered {
+            if let Err(err) = session.answer(&request, ApprovalDecision::Allow).await {
+                tracing::warn!(session = id, %err, "accord d'office non transmis");
+                continue;
+            }
+            let turn = self.store.next_turn(id).await?.saturating_sub(1);
+            self.record(id, turn, AiEvent::ApprovalAnswered { request, decision: ApprovalDecision::Allow }).await?;
+        }
+        Ok(())
     }
 
     async fn notify_state(&self, session: &str, state: ChatState) {
@@ -363,7 +478,7 @@ impl ChatService {
                     title: title_of(&text),
                     ai,
                     model: (ai == AiId::ClaudeCode).then(|| self.config.model.clone()).flatten(),
-                    origin: "user".into(),
+                    origin: send_origin(input.plugin.as_deref())?,
                     mode: ChatMode::Chat,
                     permissions: input.permissions.unwrap_or_default(),
                     state: ChatState::Idle,
@@ -486,11 +601,20 @@ impl ChatService {
         let Some(session) = self.live_session(id).await else {
             return Err(AppError::Validation("Cette question n'attend plus de réponse.".into()));
         };
-        session.answer_question(request, &answers).await?;
+        let waiting = self.take_waiting(id, request);
+        if waiting.is_some() && !self.still_waiting(id) {
+            self.set_state(id, ChatState::Running).await?;
+        }
+        if let Err(err) = session.answer_question(request, &answers).await {
+            if let Some(waiting) = waiting {
+                self.wait_for(id, request, waiting);
+                self.set_state(id, ChatState::WaitingApproval).await?;
+            }
+            return Err(err);
+        }
         let turn = self.store.next_turn(id).await?.saturating_sub(1);
         let answer = answers_summary(&questions, &answers);
-        self.record(id, turn, AiEvent::QuestionAnswered { request: request.into(), answer, answers }).await?;
-        self.set_state(id, ChatState::Running).await
+        self.record(id, turn, AiEvent::QuestionAnswered { request: request.into(), answer, answers }).await.map(|_| ())
     }
 
     /// Questions d'une demande `request`, lues dans l'historique (une seule pour une question
@@ -638,10 +762,33 @@ impl ChatService {
         let Some(session) = self.live_session(id).await else {
             return Err(AppError::Validation("Cette demande d'approbation n'attend plus de réponse.".into()));
         };
-        session.answer(request, decision).await?;
+        // Règle et état d'abord : la CLI repart dès la réponse et peut redemander aussitôt (la
+        // demande suivante doit déjà trouver l'accord de session).
+        let waiting = self.take_waiting(id, request);
+        let grant = match &waiting {
+            Some(Waiting::Approval(info)) if decision == ApprovalDecision::AllowSession => info.grant(),
+            _ => None,
+        };
+        if let Some(grant) = &grant {
+            self.rules.lock().unwrap().entry(id.to_string()).or_default().add(grant.clone());
+        }
+        if waiting.is_some() && !self.still_waiting(id) {
+            self.set_state(id, ChatState::Running).await?;
+        }
+        if let Err(err) = session.answer(request, decision).await {
+            if let Some(waiting) = waiting {
+                self.wait_for(id, request, waiting);
+                self.set_state(id, ChatState::WaitingApproval).await?;
+            }
+            return Err(err);
+        }
         let turn = self.store.next_turn(id).await?.saturating_sub(1);
         self.record(id, turn, AiEvent::ApprovalAnswered { request: request.into(), decision }).await?;
-        self.set_state(id, ChatState::Running).await
+        if grant.is_some() {
+            // Les autres demandes en attente de la même famille sont acceptées avec elle.
+            self.answer_covered(id).await?;
+        }
+        Ok(())
     }
 
     /// Supprime une conversation, son processus et son dossier de travail.
@@ -653,6 +800,8 @@ impl ChatService {
         if let Some(gateway) = &self.gateway {
             gateway.context.forget_grants(id);
         }
+        self.rules.lock().unwrap().remove(id);
+        self.waiting.lock().unwrap().remove(id);
         self.store.delete(id).await?;
         let dir = self.config.sessions_root.join(id);
         if dir.exists() && std::fs::remove_dir_all(&dir).is_err() {
@@ -717,9 +866,28 @@ pub fn launch_permissions(chosen: Permissions, mode: SessionMode) -> Permissions
 
 /// Enregistre et diffuse les événements d'un processus, dans l'ordre.
 async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, mut events: mpsc::UnboundedReceiver<AiEvent>) {
-    while let Some(event) = events.recv().await {
+    while let Some(mut event) = events.recv().await {
         let Some(service) = service.upgrade() else { return };
         let turn = turn.load(Ordering::SeqCst);
+        match &mut event {
+            AiEvent::ApprovalRequested { request, kind, title, detail, tool, scope } => {
+                let info = ApprovalInfo::of(*kind, tool.as_deref(), title, detail);
+                // Couverte par le mode ou un accord de session : accordée d'office, sans carte.
+                if service.allowed_now(&id, &info).await
+                    && let Some(session) = service.live_session(&id).await
+                    && session.answer(request, ApprovalDecision::Allow).await.is_ok()
+                {
+                    continue;
+                }
+                *scope = info.grant().map(|grant| grant.label());
+                service.wait_for(&id, request, Waiting::Approval(info));
+            }
+            AiEvent::Question { request, .. } => service.wait_for(&id, request, Waiting::Question),
+            AiEvent::TurnCompleted { .. } => {
+                service.waiting.lock().unwrap().remove(&id);
+            }
+            _ => {}
+        }
         let state = match &event {
             AiEvent::ApprovalRequested { .. } | AiEvent::Question { .. } => Some(ChatState::WaitingApproval),
             AiEvent::TurnCompleted { interrupted: true, .. } => Some(ChatState::Interrupted),
@@ -784,6 +952,15 @@ mod tests {
         assert!(text.starts_with("Résume\n\nPièces jointes") && text.ends_with("- pieces-jointes/notes"));
         assert_eq!(with_attachments("Bonjour", &[]), "Bonjour");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_conversation_opened_from_a_plugin_bar_keeps_its_plugin() {
+        assert_eq!(send_origin(None).unwrap(), "user");
+        assert_eq!(send_origin(Some(" ")).unwrap(), "user");
+        assert_eq!(send_origin(Some("gestion-projet")).unwrap(), "plugin:gestion-projet");
+        assert!(send_origin(Some("../x")).is_err());
+        assert!(send_origin(Some("Gestion")).is_err());
     }
 
     #[test]

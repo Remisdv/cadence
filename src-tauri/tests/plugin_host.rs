@@ -130,7 +130,8 @@ async fn starts_on_demand_calls_in_parallel_and_stops() {
     assert_eq!(ui_only.meta.as_ref().unwrap().0.get("cadence/visibility"), Some(&json!("ui")));
 
     let status = f.status();
-    assert_eq!((status.state, status.tools), (ProcessState::Ready, 10));
+    // `ui_only` n'est pas compté : le nombre montré est celui des outils visibles des IA (P02).
+    assert_eq!((status.state, status.tools), (ProcessState::Ready, 9));
     assert!(status.pid.is_some());
     assert_eq!(f.call("echo", json!({ "text": "bonjour" })).await.unwrap(), json!({ "echo": { "text": "bonjour" } }));
 
@@ -302,7 +303,7 @@ async fn rereads_tools_on_list_changed() {
     let f = Fixture::new("list-changed", &[], None, |_| {});
     assert_eq!(f.host.tools(PLUGIN).await.unwrap().len(), 10);
     f.call("grow", json!({})).await.unwrap();
-    f.wait("outil ajouté", |s| s.tools == 11).await;
+    f.wait("outil ajouté", |s| s.tools == 10).await;
     let tools = f.host.tools(PLUGIN).await.unwrap();
     assert!(tools.iter().any(|t| t.name == "extra"));
     assert_eq!(f.call("extra", json!({})).await.unwrap(), json!({ "ok": true }));

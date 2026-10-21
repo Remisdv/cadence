@@ -7,9 +7,10 @@ import { Icon, type IconName } from "@/components/icons/Icon";
 import { PluginTile } from "@/components/domain/PluginTile";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/cn";
-import { aiLabels } from "@/lib/domain/ai";
+import { aiLabels, aiRailState } from "@/lib/domain/ai";
+import { toolOfAi } from "@/lib/domain/tools";
 import { homeView, pluginCategories, railGroups } from "@/lib/domain/plugins";
-import { useAppSettings, useAuthStatus, usePlugins } from "@/lib/query/queries";
+import { useAppSettings, useChatSessions, usePlugins, useTools } from "@/lib/query/queries";
 import type { InstalledPluginView } from "@/lib/types";
 import { useNavigation, type View } from "@/stores/navigation";
 
@@ -34,6 +35,8 @@ export function AppRail() {
   const navigate = useNavigation((s) => s.navigate);
   const plugins = usePlugins().data ?? [];
   const active = railKey(view);
+  // Une conversation (même rangée dans un sprint) attend un accord ou une réponse.
+  const waiting = (useChatSessions().data ?? []).filter((s) => s.state === "waiting-approval");
 
   const openPlugin = (p: InstalledPluginView) => {
     const home = homeView(p);
@@ -58,9 +61,18 @@ export function AppRail() {
       <div className="flex min-h-0 w-14 grow [scrollbar-width:none] flex-col items-center gap-1 overflow-y-auto">
         <RailButton
           label="Chat"
-          detail="Chat global · tous les plugins"
+          detail={
+            waiting.length > 0
+              ? `${waiting.length} conversation${waiting.length > 1 ? "s attendent" : " attend"} votre réponse`
+              : "Chat global · tous les plugins"
+          }
           active={active === "chat"}
-          onClick={() => navigate({ id: "chat" })}
+          onClick={() =>
+            navigate(
+              waiting.length === 1 ? { id: "chat", session: waiting[0]!.id } : { id: "chat" },
+            )
+          }
+          dot={waiting.length > 0 ? "amber" : undefined}
         >
           <Icon name="chat" size={19} />
         </RailButton>
@@ -182,16 +194,18 @@ const dotClass = { amber: "bg-amber", purple: "bg-purple", green: "bg-green" } a
 
 const aiIcon: IconName = "sparkle";
 
-/** IA par défaut, avec son état de connexion (pastille verte : connectée). */
+/**
+ * IA par défaut, avec son état (pastille verte : connectée ; ambre : à installer, connecter ou
+ * mettre à jour), lu dans le rapport d'outils comme l'onboarding.
+ */
 function DefaultAiButton({ onClick }: { onClick: () => void }) {
   const ai = useAppSettings().data?.defaultAi ?? null;
-  const auth = useAuthStatus().data;
-  const info = ai === "claude-code" ? auth?.claudeCode : ai === "codex" ? auth?.codex : undefined;
-  const connected = info?.status === "connected";
+  const report = useTools().data;
+  const tool = ai ? report?.tools.find((t) => t.id === toolOfAi[ai]) : undefined;
+  const state = aiRailState(ai, tool);
   const name = ai ? aiLabels[ai].name : "Aucune IA choisie";
-  const state = !ai ? "à choisir" : connected ? "connectée" : info ? "à vérifier" : "état inconnu";
   return (
-    <RailButton label={`IA par défaut : ${name}`} detail={state} onClick={onClick}>
+    <RailButton label={`IA par défaut : ${name}`} detail={state.label} onClick={onClick}>
       <span className="relative inline-flex">
         <span
           aria-hidden="true"
@@ -206,7 +220,7 @@ function DefaultAiButton({ onClick }: { onClick: () => void }) {
           aria-hidden="true"
           className={cn(
             "absolute -right-[3px] -bottom-[3px] size-2.5 rounded-full border-2 border-bg",
-            connected ? "bg-green" : "bg-tx3",
+            state.tone === "green" ? "bg-green" : state.tone === "amber" ? "bg-amber" : "bg-tx3",
           )}
         />
       </span>
