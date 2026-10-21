@@ -13,6 +13,9 @@
 //! - `received` : notifications `notifications/cadence/*` reçues de l'hôte (méthode, paramètres) ;
 //! - `slow_progress` : attend `ms` millisecondes en signalant sa progression toutes les `every` ms.
 //!
+//! `echo`, `env` et `received` sont annoncés en lecture seule (`readOnlyHint`) ; les autres
+//! outils écrivent, pour les accords du mode « Demander » (recette du 21/10, N12).
+//!
 //! Arguments : `--crash-on-start` (quitte avant `initialize`), `--hang-on-start` (ne répond
 //! jamais). Écrit « fake-plugin prêt » sur stderr au démarrage.
 
@@ -29,7 +32,7 @@ use rmcp::{
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, CustomNotification, JsonObject,
         ListToolsResult, MetaObject, PaginatedRequestParams, ProgressNotificationParam, ServerCapabilities, ServerConfig,
-        ServerNotification, Tool,
+        ServerNotification, Tool, ToolAnnotations,
     },
     service::{NotificationContext, RequestContext},
 };
@@ -48,6 +51,12 @@ fn schema(properties: Value) -> Arc<JsonObject> {
 
 fn tool(name: &'static str, description: &'static str, properties: Value) -> Tool {
     Tool::new(name, description, schema(properties))
+}
+
+/// Outil en lecture seule (`readOnlyHint`).
+fn read_only(mut tool: Tool) -> Tool {
+    tool.annotations = Some(ToolAnnotations::new().read_only(true));
+    tool
 }
 
 fn ok(value: Value) -> CallToolResponse {
@@ -70,15 +79,15 @@ impl ServerHandler for Fake {
         let Value::Object(meta) = json!({ "cadence/visibility": "ui" }) else { unreachable!() };
         ui_only.meta = Some(MetaObject(meta));
         let mut tools = vec![
-            tool("echo", "Renvoie ses arguments.", json!({ "text": { "type": "string" } })),
+            read_only(tool("echo", "Renvoie ses arguments.", json!({ "text": { "type": "string" } }))),
             tool("slow", "Attend `ms` millisecondes.", json!({ "ms": { "type": "integer" } })),
             tool("crash", "Arrête le serveur.", json!({})),
             ui_only,
-            tool("env", "Variables d'environnement reçues.", json!({})),
+            read_only(tool("env", "Variables d'environnement reçues.", json!({}))),
             tool("grow", "Ajoute l'outil `extra`.", json!({})),
             tool("fail", "Répond par une erreur.", json!({})),
             tool("emit", "Envoie un événement aux iframes du plugin.", json!({ "event": { "type": "string" } })),
-            tool("received", "Notifications reçues de l'hôte.", json!({})),
+            read_only(tool("received", "Notifications reçues de l'hôte.", json!({}))),
             tool("slow_progress", "Attend `ms` ms en signalant sa progression.", json!({ "ms": { "type": "integer" }, "every": { "type": "integer" } })),
         ];
         if self.grown.load(Ordering::SeqCst) {

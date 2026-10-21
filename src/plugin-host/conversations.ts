@@ -4,10 +4,16 @@
  * dans la vue Chat. L'`HostApi` est liée au plugin : il ne voit que ses conversations et ses
  * groupes (l'hôte préfixe les ids de groupe par l'id du plugin).
  *
- * L'événement `conversations` `{ id, group?, state }` part à chaque création ou changement d'état
- * (relais de `chat://state` par le pool d'iframes).
+ * L'événement `conversations` `{ id, group?, state, waiting? }` part à chaque création ou
+ * changement d'état (relais de `chat://state` par le pool d'iframes).
+ *
+ * Compatibilité du SDK (API 1) : ses états restent `idle`, `running`, `waiting-approval`,
+ * `failed`, `interrupted`. « En attente de votre réponse » (`waiting-reply` dans Cadence, tour
+ * terminé sur une question, recette du 21/10, N10) y devient `waiting-approval` avec
+ * `waiting: "reply"` ; une demande d'accord ou une question à choix porte `waiting: "approval"`.
+ * Même règle pour `conversations.list/get` (côté Rust, `sdk_state`).
  */
-import type { ChatState, ChatStatePayload } from "@/lib/types";
+import type { ChatState, ChatStatePayload, ConversationWaiting } from "@/lib/types";
 import type { HostApi } from "./bridge";
 import { BridgeError } from "./protocol";
 
@@ -44,7 +50,16 @@ export function conversationHandlers(api: HostApi): Record<string, Handler> {
 export interface ConversationEvent {
   id: string;
   group?: { id: string; label: string };
-  state: ChatState;
+  /** État au sens du SDK : jamais `waiting-reply` (voir l'en-tête). */
+  state: Exclude<ChatState, "waiting-reply">;
+  waiting?: ConversationWaiting;
+}
+
+/** État de Cadence → état et attente vus par le SDK (API 1). */
+export function sdkState(state: ChatState): Pick<ConversationEvent, "state" | "waiting"> {
+  if (state === "waiting-reply") return { state: "waiting-approval", waiting: "reply" };
+  if (state === "waiting-approval") return { state, waiting: "approval" };
+  return { state };
 }
 
 /** `chat://state` → événement `conversations` du plugin ; `null` si la conversation n'est pas à lui. */
@@ -56,6 +71,6 @@ export function conversationEvent(
   return {
     id: payload.session,
     ...(payload.group ? { group: payload.group } : {}),
-    state: payload.state,
+    ...sdkState(payload.state),
   };
 }

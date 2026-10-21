@@ -84,6 +84,7 @@ export type { ConversationMessage } from "./bindings/ConversationMessage";
 export type { ConversationRole } from "./bindings/ConversationRole";
 export type { ConversationTool } from "./bindings/ConversationTool";
 export type { ConversationUsage } from "./bindings/ConversationUsage";
+export type { ConversationWaiting } from "./bindings/ConversationWaiting";
 export type { ChatEventRow } from "./bindings/ChatEventRow";
 export type { ChatSessionDetail } from "./bindings/ChatSessionDetail";
 export type { ChatSendInput } from "./bindings/ChatSendInput";

@@ -8,6 +8,7 @@ import { PluginTile } from "@/components/domain/PluginTile";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/cn";
 import { aiLabels, aiRailState } from "@/lib/domain/ai";
+import { awaitsUser } from "@/lib/domain/chat";
 import { toolOfAi } from "@/lib/domain/tools";
 import { homeView, pluginCategories, railGroups } from "@/lib/domain/plugins";
 import { useAppSettings, useChatSessions, usePlugins, useTools } from "@/lib/query/queries";
@@ -36,7 +37,7 @@ export function AppRail() {
   const plugins = usePlugins().data ?? [];
   const active = railKey(view);
   // Une conversation (même rangée dans un sprint) attend un accord ou une réponse.
-  const waiting = (useChatSessions().data ?? []).filter((s) => s.state === "waiting-approval");
+  const waiting = (useChatSessions().data ?? []).filter((s) => awaitsUser(s.state));
 
   const openPlugin = (p: InstalledPluginView) => {
     const home = homeView(p);

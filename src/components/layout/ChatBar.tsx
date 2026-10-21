@@ -141,6 +141,15 @@ export function SessionContext({
           {session.state === "running" ? <Spinner size={11} /> : <Icon name="warning" size={11} />}
         </span>
       )}
+      {session.state === "waiting-reply" && (
+        <span
+          className="ml-auto flex shrink-0 text-clay"
+          title="En attente de votre réponse"
+          aria-label="En attente de votre réponse"
+        >
+          <Icon name="chat" size={11} />
+        </span>
+      )}
       {session.state === "failed" && (
         <span className="ml-auto flex shrink-0 text-red" title="Dernier tour en échec">
           <Icon name="warning" size={11} />

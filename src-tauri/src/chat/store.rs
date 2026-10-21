@@ -54,7 +54,13 @@ CREATE TABLE IF NOT EXISTS events (
 pub enum ChatState {
     Idle,
     Running,
+    /// Une demande d'accord ou une question à choix attend l'utilisateur, en plein tour.
     WaitingApproval,
+    /// Tour terminé sur une question posée en texte (« Réponds oui pour fusionner ») : la
+    /// conversation attend la réponse de l'utilisateur (recette du 21/10, N10). Comme `Idle`,
+    /// elle accepte un nouveau message ; elle survit au redémarrage de l'app. Le SDK des
+    /// plugins la voit en `waiting-approval` avec `waiting: "reply"` (compatibilité).
+    WaitingReply,
     /// Dernier tour en échec (connexion, quota, plantage).
     Failed,
     /// Dernier tour interrompu ; la conversation reste reprenable.

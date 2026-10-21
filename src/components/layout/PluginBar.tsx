@@ -134,8 +134,17 @@ function PluginConversations({ plugin }: { plugin: InstalledPluginView }) {
                 </span>
               )}
               {row.state === "waiting-approval" && (
-                <span className="ml-auto flex shrink-0 text-clay" title="Attend votre réponse">
+                <span className="ml-auto flex shrink-0 text-clay" title="Attend votre accord">
                   <Icon name="warning" size={11} />
+                </span>
+              )}
+              {row.state === "waiting-reply" && (
+                <span
+                  className="ml-auto flex shrink-0 text-clay"
+                  title="En attente de votre réponse"
+                  aria-label="En attente de votre réponse"
+                >
+                  <Icon name="chat" size={11} />
                 </span>
               )}
             </>

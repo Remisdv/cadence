@@ -68,6 +68,11 @@ fn core_tool(name: &str, description: &str, input: Value, read_only: bool) -> To
     tool
 }
 
+/// Noms exposés des outils du cœur (`cadence__plugins_info`…), jamais soumis à un accord.
+pub fn names() -> Vec<String> {
+    tools().into_iter().map(|tool| tool.name.into_owned()).collect()
+}
+
 /// Définitions des outils du cœur.
 pub fn tools() -> Vec<Tool> {
     vec![

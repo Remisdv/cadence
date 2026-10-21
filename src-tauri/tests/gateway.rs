@@ -15,7 +15,7 @@ use cadence_lib::{
         PluginSummary,
         core_tools::GatewayEvent,
         scope::SessionScope,
-        server::{Gateway, GatewayContext},
+        server::{Gateway, GatewayContext, ToolAccess},
     },
     plugins::{
         env::{LaunchSpec, server_env},
@@ -103,6 +103,24 @@ async fn connect(url: &str, token: &SecretString) -> Result<Client, String> {
 async fn call(client: &Client, tool: &str, args: Value) -> Result<rmcp::model::CallToolResult, ServiceError> {
     let params = CallToolRequestParams::new(tool.to_string()).with_arguments(args.as_object().unwrap().clone());
     client.peer().call_tool(params).await
+}
+
+/// Recette du 21/10, N12 : ce que le mode « Demander » soumet à l'accord de l'utilisateur.
+#[tokio::test(flavor = "multi_thread")]
+async fn classifies_tools_for_the_ask_mode() {
+    let f = fixture("access").await;
+    let context = f.gateway.context();
+    assert_eq!(context.tool_access("cadence__run_report").await, ToolAccess::Core);
+    assert_eq!(context.tool_access("fake__echo").await, ToolAccess::ReadOnly, "readOnlyHint");
+    assert_eq!(
+        context.tool_access("fake__emit").await,
+        ToolAccess::Writes { plugin: "Factice".into(), tool: "emit".into() },
+        "sans readOnlyHint : écrit"
+    );
+    assert_eq!(context.tool_access("fake__ui_only").await, ToolAccess::Unknown, "outil ui jamais exposé");
+    assert_eq!(context.tool_access("fake__absent").await, ToolAccess::Unknown);
+    assert_eq!(context.tool_access("docs__lire").await, ToolAccess::Unknown, "plugin sans serveur");
+    f.host.stop_all().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -62,7 +62,11 @@ use crate::{
     app_settings::AiId,
     domain::version::now_iso,
     error::{AppError, AppResult},
-    gateway::{core_tools::RunReport, scope::SessionScope, server::GatewayContext},
+    gateway::{
+        core_tools::RunReport,
+        scope::{self, SessionScope},
+        server::{GatewayContext, ToolAccess},
+    },
 };
 
 /// Charge de `chat://event`.
@@ -380,10 +384,19 @@ impl ChatService {
         let permissions = self.store.get(id).await.map(|row| row.permissions).unwrap_or_default();
         let by_mode = match permissions {
             Permissions::Full => true,
-            Permissions::AutoEdit => info.kind == ApprovalKind::FileChange,
+            // « Édition auto » laisse passer les modifications de fichiers et les outils des
+            // plugins qui écrivent (N12) ; les commandes restent demandées.
+            Permissions::AutoEdit => info.kind == ApprovalKind::FileChange || info.plugin_write,
             Permissions::Ask => false,
         };
         by_mode || self.rules.lock().unwrap().get(id).is_some_and(|rules| rules.covers(info))
+    }
+
+    /// Accès d'un outil de la passerelle nommé par la CLI (`mcp__cadence__…`, `cadence_…`) ;
+    /// `None` pour un outil qui n'est pas servi par la passerelle.
+    async fn gateway_access(&self, tool: Option<&str>) -> Option<ToolAccess> {
+        let exposed = scope::exposed_of_cli(tool?)?;
+        Some(self.gateway.as_ref()?.context.tool_access(exposed).await)
     }
 
     fn wait_for(&self, id: &str, request: &str, waiting: Waiting) {
@@ -864,14 +877,118 @@ pub fn launch_permissions(chosen: Permissions, mode: SessionMode) -> Permissions
     }
 }
 
+/// Arguments d'un appel d'outil dans le détail d'une demande d'accord : l'entrée de l'outil
+/// (Claude Code), ou ce que Codex et OpenCode en donnent.
+fn tool_arguments(detail: &serde_json::Value) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    const NESTED: &[&str] = &["/arguments", "/input", "/metadata/input", "/metadata/args", "/request/_meta/tool_params", "/_meta/tool_params"];
+    if let Some(found) = NESTED.iter().find_map(|path| detail.pointer(path).and_then(|v| v.as_object())) {
+        return Some(found);
+    }
+    let object = detail.as_object()?;
+    let envelope = ["permission", "serverName", "threadId", "sessionID", "request", "message"];
+    (!envelope.iter().any(|key| object.contains_key(*key))).then_some(object)
+}
+
+/// Titre de la carte d'accord d'un outil de plugin (N12) : plugin, outil et arguments
+/// résumés (« Gestion de projet › merge_pull_request · pull_number: 22, delete_branch: true »).
+pub fn plugin_tool_title(plugin: &str, tool: &str, detail: &serde_json::Value) -> String {
+    use serde_json::Value;
+    let short = |text: &str| {
+        let line = text.lines().next().unwrap_or_default();
+        if line.chars().count() > 40 || text.contains('\n') { format!("« {}… »", line.chars().take(40).collect::<String>().trim_end()) } else { format!("« {line} »") }
+    };
+    let args: Vec<String> = tool_arguments(detail)
+        .into_iter()
+        .flatten()
+        .filter(|(_, v)| !v.is_null())
+        .take(5)
+        .map(|(key, value)| {
+            let shown = match value {
+                Value::String(text) => short(text),
+                Value::Array(items) => format!("[{}]", items.iter().take(4).map(|i| match i {
+                    Value::String(t) => t.chars().take(20).collect(),
+                    other => other.to_string(),
+                }).collect::<Vec<String>>().join(", ")),
+                Value::Object(_) => "{…}".into(),
+                other => other.to_string(),
+            };
+            format!("{key}: {shown}")
+        })
+        .collect();
+    if args.is_empty() { format!("{plugin} › {tool}") } else { format!("{plugin} › {tool} · {}", args.join(", ")) }
+}
+
+/// Formules qui invitent l'utilisateur à répondre, cherchées dans le dernier paragraphe.
+const REPLY_CUES: &[&str] = &[
+    "réponds",
+    "répondez",
+    "dis-moi",
+    "dites-moi",
+    "confirme-moi",
+    "confirmez",
+    "j'attends ta",
+    "j'attends votre",
+    "veux-tu",
+    "voulez-vous",
+    "souhaites-tu",
+    "souhaitez-vous",
+    "let me know",
+    "reply",
+    "please confirm",
+];
+
+/// Le dernier message de l'IA attend une réponse (recette du 21/10, N10) : son dernier
+/// paragraphe se termine par une question, ou demande explicitement une réponse
+/// (« Réponds **oui** pour que je fusionne. »). Mise en forme Markdown ignorée.
+pub fn awaits_reply(text: &str) -> bool {
+    let last = text.rsplit("\n\n").map(str::trim).find(|p| !p.is_empty()).unwrap_or_default();
+    let ending = last.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '*' | '_' | '`' | ')' | '»' | '"' | '\'' | '…'));
+    if ending.ends_with('?') {
+        return true;
+    }
+    let lower = last.to_lowercase().replace(['*', '_', '`'], "");
+    REPLY_CUES.iter().any(|cue| lower.contains(cue))
+}
+
+/// État d'une conversation à la fin d'un tour : `WaitingReply` quand le tour réussi finit
+/// par une question.
+pub fn state_after_turn(ok: bool, interrupted: bool, last_message: Option<&str>) -> ChatState {
+    match (interrupted, ok) {
+        (true, _) => ChatState::Interrupted,
+        (false, false) => ChatState::Failed,
+        (false, true) if last_message.is_some_and(awaits_reply) => ChatState::WaitingReply,
+        (false, true) => ChatState::Idle,
+    }
+}
+
 /// Enregistre et diffuse les événements d'un processus, dans l'ordre.
 async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, mut events: mpsc::UnboundedReceiver<AiEvent>) {
+    // Dernier message de l'IA du tour en cours : décide de « En attente de votre réponse ».
+    let mut last_message: Option<String> = None;
     while let Some(mut event) = events.recv().await {
         let Some(service) = service.upgrade() else { return };
         let turn = turn.load(Ordering::SeqCst);
         match &mut event {
             AiEvent::ApprovalRequested { request, kind, title, detail, tool, scope } => {
-                let info = ApprovalInfo::of(*kind, tool.as_deref(), title, detail);
+                let mut info = ApprovalInfo::of(*kind, tool.as_deref(), title, detail);
+                // Outil de la passerelle (N12) : ceux du cœur et des plugins en lecture seule
+                // passent d'office ; un outil de plugin qui écrit devient une carte lisible.
+                if *kind == ApprovalKind::Tool {
+                    match service.gateway_access(tool.as_deref()).await {
+                        Some(ToolAccess::Core | ToolAccess::ReadOnly) => {
+                            if let Some(session) = service.live_session(&id).await
+                                && session.answer(request, ApprovalDecision::Allow).await.is_ok()
+                            {
+                                continue;
+                            }
+                        }
+                        Some(ToolAccess::Writes { plugin, tool: name }) => {
+                            info.plugin_write = true;
+                            *title = plugin_tool_title(&plugin, &name, detail);
+                        }
+                        Some(ToolAccess::Unknown) | None => {}
+                    }
+                }
                 // Couverte par le mode ou un accord de session : accordée d'office, sans carte.
                 if service.allowed_now(&id, &info).await
                     && let Some(session) = service.live_session(&id).await
@@ -888,10 +1005,14 @@ async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, m
             }
             _ => {}
         }
+        if let AiEvent::MessageCompleted { text, .. } = &event
+            && !text.trim().is_empty()
+        {
+            last_message = Some(text.clone());
+        }
         let state = match &event {
             AiEvent::ApprovalRequested { .. } | AiEvent::Question { .. } => Some(ChatState::WaitingApproval),
-            AiEvent::TurnCompleted { interrupted: true, .. } => Some(ChatState::Interrupted),
-            AiEvent::TurnCompleted { ok, .. } => Some(if *ok { ChatState::Idle } else { ChatState::Failed }),
+            AiEvent::TurnCompleted { ok, interrupted, .. } => Some(state_after_turn(*ok, *interrupted, last_message.take().as_deref())),
             _ => None,
         };
         let result = match &event {
@@ -914,7 +1035,7 @@ async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, m
         {
             tracing::warn!(session = id, %err, "état du chat non enregistré");
         }
-        if matches!(state, Some(ChatState::Idle | ChatState::Failed | ChatState::Interrupted)) {
+        if matches!(state, Some(ChatState::Idle | ChatState::WaitingReply | ChatState::Failed | ChatState::Interrupted)) {
             service.end_background(&id).await;
         }
     }
@@ -969,6 +1090,42 @@ mod tests {
         assert_eq!(launch_permissions(Permissions::Ask, SessionMode::Chat), Permissions::Ask);
         assert_eq!(launch_permissions(Permissions::Full, SessionMode::Background), Permissions::AutoEdit);
         assert_eq!(launch_permissions(Permissions::Ask, SessionMode::Background), Permissions::AutoEdit);
+    }
+
+    #[test]
+    fn plugin_tool_cards_summarize_their_arguments() {
+        let claude = serde_json::json!({ "repo": "o/n", "pull_number": 22, "delete_branch": true, "close_issues": [21], "body": "Revue\nlongue", "x": null });
+        let title = plugin_tool_title("Gestion de projet", "merge_pull_request", &claude);
+        assert!(title.starts_with("Gestion de projet › merge_pull_request · "), "{title}");
+        for part in ["repo: « o/n »", "pull_number: 22", "delete_branch: true", "close_issues: [21]", "body: « Revue… »"] {
+            assert!(title.contains(part), "{part} dans {title}");
+        }
+        assert!(!title.contains("x:"), "valeurs nulles omises : {title}");
+        let opencode = serde_json::json!({ "permission": "cadence_gestion-projet__create_issue", "metadata": { "input": { "title": "QA" } } });
+        assert_eq!(plugin_tool_title("Gestion de projet", "create_issue", &opencode), "Gestion de projet › create_issue · title: « QA »");
+        let codex = serde_json::json!({ "serverName": "cadence", "message": "Allow?" });
+        assert_eq!(plugin_tool_title("Gestion de projet", "create_issue", &codex), "Gestion de projet › create_issue");
+    }
+
+    #[test]
+    fn a_turn_ending_with_a_question_waits_for_a_reply() {
+        for text in [
+            "Les deux PR sont prêtes.\n\nJe fusionne #22 et #24 ?",
+            "Revue terminée.\n\nRéponds **oui** pour que je fusionne.",
+            "Tout est vert. Veux-tu que je supprime la branche ?**",
+            "Done.\n\nLet me know if I should merge.",
+            "On part sur quelle option (A ou B ?)",
+        ] {
+            assert!(awaits_reply(text), "{text}");
+        }
+        for text in ["Fusion faite : #22 et #24 sont dans release/0.2.0.", "Question réglée ?\n\nJ'ai tout fusionné.", "", "   "] {
+            assert!(!awaits_reply(text), "{text}");
+        }
+        assert_eq!(state_after_turn(true, false, Some("On fusionne ?")), ChatState::WaitingReply);
+        assert_eq!(state_after_turn(true, false, Some("C'est fusionné.")), ChatState::Idle);
+        assert_eq!(state_after_turn(true, false, None), ChatState::Idle);
+        assert_eq!(state_after_turn(false, false, Some("On fusionne ?")), ChatState::Failed);
+        assert_eq!(state_after_turn(false, true, Some("On fusionne ?")), ChatState::Interrupted);
     }
 
     #[test]

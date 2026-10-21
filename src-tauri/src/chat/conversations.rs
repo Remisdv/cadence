@@ -23,6 +23,30 @@ const GROUP_MAX: usize = 120;
 /// Plafond des nombres rendus au SDK (`< 2^31`).
 const SDK_MAX: u32 = i32::MAX as u32;
 
+/// Ce qu'attend une conversation en `waiting-approval`, pour le SDK des plugins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ConversationWaiting {
+    /// Une demande d'accord ou une question à choix, en plein tour.
+    Approval,
+    /// Le tour s'est terminé sur une question posée en texte (« Réponds oui… ») : un nouveau
+    /// message de l'utilisateur y répond.
+    Reply,
+}
+
+/// État vu par le SDK des plugins (API 1) : ses états restent `idle`, `running`,
+/// `waiting-approval`, `failed`, `interrupted`. « En attente de votre réponse » (`WaitingReply`
+/// côté Cadence, recette du 21/10, N10) y devient `waiting-approval` avec `waiting: "reply"`,
+/// pour qu'un plugin écrit avant ne la montre pas comme terminée.
+pub fn sdk_state(state: ChatState) -> (ChatState, Option<ConversationWaiting>) {
+    match state {
+        ChatState::WaitingReply => (ChatState::WaitingApproval, Some(ConversationWaiting::Reply)),
+        ChatState::WaitingApproval => (ChatState::WaitingApproval, Some(ConversationWaiting::Approval)),
+        other => (other, None),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -31,7 +55,13 @@ pub struct ConversationInfo {
     pub title: String,
     pub ai: AiId,
     pub model: Option<String>,
+    /// État au sens du SDK (voir `sdk_state`) : jamais `waiting-reply`.
     pub state: ChatState,
+    /// Avec `waiting-approval` : accord ou question à choix (`approval`), ou réponse à une
+    /// question posée en fin de tour (`reply`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub waiting: Option<ConversationWaiting>,
     pub mode: ChatMode,
     /// Action du plugin qui l'a ouverte.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,12 +80,14 @@ pub struct ConversationInfo {
 
 impl ConversationInfo {
     pub fn of(plugin: &str, row: &ChatSessionRow, turns: u32) -> Self {
+        let (state, waiting) = sdk_state(row.state);
         Self {
             id: row.id.clone(),
             title: row.title.clone(),
             ai: row.ai,
             model: row.model.clone(),
-            state: row.state,
+            state,
+            waiting,
             mode: row.mode,
             action: origin_action(&row.origin).map(|(_, action)| action.to_string()),
             context: row.context.clone(),
@@ -248,6 +280,12 @@ mod tests {
             context: Some(json!({ "type": "issue", "issue": 42 })),
         };
         let info = ConversationInfo::of("gestion-projet", &session, 2);
+        assert_eq!((info.state, info.waiting), (ChatState::Idle, None));
+        let waiting = ConversationInfo::of("gestion-projet", &ChatSessionRow { state: ChatState::WaitingReply, ..session.clone() }, 2);
+        assert_eq!((waiting.state, waiting.waiting), (ChatState::WaitingApproval, Some(ConversationWaiting::Reply)), "compatible SDK");
+        let json = serde_json::to_string(&waiting).unwrap();
+        assert!(json.contains("\"state\":\"waiting-approval\"") && json.contains("\"waiting\":\"reply\""), "{json}");
+        assert_eq!(sdk_state(ChatState::WaitingApproval), (ChatState::WaitingApproval, Some(ConversationWaiting::Approval)));
         assert_eq!(info.action.as_deref(), Some("developper-issue"));
         assert_eq!(info.group.as_ref().unwrap().id, "sprint:o/n:3", "id vu par le plugin");
         let long = "x".repeat(40_000);

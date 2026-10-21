@@ -6,7 +6,8 @@
 //! → initialize { clientInfo, capabilities.experimentalApi } ; initialized
 //! → skills/extraRoots/set { extraRoots: [<prép>/plugin/skills] }
 //! → thread/start | thread/resume { cwd, approvalPolicy, sandbox, developerInstructions,
-//!     config: { mcp_servers.cadence: { url, bearer_token_env_var, default_tools_approval_mode },
+//!     config: { mcp_servers.cadence: { url, bearer_token_env_var, default_tools_approval_mode,
+//!                                      tools.<cœur>.approval_mode (« Demander ») },
 //!               sandbox_workspace_write.writable_roots: [<worktrees ouverts à la session>] } }
 //! → turn/start { threadId, input } … turn/interrupt { threadId, turnId }
 //! ← item/*, turn/*, thread/tokenUsage/updated, error ; requêtes item/*/requestApproval
@@ -280,7 +281,7 @@ impl CodexSession {
             "cwd": cwd.display().to_string(),
             "approvalPolicy": approval,
             "sandbox": sandbox,
-            "config": staging::codex_config(gateway_url, add_dirs),
+            "config": staging::codex_config(gateway_url, add_dirs, (permissions, mode) == (Permissions::Ask, SessionMode::Chat)),
             "developerInstructions": staging::INSTRUCTIONS,
         });
         if let Some(model) = model {

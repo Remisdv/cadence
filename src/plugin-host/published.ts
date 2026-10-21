@@ -71,6 +71,8 @@ export function publishedEvent(
       const status: Record<string, RunStatus> = {
         running: "running",
         "waiting-approval": "running",
+        // Tour terminé sur une question (N10) : l'exécution a rendu son résultat.
+        "waiting-reply": "succeeded",
         idle: "succeeded",
         failed: "failed",
         interrupted: "cancelled",

@@ -10,6 +10,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import { ChatBar, SessionContext } from "@/components/layout/ChatBar";
 import { Page } from "@/components/layout/Page";
 import { Icon } from "@/components/icons/Icon";
+import { cn } from "@/lib/cn";
 import { ChatThread } from "@/components/domain/ChatThread";
 import { ChatModeMenu } from "@/components/domain/ChatModeMenu";
 import { PluginTile } from "@/components/domain/PluginTile";
@@ -249,6 +250,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             onSend={onSend}
             onStop={() => sessionId && interrupt.mutate(sessionId)}
             plugins={plugins}
+            waitingReply={session?.state === "waiting-reply"}
           />
         </div>
         <SessionPanel
@@ -440,6 +442,7 @@ function Composer({
   onSend,
   onStop,
   plugins,
+  waitingReply = false,
 }: {
   ai: AiId | null;
   /** IA proposées pour une nouvelle conversation ; vide = IA fixée (conversation existante). */
@@ -455,6 +458,8 @@ function Composer({
   onStop: () => void;
   /** Plugins activés : leurs skills sont proposés par le bouton Skills. */
   plugins: InstalledPluginView[];
+  /** Le dernier tour s'est terminé sur une question : l'IA attend la réponse (N10). */
+  waitingReply?: boolean;
 }) {
   const [text, setText] = useState("");
   /** Fichiers joints (chemins absolus), copiés par Cadence dans le dossier de la conversation. */
@@ -508,7 +513,18 @@ function Composer({
   return (
     <div className="shrink-0 px-[30px] pt-3.5 pb-[18px]">
       <div className="mx-auto max-w-[780px]">
-        <div className="rounded-card border border-line2 bg-panel">
+        {waitingReply && !running && (
+          <div className="mb-2 flex items-center gap-2 text-caption text-clay" role="status">
+            <Icon name="chat" size={13} />
+            En attente de votre réponse : {ai ?? "l'IA"} a terminé son tour par une question.
+          </div>
+        )}
+        <div
+          className={cn(
+            "rounded-card border bg-panel",
+            waitingReply && !running ? "border-clay-line" : "border-line2",
+          )}
+        >
           <label htmlFor="chat-input" className="sr-only">
             Message pour l'IA
           </label>
@@ -520,7 +536,11 @@ function Composer({
             autoFocus
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={`Écrire à ${ai ?? "l'IA"}… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)`}
+            placeholder={
+              waitingReply
+                ? `Répondre à ${ai ?? "l'IA"}… (Entrée pour envoyer)`
+                : `Écrire à ${ai ?? "l'IA"}… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)`
+            }
             className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-body leading-[1.55] text-tx outline-none placeholder:text-tx3"
           />
           {files.length > 0 && (

@@ -5,7 +5,7 @@
 //! claude -p --input-format stream-json --output-format stream-json --verbose
 //!   --include-partial-messages --mcp-config <prép>/mcp.json --strict-mcp-config
 //!   --plugin-dir <prép>/plugin --append-system-prompt-file <prép>/CADENCE.md
-//!   --settings <prép>/settings.json --allowedTools mcp__cadence
+//!   --settings <prép>/settings.json --allowedTools mcp__cadence (Demander : les outils du cœur)
 //!   --permission-mode default|acceptEdits|bypassPermissions --permission-prompt-tool stdio
 //!   [--resume <id>] [--model <alias>] [--add-dir <worktree>]…
 //! cwd = <données>/sessions/<id>/ ; env : CADENCE_MCP_TOKEN, sans ANTHROPIC_API_KEY
@@ -17,6 +17,11 @@
 //! Approbations (`--permission-prompt-tool stdio`, dans tous les modes) : un outil de
 //! fichiers qui vise un worktree ouvert à la session est accordé d'office (`addDirectories`) ;
 //! le reste devient une carte dans le chat, ou est refusé en fond (personne pour répondre).
+//!
+//! Outils de la passerelle (recette du 21/10, N12) : en « Demander », seuls ceux du cœur sont
+//! pré-autorisés ; un outil de plugin passe par `can_use_tool`, et le chat accorde d'office ceux
+//! en lecture seule (`readOnlyHint`) et montre une carte pour ceux qui écrivent. En « Édition
+//! auto », « Auto » et en fond, tout le serveur `cadence` est pré-autorisé.
 //!
 //! Questions à choix (`AskUserQuestion`, posées même en accès complet) : une carte de question
 //! dans le chat ; les réponses repartent dans `updatedInput.answers`. En fond, la question est
@@ -96,6 +101,20 @@ pub struct ClaudeLaunch {
     pub granted: Option<DirGrants>,
 }
 
+/// Outils pré-autorisés (`--allowedTools`) : tout le serveur de la passerelle, sauf en
+/// « Demander » où seuls les outils du cœur le sont (les outils des plugins passent par
+/// `can_use_tool`, N12).
+pub fn allowed_tools(permissions: Permissions, mode: SessionMode) -> String {
+    match (permissions, mode) {
+        (Permissions::Ask, SessionMode::Chat) => crate::gateway::core_tools::names()
+            .iter()
+            .map(|name| format!("mcp__cadence__{name}"))
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => "mcp__cadence".into(),
+    }
+}
+
 /// Arguments de `claude` (hors binaire).
 pub fn args(launch: &ClaudeLaunch) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
@@ -108,11 +127,11 @@ pub fn args(launch: &ClaudeLaunch) -> Vec<OsString> {
         "--include-partial-messages",
         "--strict-mcp-config",
         "--allowedTools",
-        "mcp__cadence",
     ]
     .iter()
     .map(OsString::from)
     .collect();
+    args.push(allowed_tools(launch.permissions, launch.mode).into());
     let path = |flag: &str, p: &Path, args: &mut Vec<OsString>| {
         args.push(flag.into());
         args.push(p.as_os_str().to_owned());
@@ -419,7 +438,10 @@ mod tests {
         assert_eq!(after("--permission-prompt-tool"), Some("stdio"));
         assert_eq!(after("--resume"), Some("abc"));
         assert_eq!(after("--model"), Some("haiku"));
-        assert_eq!(after("--allowedTools"), Some("mcp__cadence"));
+        // « Demander » : seuls les outils du cœur ; ceux des plugins passent par `can_use_tool`.
+        let allowed: Vec<&str> = after("--allowedTools").unwrap().split(',').collect();
+        assert!(allowed.contains(&"mcp__cadence__cadence__run_report") && allowed.contains(&"mcp__cadence__cadence__repo_checkout"));
+        assert!(allowed.iter().all(|t| t.starts_with("mcp__cadence__cadence__")), "{allowed:?}");
         assert!(after("--mcp-config").unwrap().ends_with("mcp.json"));
         assert!(chat.contains(&"--strict-mcp-config".to_string()));
         assert!(!chat.iter().any(|a| a.contains("CADENCE_MCP_TOKEN") && !a.contains("${")), "jeton jamais en argument");
@@ -427,11 +449,14 @@ mod tests {
         let background = strings(&launch(Permissions::Ask, SessionMode::Background, None));
         assert!(background.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]), "réponses d'office en fond");
         assert!(background.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]));
+        assert!(background.windows(2).any(|w| w == ["--allowedTools", "mcp__cadence"]), "personne pour répondre en fond");
         let auto_edit = strings(&launch(Permissions::AutoEdit, SessionMode::Chat, None));
         assert!(auto_edit.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]));
+        assert!(auto_edit.windows(2).any(|w| w == ["--allowedTools", "mcp__cadence"]), "outils des plugins sans accord");
         assert!(auto_edit.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]), "le shell reste demandé");
         let full = strings(&launch(Permissions::Full, SessionMode::Chat, None));
         assert!(full.windows(2).any(|w| w == ["--permission-mode", "bypassPermissions"]));
+        assert!(full.windows(2).any(|w| w == ["--allowedTools", "mcp__cadence"]));
         assert!(full.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]), "les questions passent même en accès complet");
         assert!(!full.contains(&"--add-dir".to_string()));
 

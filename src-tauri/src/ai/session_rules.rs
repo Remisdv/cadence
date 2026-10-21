@@ -28,6 +28,9 @@ pub struct ApprovalInfo {
     pub tool: Option<String>,
     /// Ligne de commande d'une demande de commande shell.
     pub command: Option<String>,
+    /// Outil d'un plugin qui écrit (N12) : demandé en « Demander », accordé d'office en
+    /// « Édition auto » et en « Auto ». Rempli par le chat, qui connaît la passerelle.
+    pub plugin_write: bool,
 }
 
 impl ApprovalInfo {
@@ -35,7 +38,7 @@ impl ApprovalInfo {
     /// requête (Codex) ou les propriétés de `permission.asked` (OpenCode).
     pub fn of(kind: ApprovalKind, tool: Option<&str>, title: &str, detail: &Value) -> Self {
         let command = (kind == ApprovalKind::Command).then(|| command_of(detail).unwrap_or_else(|| title.to_string()));
-        Self { kind, tool: tool.filter(|t| !t.is_empty()).map(str::to_string), command }
+        Self { kind, tool: tool.filter(|t| !t.is_empty()).map(str::to_string), command, plugin_write: false }
     }
 
     /// Accord de session que cette demande donnerait.

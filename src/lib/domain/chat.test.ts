@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AiEvent, AiQuestion, ChatEventRow, ChatSessionRow } from "@/lib/types";
 import {
   activitySummary,
+  awaitsUser,
   buildThread,
   chatBarSections,
   contextPlugin,
@@ -18,7 +19,9 @@ import {
   localGroup,
   originPlugin,
   parseCadenceLink,
+  pluginToolOf,
   toolLabel,
+  waitingLabel,
 } from "./chat";
 
 const rows = (events: AiEvent[]): ChatEventRow[] =>
@@ -389,5 +392,70 @@ describe("colonne du chat et barre du plugin (recette du 21/10)", () => {
       ]),
     );
     expect(items[0]).toMatchObject({ kind: "approval", scope: "commande git", decision: null });
+  });
+});
+
+describe("attente de l'utilisateur (N10) et outils de plugin (N12)", () => {
+  it("une question en fin de tour compte comme une attente de réponse", () => {
+    expect(awaitsUser("waiting-reply")).toBe(true);
+    expect(awaitsUser("waiting-approval")).toBe(true);
+    expect(awaitsUser("idle")).toBe(false);
+    expect(waitingLabel("waiting-reply")).toBe("En attente de votre réponse");
+    expect(waitingLabel("waiting-approval")).toBe("Attend votre accord");
+    expect(waitingLabel("running")).toBeNull();
+  });
+
+  it("une conversation de sprint qui attend une réponse remonte dans « Rattachées »", () => {
+    const base = {
+      ai: "claude-code" as const,
+      model: null,
+      mode: "chat" as const,
+      permissions: "ask" as const,
+      createdAt: "2026-10-21T09:00:00",
+      updatedAt: "2026-10-21T09:00:00",
+      group: { id: "gestion-projet:sprint:1", label: "Sprint 1" },
+      hidden: true,
+      origin: "action:gestion-projet/relire-valider",
+    };
+    const sections = chatBarSections(
+      [{ ...base, id: "relire", title: "Relire et valider", state: "waiting-reply" }],
+      "",
+      null,
+      new Date("2026-10-21T12:00:00"),
+    );
+    expect(sections[0]!.rows.map((r) => r.id)).toEqual(["relire"]);
+  });
+
+  it("reconnaît les outils de plugin dans les demandes d'accord des trois IA", () => {
+    expect(pluginToolOf("mcp__cadence__gestion-projet__merge_pull_request")).toEqual({
+      plugin: "gestion-projet",
+      tool: "merge_pull_request",
+    });
+    expect(pluginToolOf("cadence_gestion-projet__create_issue")).toEqual({
+      plugin: "gestion-projet",
+      tool: "create_issue",
+    });
+    expect(pluginToolOf("mcp__cadence__cadence__repo_checkout")).toBeNull();
+    expect(pluginToolOf("Bash")).toBeNull();
+    expect(pluginToolOf(null)).toBeNull();
+  });
+
+  it("garde l'outil de la demande dans la carte d'accord", () => {
+    const [card] = buildThread(
+      rows([
+        {
+          type: "approval-requested",
+          request: "r1",
+          kind: "tool",
+          title: "Gestion de projet › merge_pull_request · pull_number: 22",
+          detail: { pull_number: 22 },
+          tool: "mcp__cadence__gestion-projet__merge_pull_request",
+        },
+      ]),
+    );
+    expect(card).toMatchObject({
+      kind: "approval",
+      tool: "mcp__cadence__gestion-projet__merge_pull_request",
+    });
   });
 });

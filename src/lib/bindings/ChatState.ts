@@ -3,4 +3,4 @@
 /**
  * État d'une conversation.
  */
-export type ChatState = "idle" | "running" | "waiting-approval" | "failed" | "interrupted";
+export type ChatState = "idle" | "running" | "waiting-approval" | "waiting-reply" | "failed" | "interrupted";

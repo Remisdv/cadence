@@ -10,6 +10,7 @@ import type {
   ChatEventRow,
   ChatGroup,
   ChatSessionRow,
+  ChatState,
   AiQuestion,
   QuestionAnswer,
   FileChange,
@@ -46,6 +47,8 @@ export type ChatItem =
       approval: ApprovalKind;
       title: string;
       detail: unknown;
+      /** Outil de la CLI (`Bash`, `mcp__cadence__<plugin>__<outil>`…), quand elle le donne. */
+      tool: string | null;
       /** Ce que couvre « Autoriser pour la session » (« commandes git, python »). */
       scope: string | null;
       decision: ApprovalDecision | null;
@@ -159,6 +162,7 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
         approval: event.kind,
         title: event.title,
         detail: event.detail,
+        tool: event.tool ?? null,
         scope: event.scope ?? null,
         decision: null,
       });
@@ -401,7 +405,7 @@ export function chatBarSections<T extends BarRow>(
   const matches = (s: T) =>
     !q || s.title.toLowerCase().includes(q) || !!s.group?.label.toLowerCase().includes(q);
   const attached = rows.filter(
-    (s) => s.hidden && (q ? matches(s) : s.id === active || s.state === "waiting-approval"),
+    (s) => s.hidden && (q ? matches(s) : s.id === active || awaitsUser(s.state)),
   );
   const listed = globalConversations(rows).filter(matches);
   const chats = listed.filter((s) => s.mode !== "background");
@@ -454,4 +458,38 @@ export function composeAnswer(question: AiQuestion, picked: string[], other: str
   const chosen = question.options.map((o) => o.label).filter((label) => picked.includes(label));
   const free = question.other ? other.trim() : "";
   return [...(question.multiSelect ? chosen : chosen.slice(0, 1)), ...(free ? [free] : [])];
+}
+
+/**
+ * La conversation attend l'utilisateur : un accord ou une question à choix en plein tour
+ * (`waiting-approval`), ou une réponse à la question qui a fini le tour (`waiting-reply`,
+ * recette du 21/10, N10).
+ */
+export function awaitsUser(state: ChatState): boolean {
+  return state === "waiting-approval" || state === "waiting-reply";
+}
+
+/** Libellé court d'un état qui attend l'utilisateur (infobulles, pastilles). */
+export function waitingLabel(state: ChatState): string | null {
+  if (state === "waiting-approval") return "Attend votre accord";
+  if (state === "waiting-reply") return "En attente de votre réponse";
+  return null;
+}
+
+/**
+ * Outil d'un plugin servi par la passerelle, tel que la CLI le nomme dans une demande
+ * d'accord : `mcp__cadence__<plugin>__<outil>` (Claude Code, Codex), `cadence_<plugin>__<outil>`
+ * (OpenCode). `null` pour un outil natif ou un outil du cœur (`cadence__*`).
+ */
+export function pluginToolOf(tool: string | null): { plugin: string; tool: string } | null {
+  if (!tool) return null;
+  const exposed = tool.startsWith("mcp__cadence__")
+    ? tool.slice("mcp__cadence__".length)
+    : tool.startsWith("cadence_")
+      ? tool.slice("cadence_".length)
+      : null;
+  const at = exposed?.indexOf("__") ?? -1;
+  if (!exposed || at <= 0 || at + 2 >= exposed.length) return null;
+  const plugin = exposed.slice(0, at);
+  return plugin === "cadence" ? null : { plugin, tool: exposed.slice(at + 2) };
 }

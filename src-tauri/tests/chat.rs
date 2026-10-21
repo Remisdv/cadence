@@ -140,6 +140,30 @@ async fn runs_turns_and_resumes_after_a_restart() {
     f.chat.shutdown().await;
 }
 
+/// Recette du 21/10, N10 : un tour qui finit par une question laisse la conversation « En
+/// attente de votre réponse », pas « Terminée » ; la réponse de l'utilisateur la relance.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_ending_with_a_question_waits_for_the_reply() {
+    let f = fixture("waiting-reply", |_| {}).await;
+    let id = f.send(None, "Revue faite. On fusionne les deux PR ?").await;
+    f.wait(&id, ChatState::WaitingReply).await;
+    let states: Vec<ChatState> = f
+        .notices
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|n| if let ChatNotice::State(s) = n { Some(s.state) } else { None })
+        .collect();
+    assert_eq!(states.last(), Some(&ChatState::WaitingReply), "{states:?}");
+    assert!(!states.contains(&ChatState::Idle), "jamais « Terminée » : {states:?}");
+
+    // La réponse part comme un message ordinaire ; le tour suivant se termine normalement.
+    f.send(Some(&id), "oui").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "écho : oui");
+    f.chat.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn relays_approvals_both_ways() {
     let f = fixture("approvals", |_| {}).await;
@@ -458,7 +482,8 @@ async fn runs_background_actions_in_a_queue_and_records_reports() {
 
     // Suite dans le chat : la conversation reprend en mode conversation.
     f.send(Some(&first), "et ensuite ?").await;
-    f.wait(&first, ChatState::Idle).await;
+    // L'écho finit par une question : la conversation attend la réponse (N10).
+    f.wait(&first, ChatState::WaitingReply).await;
     let last = f.replies(&first).await.last().cloned().unwrap_or_default();
     assert!(last.contains("reprise fake-1") && last.ends_with("et ensuite ?"), "session native reprise : {last}");
     f.chat.shutdown().await;
@@ -603,5 +628,96 @@ async fn asks_choice_questions_and_returns_the_answers_even_in_auto_mode() {
     let reply = f.replies(&run).await.join("");
     assert!(reply.starts_with("question refusée : Personne ne peut répondre"), "{reply}");
     assert!(!f.events(&run).await.iter().any(|e| matches!(e, AiEvent::Question { .. })));
+    f.chat.shutdown().await;
+}
+
+fn fake_plugin() -> PathBuf {
+    let path = fake_claude().with_file_name(format!("fake-plugin{}", std::env::consts::EXE_SUFFIX));
+    assert!(path.is_file(), "`cargo build --example fake-plugin` d'abord ({} absent)", path.display());
+    path
+}
+
+/// Chat branché sur une passerelle devant `fake-plugin` (`echo` en lecture seule, `emit` écrit).
+async fn fixture_with_gateway(name: &str) -> Fixture {
+    use cadence_lib::{
+        chat::GatewayAccess,
+        gateway::{PluginSummary, server::GatewayContext},
+        plugins::{
+            env::{LaunchSpec, server_env},
+            host::{HostConfig, PluginHost},
+        },
+    };
+    let dir = std::env::temp_dir().join(format!("cadence-chat-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (program, data_root) = (fake_plugin(), dir.join("plugins-data"));
+    let resolve = Arc::new(move |plugin: &str| {
+        let data_dir = data_root.join(plugin);
+        Ok(LaunchSpec {
+            plugin: plugin.to_string(),
+            program: program.clone(),
+            args: vec![],
+            env: server_env(std::env::vars(), "0.3.0", &data_dir, &serde_json::json!({})),
+            data_dir,
+            secrets: vec![],
+            idle_shutdown: None,
+            log_file: None,
+        })
+    });
+    let host = Arc::new(PluginHost::new(HostConfig::new("0.3.0"), resolve, Arc::new(|_| {})));
+    let plugins = Arc::new(|| {
+        vec![PluginSummary { id: "fake".into(), name: "Factice".into(), description: String::new(), views: vec![], has_server: true }]
+    });
+    let context = GatewayContext::new("0.3.0", host, plugins, Arc::new(|_| {}));
+    let store = ChatStore::open(&dir.join("chat.sqlite3")).await.unwrap();
+    let config = ChatConfig::new(dir.join("sessions"), dir.join("staging"));
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    let sink = notices.clone();
+    let cli = fake_claude();
+    let gateway = GatewayAccess { url: "http://127.0.0.1:9/mcp".into(), context };
+    let chat = ChatService::new(
+        store,
+        config,
+        Arc::new(move |_| Ok(cli.clone())),
+        Arc::new(Vec::new),
+        Some(gateway),
+        Arc::new(move |n| sink.lock().unwrap().push(n)),
+    );
+    Fixture { chat, notices, dir }
+}
+
+/// Recette du 21/10, N12 : en « Demander », un outil de plugin qui écrit attend l'accord de
+/// l'utilisateur (carte avec plugin, outil et arguments) ; un outil en lecture seule et ceux du
+/// cœur passent sans carte ; en « Édition auto », les outils des plugins passent.
+#[tokio::test(flavor = "multi_thread")]
+async fn asks_before_plugin_tools_that_write() {
+    let f = fixture_with_gateway("plugin-tools").await;
+    let id = f.send(None, "outil mcp__cadence__fake__echo {\"text\":\"bonjour\"}").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await, ["outil : autorisé"]);
+    assert_eq!(f.asked(&id).await, 0, "lecture seule : aucune carte");
+
+    f.send(Some(&id), "outil mcp__cadence__cadence__run_report {\"text\":\"x\"}").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "outil : pré-autorisé", "outils du cœur pré-autorisés");
+
+    f.send(Some(&id), "outil mcp__cadence__fake__emit {\"event\":\"fusion\"}").await;
+    f.wait(&id, ChatState::WaitingApproval).await;
+    let card = f.events(&id).await.into_iter().find_map(|e| match e {
+        AiEvent::ApprovalRequested { request, title, tool, .. } => Some((request, title, tool)),
+        _ => None,
+    });
+    let (request, title, tool) = card.expect("carte d'accord");
+    assert_eq!(title, "Factice › emit · event: « fusion »");
+    assert_eq!(tool.as_deref(), Some("mcp__cadence__fake__emit"));
+    f.chat.approve(&id, &request, ApprovalDecision::Allow).await.unwrap();
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "outil : autorisé");
+
+    // « Édition auto » : la CLI relancée a tout le serveur `cadence` pré-autorisé.
+    f.chat.set_permissions(&id, Permissions::AutoEdit).await.unwrap();
+    f.send(Some(&id), "outil mcp__cadence__fake__emit {\"event\":\"fusion\"}").await;
+    f.wait(&id, ChatState::Idle).await;
+    assert_eq!(f.replies(&id).await.last().unwrap(), "outil : pré-autorisé");
+    assert_eq!(f.asked(&id).await, 1, "une seule carte en tout");
     f.chat.shutdown().await;
 }

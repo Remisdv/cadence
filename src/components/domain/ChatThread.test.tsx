@@ -150,3 +150,23 @@ describe("carte de questions à choix", () => {
     expect(html).not.toContain('role="radio"');
   });
 });
+
+describe("carte d'accord d'un outil de plugin (N12)", () => {
+  it("nomme l'outil et son plugin, avec les arguments résumés", () => {
+    const card = thread([
+      {
+        type: "approval-requested",
+        request: "r1",
+        kind: "tool",
+        title: "Gestion de projet › merge_pull_request · pull_number: 22, delete_branch: true",
+        detail: { pull_number: 22, delete_branch: true },
+        tool: "mcp__cadence__gestion-projet__merge_pull_request",
+      },
+    ]);
+    const html = renderToStaticMarkup(<ChatThread items={card} ai="Claude Code" />);
+    expect(html).toContain("cet outil de plugin");
+    expect(html).toContain("merge_pull_request · pull_number: 22, delete_branch: true");
+    expect(html).toContain("gestion-projet");
+    expect(html).toContain("Autoriser pour la session");
+  });
+});

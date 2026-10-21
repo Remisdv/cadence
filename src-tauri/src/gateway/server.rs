@@ -136,6 +136,40 @@ impl GatewayContext {
     }
 }
 
+/// Ce qu'un outil de la passerelle demande en mode « Demander » (recette du 21/10, N12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolAccess {
+    /// Outil du cœur (`cadence__*`) : jamais demandé.
+    Core,
+    /// Outil de plugin en lecture seule (`readOnlyHint`, sans `destructiveHint`).
+    ReadOnly,
+    /// Outil de plugin qui écrit : l'utilisateur donne son accord. `plugin` est son nom affiché.
+    Writes { plugin: String, tool: String },
+    /// Plugin ou outil introuvable (serveur arrêté…) : demandé, par prudence.
+    Unknown,
+}
+
+impl GatewayContext {
+    /// Accès d'un outil exposé (`<plugin>__<outil>`), d'après les annotations de son serveur.
+    pub async fn tool_access(&self, exposed: &str) -> ToolAccess {
+        let Some((plugin, tool)) = scope::split(exposed) else { return ToolAccess::Unknown };
+        if plugin == CORE {
+            return ToolAccess::Core;
+        }
+        let Some(summary) = (self.plugins)().into_iter().find(|p| p.id == plugin && p.has_server) else {
+            return ToolAccess::Unknown;
+        };
+        match self.host.tools(plugin).await {
+            Ok(tools) => match tools.iter().find(|t| t.name == tool && !scope::is_ui_only(t)) {
+                Some(found) if !scope::writes(found) => ToolAccess::ReadOnly,
+                Some(_) => ToolAccess::Writes { plugin: summary.name, tool: tool.to_string() },
+                None => ToolAccess::Unknown,
+            },
+            Err(_) => ToolAccess::Unknown,
+        }
+    }
+}
+
 /// Passerelle démarrée.
 pub struct Gateway {
     addr: SocketAddr,

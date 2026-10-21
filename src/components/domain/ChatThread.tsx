@@ -27,6 +27,7 @@ import {
   formatDuration,
   groupTurns,
   isActivity,
+  pluginToolOf,
   type ChatItem,
   type ChatTurn,
 } from "@/lib/domain/chat";
@@ -704,6 +705,7 @@ export function ApprovalCard({
       ? String((item.detail as { command: unknown }).command)
       : null;
   const answered = item.decision !== null;
+  const pluginTool = item.approval === "tool" ? pluginToolOf(item.tool) : null;
   return (
     <div
       className={cn(
@@ -730,7 +732,9 @@ export function ApprovalCard({
             ? "cette commande"
             : item.approval === "file-change"
               ? "cette modification"
-              : "cet outil"}{" "}
+              : pluginTool
+                ? "cet outil de plugin"
+                : "cet outil"}{" "}
           ?
         </span>
         <div className="grow" />
@@ -742,6 +746,13 @@ export function ApprovalCard({
         )}
       </div>
       <span className="mono text-small break-all text-tx2">{command ?? item.title}</span>
+      {pluginTool && !answered && (
+        <span className="text-caption leading-[1.5] text-tx3">
+          L'outil <span className="mono text-tx2">{pluginTool.tool}</span> du plugin{" "}
+          <span className="mono text-tx2">{pluginTool.plugin}</span> peut modifier des données (il
+          n'est pas déclaré en lecture seule).
+        </span>
+      )}
       {!answered && (
         <div className="flex flex-wrap items-center gap-2">
           <Button

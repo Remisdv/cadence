@@ -3,8 +3,18 @@ import type { AiId } from "./AiId";
 import type { ChatGroup } from "./ChatGroup";
 import type { ChatMode } from "./ChatMode";
 import type { ChatState } from "./ChatState";
+import type { ConversationWaiting } from "./ConversationWaiting";
 
-export type ConversationInfo = { id: string, title: string, ai: AiId, model: string | null, state: ChatState, mode: ChatMode, 
+export type ConversationInfo = { id: string, title: string, ai: AiId, model: string | null, 
+/**
+ * État au sens du SDK (voir `sdk_state`) : jamais `waiting-reply`.
+ */
+state: ChatState, 
+/**
+ * Avec `waiting-approval` : accord ou question à choix (`approval`), ou réponse à une
+ * question posée en fin de tour (`reply`).
+ */
+waiting?: ConversationWaiting, mode: ChatMode, 
 /**
  * Action du plugin qui l'a ouverte.
  */

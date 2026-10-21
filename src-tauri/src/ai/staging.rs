@@ -153,16 +153,29 @@ impl SessionFiles {
 }
 
 /// Surcharges de configuration d'un fil Codex (`thread/start.config`) : la passerelle, jeton lu
-/// dans `CADENCE_MCP_TOKEN`, outils pré-approuvés (sinon Codex demande pour chaque outil
-/// sans `readOnlyHint`, et refuse en fond).
-pub fn codex_config(gateway_url: Option<&str>, add_dirs: &[PathBuf]) -> serde_json::Value {
+/// dans `CADENCE_MCP_TOKEN`, et l'accord des outils (recette du 21/10, N12). Hors « Demander »
+/// (`ask_tools` faux), tous les outils sont pré-approuvés (`approve`) : Codex refuserait en fond.
+/// En « Demander », Codex décide d'après les annotations (`auto` : il demande pour un outil sans
+/// `readOnlyHint` ou `destructiveHint`, par `mcpServer/elicitation/request`) ; les outils du
+/// cœur restent pré-approuvés un par un.
+pub fn codex_config(gateway_url: Option<&str>, add_dirs: &[PathBuf], ask_tools: bool) -> serde_json::Value {
     let mut config = match gateway_url {
-        Some(url) => json!({ "mcp_servers": { "cadence": {
-            "url": url,
-            "bearer_token_env_var": "CADENCE_MCP_TOKEN",
-            "default_tools_approval_mode": "approve",
-            "tool_timeout_sec": 600
-        } } }),
+        Some(url) => {
+            let mut server = json!({
+                "url": url,
+                "bearer_token_env_var": "CADENCE_MCP_TOKEN",
+                "default_tools_approval_mode": if ask_tools { "auto" } else { "approve" },
+                "tool_timeout_sec": 600
+            });
+            if ask_tools {
+                let core: serde_json::Map<String, serde_json::Value> = crate::gateway::core_tools::names()
+                    .into_iter()
+                    .map(|name| (name, json!({ "approval_mode": "approve" })))
+                    .collect();
+                server["tools"] = serde_json::Value::Object(core);
+            }
+            json!({ "mcp_servers": { "cadence": server } })
+        }
         None => json!({}),
     };
     if !add_dirs.is_empty() {
@@ -203,10 +216,13 @@ fn external_directories(add_dirs: &[PathBuf]) -> serde_json::Value {
 pub struct OpencodePermissions {
     pub edit: &'static str,
     pub bash: &'static str,
+    /// Outils de la passerelle (`cadence_*`) : `ask` en « Demander » (le chat accorde d'office
+    /// ceux du cœur et ceux des plugins en lecture seule, N12), `allow` sinon.
+    pub mcp: &'static str,
 }
 
 /// Configuration d'un serveur OpenCode (`OPENCODE_CONFIG_CONTENT`, chargée après celle du
-/// projet) : passerelle sans OAuth, outils `cadence_*` autorisés, consignes et skills de la
+/// projet) : passerelle sans OAuth, outils `cadence_*` selon le profil, consignes et skills de la
 /// session, pas de partage ni de mise à jour automatique.
 pub fn opencode_config(
     gateway_url: Option<&str>,
@@ -220,7 +236,7 @@ pub fn opencode_config(
         "share": "disabled",
         "instructions": [files.instructions.display().to_string()],
         "skills": { "paths": [files.skills_root().display().to_string()] },
-        "permission": { "edit": permissions.edit, "bash": permissions.bash, "cadence_*": "allow" },
+        "permission": { "edit": permissions.edit, "bash": permissions.bash, "cadence_*": permissions.mcp },
     });
     if !add_dirs.is_empty() {
         config["permission"]["external_directory"] = external_directories(add_dirs);
@@ -303,22 +319,29 @@ mod tests {
         assert!(crate::plugins::skills::load_all(&files.plugin_dir.join("skills")).is_ok(), "skills valides pour Claude Code");
         assert!(fs::read_to_string(&files.settings).unwrap().contains("disableAllHooks"));
 
-        let codex = codex_config(Some("http://127.0.0.1:5000/mcp"), &[]);
+        let codex = codex_config(Some("http://127.0.0.1:5000/mcp"), &[], false);
         assert_eq!(codex["mcp_servers"]["cadence"]["bearer_token_env_var"], "CADENCE_MCP_TOKEN");
         assert_eq!(codex["mcp_servers"]["cadence"]["default_tools_approval_mode"], "approve");
+        assert!(codex["mcp_servers"]["cadence"].get("tools").is_none());
         assert!(codex.get("sandbox_workspace_write").is_none(), "aucun dossier ouvert d'office");
-        let ask = OpencodePermissions { edit: "ask", bash: "ask" };
+        // « Demander » (N12) : Codex demande pour les outils qui écrivent, pas pour ceux du cœur.
+        let asking = codex_config(Some("http://127.0.0.1:5000/mcp"), &[], true);
+        assert_eq!(asking["mcp_servers"]["cadence"]["default_tools_approval_mode"], "auto");
+        assert_eq!(asking["mcp_servers"]["cadence"]["tools"]["cadence__run_report"]["approval_mode"], "approve");
+        let ask = OpencodePermissions { edit: "ask", bash: "ask", mcp: "ask" };
         let opencode = opencode_config(Some("http://127.0.0.1:5000/mcp"), &files, ask, &[]);
         assert!(opencode["permission"].get("external_directory").is_none());
         assert_eq!(opencode["mcp"]["cadence"]["headers"]["Authorization"], "Bearer {env:CADENCE_MCP_TOKEN}");
         assert_eq!(opencode["mcp"]["cadence"]["oauth"], false);
-        assert_eq!(opencode["permission"]["cadence_*"], "allow");
+        assert_eq!(opencode["permission"]["cadence_*"], "ask", "« Demander » : le chat tranche");
+        let auto = OpencodePermissions { edit: "allow", bash: "ask", mcp: "allow" };
+        assert_eq!(opencode_config(None, &files, auto, &[])["permission"]["cadence_*"], "allow");
         assert!(opencode["skills"]["paths"][0].as_str().unwrap().ends_with("skills"));
         assert!(!opencode.to_string().contains("jeton"), "jeton jamais dans la configuration");
 
         // Worktree ouvert à la session : racine inscriptible (Codex), chemin autorisé (OpenCode).
         let wt = PathBuf::from("/repos/.worktrees/me/app/issue-42");
-        let codex = codex_config(None, std::slice::from_ref(&wt));
+        let codex = codex_config(None, std::slice::from_ref(&wt), false);
         assert_eq!(codex["sandbox_workspace_write"]["writable_roots"], json!([wt.display().to_string()]));
         let opencode = opencode_config(None, &files, ask, std::slice::from_ref(&wt));
         let rules = &opencode["permission"]["external_directory"];

@@ -53,14 +53,16 @@ struct Shared {
     killed: AtomicBool,
 }
 
-/// Règles `edit` / `bash` d'un profil (les outils `cadence_*` sont toujours autorisés). En fond,
-/// personne ne répond : ce qui demanderait une approbation est refusé.
+/// Règles `edit` / `bash` / `cadence_*` d'un profil. Les outils de la passerelle ne sont demandés
+/// qu'en « Demander » : le chat accorde d'office ceux du cœur et ceux des plugins en lecture
+/// seule, et montre une carte pour ceux qui écrivent (N12). En fond, personne ne répond : ce qui
+/// demanderait une approbation est refusé.
 pub fn permissions(permissions: Permissions, mode: SessionMode) -> OpencodePermissions {
     match (permissions, mode) {
-        (Permissions::Full, _) => OpencodePermissions { edit: "allow", bash: "allow" },
-        (Permissions::AutoEdit, SessionMode::Chat) => OpencodePermissions { edit: "allow", bash: "ask" },
-        (Permissions::Ask, SessionMode::Chat) => OpencodePermissions { edit: "ask", bash: "ask" },
-        (_, SessionMode::Background) => OpencodePermissions { edit: "allow", bash: "deny" },
+        (Permissions::Full, _) => OpencodePermissions { edit: "allow", bash: "allow", mcp: "allow" },
+        (Permissions::AutoEdit, SessionMode::Chat) => OpencodePermissions { edit: "allow", bash: "ask", mcp: "allow" },
+        (Permissions::Ask, SessionMode::Chat) => OpencodePermissions { edit: "ask", bash: "ask", mcp: "ask" },
+        (_, SessionMode::Background) => OpencodePermissions { edit: "allow", bash: "deny", mcp: "allow" },
     }
 }
 
@@ -370,8 +372,9 @@ mod tests {
 
     #[test]
     fn maps_profiles_to_opencode_rules() {
-        assert_eq!(permissions(Permissions::Ask, SessionMode::Chat), OpencodePermissions { edit: "ask", bash: "ask" });
-        assert_eq!(permissions(Permissions::AutoEdit, SessionMode::Chat), OpencodePermissions { edit: "allow", bash: "ask" });
+        assert_eq!(permissions(Permissions::Ask, SessionMode::Chat), OpencodePermissions { edit: "ask", bash: "ask", mcp: "ask" });
+        assert_eq!(permissions(Permissions::AutoEdit, SessionMode::Chat), OpencodePermissions { edit: "allow", bash: "ask", mcp: "allow" });
+        assert_eq!(permissions(Permissions::Ask, SessionMode::Background).mcp, "allow", "personne pour répondre en fond");
         assert_eq!(permissions(Permissions::Ask, SessionMode::Background).bash, "deny");
         assert_eq!(permissions(Permissions::Full, SessionMode::Chat).bash, "allow");
     }

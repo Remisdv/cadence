@@ -21,6 +21,7 @@ import type {
   QuestionAnswer,
 } from "@/lib/types";
 import { globalConversations, localGroup, originPlugin } from "@/lib/domain/chat";
+import { sdkState } from "@/plugin-host/conversations";
 import { mockBus } from "./bus";
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
@@ -106,7 +107,8 @@ function conversationInfo(plugin: string, chat: ChatSessionDetail): Conversation
     title: row.title,
     ai: row.ai,
     model: row.model,
-    state: row.state,
+    // Même règle que `sdk_state` côté Rust : `waiting-reply` reste invisible du SDK (API 1).
+    ...sdkState(row.state),
     mode: row.mode,
     action: row.origin.slice(`action:${plugin}/`.length),
     ...(context ? { context } : {}),
@@ -356,10 +358,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Réponse simulée d'un tour. */
 export async function simulateTurn(chats: Chats, id: string, text: string) {
   const message = `mock-${id}-${Date.now()}:0`;
-  const finish = (ok: boolean, interrupted = false, error: string | null = null) => {
+  const finish = (ok: boolean, interrupted = false, error: string | null = null, asks = false) => {
     record(chats, id, { type: "usage", inputTokens: 12_000, outputTokens: 140, costUsd: 0.02 });
     record(chats, id, { type: "turn-completed", ok, interrupted, error, durationMs: 2300 });
-    setState(chats, id, interrupted ? "interrupted" : ok ? "idle" : "failed");
+    setState(
+      chats,
+      id,
+      interrupted ? "interrupted" : !ok ? "failed" : asks ? "waiting-reply" : "idle",
+    );
   };
   setState(chats, id, "running");
   await sleep(400);
@@ -450,7 +456,9 @@ export async function simulateTurn(chats: Chats, id: string, text: string) {
     ? `Merci : ${answered}. En mode mock, aucune IA n'est appelée.`
     : text.includes("long")
       ? Array.from({ length: 60 }, (_, i) => `Vers ${i + 1} sur la mer qui roule.\n`).join("")
-      : `Réponse simulée à « ${text.slice(0, 80)} ». En mode mock, aucune IA n'est appelée : lancez l'app avec Claude Code installé pour une vraie conversation.`;
+      : text.includes("fusion")
+        ? "Les deux PR sont relues et vertes.\n\nJe les fusionne dans la release ?"
+        : `Réponse simulée à « ${text.slice(0, 80)} ». En mode mock, aucune IA n'est appelée : lancez l'app avec Claude Code installé pour une vraie conversation.`;
   let sent = "";
   for (const word of reply.split(/(?<= )/)) {
     if (interrupts.delete(id)) {
@@ -462,7 +470,8 @@ export async function simulateTurn(chats: Chats, id: string, text: string) {
     await sleep(text.includes("long") ? 60 : 25);
   }
   record(chats, id, { type: "message-completed", message, text: reply });
-  finish(true);
+  // « En attente de votre réponse » (N10) : le tour se termine sur une question.
+  finish(true, false, null, reply.trimEnd().endsWith("?"));
 }
 
 /** Commande du retour utilisateur qui sortait du cadre du fil. */

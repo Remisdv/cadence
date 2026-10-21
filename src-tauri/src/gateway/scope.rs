@@ -87,6 +87,23 @@ pub fn split(name: &str) -> Option<(&str, &str)> {
     name.split_once(SEPARATOR).filter(|(plugin, tool)| !plugin.is_empty() && !tool.is_empty())
 }
 
+/// Nom exposé (`<plugin>__<outil>`) d'un outil de la passerelle tel qu'une CLI le nomme dans
+/// ses demandes d'accord : `mcp__cadence__<plugin>__<outil>` (Claude Code, Codex),
+/// `cadence_<plugin>__<outil>` (OpenCode). `None` pour un outil d'un autre serveur.
+pub fn exposed_of_cli(name: &str) -> Option<&str> {
+    let exposed = name.strip_prefix("mcp__cadence__").or_else(|| name.strip_prefix("cadence_"))?;
+    split(exposed).map(|_| exposed)
+}
+
+/// L'outil écrit (recette du 21/10, N12) : sans `readOnlyHint`, ou marqué `destructiveHint`.
+/// Un outil qui n'annonce rien est réputé écrire (défauts du protocole MCP).
+pub fn writes(tool: &Tool) -> bool {
+    let annotations = tool.annotations.as_ref();
+    let read_only = annotations.and_then(|a| a.read_only_hint).unwrap_or(false);
+    let destructive = annotations.and_then(|a| a.destructive_hint).unwrap_or(false);
+    !read_only || destructive
+}
+
 /// Outil réservé à l'interface du plugin.
 pub fn is_ui_only(tool: &Tool) -> bool {
     tool.meta
@@ -147,6 +164,28 @@ mod tests {
         tokens.revoke("chat-1");
         assert_eq!(tokens.resolve(&Tokens::header(&token)), None);
         assert_eq!(tokens.resolve(&Tokens::header(&other)).unwrap().run.as_deref(), Some("run-2"));
+    }
+
+    #[test]
+    fn reads_cli_tool_names_and_write_hints() {
+        assert_eq!(exposed_of_cli("mcp__cadence__gestion-projet__merge_pull_request"), Some("gestion-projet__merge_pull_request"));
+        assert_eq!(exposed_of_cli("cadence_gestion-projet__merge_pull_request"), Some("gestion-projet__merge_pull_request"));
+        assert_eq!(exposed_of_cli("mcp__cadence__cadence__run_report"), Some("cadence__run_report"));
+        assert_eq!(exposed_of_cli("mcp__autre__outil"), None);
+        assert_eq!(exposed_of_cli("Bash"), None);
+        assert_eq!(exposed_of_cli("cadence_sans_separateur"), None);
+
+        use rmcp::model::ToolAnnotations;
+        let with = |annotations: Option<ToolAnnotations>| {
+            let mut t = tool("t", false);
+            t.annotations = annotations;
+            t
+        };
+        assert!(writes(&with(None)), "rien d'annoncé : écrit");
+        assert!(writes(&with(Some(ToolAnnotations::new()))));
+        assert!(writes(&with(Some(ToolAnnotations::new().read_only(false)))));
+        assert!(!writes(&with(Some(ToolAnnotations::new().read_only(true)))));
+        assert!(writes(&with(Some(ToolAnnotations::new().read_only(true).destructive(true)))), "destructif l'emporte");
     }
 
     #[test]

@@ -32,6 +32,9 @@ pub struct PendingCodex {
     pub questions: Vec<String>,
     /// Fichiers d'une demande `item/fileChange/requestApproval` (vide sinon).
     pub paths: Vec<String>,
+    /// Accord d'un outil MCP demandé par `mcpServer/elicitation/request` : la réponse suit la
+    /// forme des élicitations (`action`), pas celle des approbations (`decision`).
+    pub elicitation: bool,
 }
 
 /// Réponse JSON-RPC à `requestUserInput` : les réponses de chaque question, par son id.
@@ -49,12 +52,43 @@ pub fn question_reply(pending: &PendingCodex, answers: &[QuestionAnswer]) -> Val
 
 /// Réponse JSON-RPC à une approbation.
 pub fn approval_reply(pending: &PendingCodex, decision: ApprovalDecision) -> Value {
+    if pending.elicitation {
+        let result = match decision {
+            ApprovalDecision::Allow => json!({ "action": "accept", "content": null }),
+            ApprovalDecision::AllowSession => json!({ "action": "accept", "content": null, "_meta": { "persist": "session" } }),
+            ApprovalDecision::Deny => json!({ "action": "decline", "content": null }),
+        };
+        return json!({ "jsonrpc": "2.0", "id": pending.id, "result": result });
+    }
     let decision = match decision {
         ApprovalDecision::Allow => "accept",
         ApprovalDecision::AllowSession => "acceptForSession",
         ApprovalDecision::Deny => "decline",
     };
     json!({ "jsonrpc": "2.0", "id": pending.id, "result": { "decision": decision } })
+}
+
+/// Outil (`mcp__<serveur>__<outil>`, comme les appels `mcpToolCall`) et message d'une
+/// élicitation de Codex. Lecture tolérante : le nom vient de `_meta` (`tool_name`, `toolName`)
+/// ou du message (« … run tool "gestion-projet__merge_pull_request"? »).
+fn elicited_tool(params: &Value) -> (Option<String>, Option<String>) {
+    let server = str_of(params, "serverName").or_else(|| str_of(params, "server_name")).or_else(|| str_of(params, "server"));
+    let message = params.pointer("/request/message").or_else(|| params.get("message")).and_then(Value::as_str).map(str::to_string);
+    let meta = ["/request/_meta", "/_meta", "/request/meta", "/meta"].iter().find_map(|p| params.pointer(p));
+    let named = meta
+        .and_then(|m| str_of(m, "tool_name").or_else(|| str_of(m, "toolName")).or_else(|| str_of(m, "tool")))
+        .or_else(|| str_of(params, "toolName"))
+        .map(str::to_string)
+        .or_else(|| {
+            // Nom entre guillemets dans le message : `"<plugin>__<outil>"`.
+            let text = message.as_deref()?;
+            text.split(['"', '`', '\u{201c}', '\u{201d}']).find(|part| part.contains("__") && !part.contains(' ')).map(str::to_string)
+        });
+    let tool = named.map(|name| match server {
+        Some(server) if !name.starts_with("mcp__") => format!("mcp__{server}__{name}"),
+        _ => name,
+    });
+    (tool, message)
 }
 
 /// Requête de Cadence.
@@ -152,6 +186,7 @@ impl CodexStream {
                     } else {
                         Vec::new()
                     },
+                    elicitation: false,
                 }),
                 CodexItem::Event(AiEvent::ApprovalRequested {
                     request: request.clone(),
@@ -193,8 +228,36 @@ impl CodexStream {
                     .collect();
                 let ids = asked.iter().map(|q| q.id.clone()).collect();
                 vec![
-                    CodexItem::Approval(PendingCodex { id: id.clone(), request: request.clone(), questions: ids, paths: Vec::new() }),
+                    CodexItem::Approval(PendingCodex {
+                        id: id.clone(),
+                        request: request.clone(),
+                        questions: ids,
+                        paths: Vec::new(),
+                        elicitation: false,
+                    }),
                     CodexItem::Event(AiEvent::question(request.clone(), asked)),
+                ]
+            }
+            // Accord d'un outil MCP (N12) : Codex le demande pour un outil sans `readOnlyHint`
+            // quand Cadence règle `default_tools_approval_mode = "auto"` (mode « Demander »).
+            "mcpServer/elicitation/request" => {
+                let (tool, message) = elicited_tool(params);
+                vec![
+                    CodexItem::Approval(PendingCodex {
+                        id: id.clone(),
+                        request: request.clone(),
+                        questions: Vec::new(),
+                        paths: Vec::new(),
+                        elicitation: true,
+                    }),
+                    CodexItem::Event(AiEvent::ApprovalRequested {
+                        request: request.clone(),
+                        kind: ApprovalKind::Tool,
+                        title: message.or_else(|| tool.clone()).unwrap_or_else(|| "Outil MCP".into()),
+                        detail: params.clone(),
+                        tool,
+                        scope: None,
+                    }),
                 ]
             }
             // Ancien protocole : même sens, autre forme de réponse (refus par défaut).
@@ -432,6 +495,28 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// N12 : en « Demander », Codex demande l'accord d'un outil de plugin qui écrit par une
+    /// élicitation ; Cadence en fait une carte d'outil et répond `accept` / `decline`.
+    #[test]
+    fn relays_mcp_tool_elicitations() {
+        let mut stream = CodexStream::default();
+        let line = r#"{"jsonrpc":"2.0","id":12,"method":"mcpServer/elicitation/request","params":{"threadId":"t","turnId":"u","serverName":"cadence","request":{"mode":"form","message":"Allow the cadence MCP server to run tool \"gestion-projet__merge_pull_request\"?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","tool_params":{"pull_number":22}}}}}"#;
+        let items = stream.push_line(line);
+        let pending = items.iter().find_map(|i| if let CodexItem::Approval(p) = i { Some(p.clone()) } else { None }).unwrap();
+        assert!(pending.elicitation);
+        let event = items.iter().find_map(|i| if let CodexItem::Event(e) = i { Some(e.clone()) } else { None }).unwrap();
+        let AiEvent::ApprovalRequested { kind, tool, .. } = event else { panic!("{event:?}") };
+        assert_eq!(kind, ApprovalKind::Tool);
+        assert_eq!(tool.as_deref(), Some("mcp__cadence__gestion-projet__merge_pull_request"));
+        assert_eq!(approval_reply(&pending, ApprovalDecision::Allow)["result"]["action"], "accept");
+        assert_eq!(approval_reply(&pending, ApprovalDecision::Deny)["result"]["action"], "decline");
+        assert_eq!(approval_reply(&pending, ApprovalDecision::Allow)["id"], 12);
+
+        let named = r#"{"jsonrpc":"2.0","id":"e2","method":"mcpServer/elicitation/request","params":{"serverName":"cadence","_meta":{"tool_name":"gestion-projet__create_issue"}}}"#;
+        let items = stream.push_line(named);
+        assert!(items.iter().any(|i| matches!(i, CodexItem::Event(AiEvent::ApprovalRequested { tool: Some(t), .. }) if t == "mcp__cadence__gestion-projet__create_issue")));
     }
 
     #[test]

@@ -15,7 +15,10 @@
 //! - « dossiers » : répond la liste des `--add-dir` reçus (« dossiers : a | b ») ;
 //! - « mode » : répond le `--permission-mode` reçu (« mode [reprise] : acceptEdits ») ;
 //! - « lis <chemin> » : demande `can_use_tool` (Read) et répond « lu : autorisé [dossiers
-//!   ajoutés] » ou « lu : refusé ».
+//!   ajoutés] » ou « lu : refusé » ;
+//! - « outil <nom> <arguments JSON> » : outil MCP ; « outil : pré-autorisé » s'il est couvert
+//!   par `--allowedTools` (serveur `mcp__cadence` ou nom exact), sinon demande `can_use_tool`
+//!   et répond « outil : autorisé » ou « outil : refusé ».
 //!
 //! L'id de session vaut l'argument de `--resume` s'il y en a un, sinon `fake-1`.
 
@@ -78,6 +81,12 @@ fn main() {
         args.windows(2).filter(|w| w[0] == "--add-dir").map(|w| w[1].clone()).collect();
     let permission_mode =
         args.iter().position(|a| a == "--permission-mode").and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
+    let allowed: Vec<String> = args
+        .iter()
+        .position(|a| a == "--allowedTools")
+        .and_then(|i| args.get(i + 1))
+        .map(|list| list.split([',', ' ']).filter(|t| !t.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default();
     let id = resume.unwrap_or_else(|| "fake-1".into());
     let mut session = Session { id, turn: 0 };
 
@@ -213,6 +222,34 @@ fn main() {
                     }
                     session.start_text();
                     session.text(&format!("commandes : {} [règles : {}]", decisions.join(" | "), rules.join(" ")));
+                    session.result(false);
+                    continue;
+                }
+                if let Some(rest) = text.strip_prefix("outil ") {
+                    // Outil MCP : pré-autorisé par `--allowedTools` (serveur entier ou nom exact),
+                    // sinon demande `can_use_tool`, comme Claude Code en mode `default`.
+                    let (name, input) = rest.split_once(' ').unwrap_or((rest, "{}"));
+                    let input: Value = serde_json::from_str(input).unwrap_or(json!({}));
+                    let pre_allowed = allowed.iter().any(|a| a == name || name.strip_prefix(a.as_str()).is_some_and(|r| r.starts_with("__")));
+                    let reply = if pre_allowed {
+                        "outil : pré-autorisé".to_string()
+                    } else {
+                        let request = format!("outil-{}", session.turn);
+                        emit(json!({ "type": "control_request", "request_id": request, "request": {
+                            "subtype": "can_use_tool", "tool_name": name, "display_name": name,
+                            "input": input, "permission_suggestions": [], "tool_use_id": "toolu_mcp" } }));
+                        let answer = loop {
+                            match rx.recv() {
+                                Ok(m) if m["type"] == "control_response" && m["response"]["request_id"] == request.as_str() => break m,
+                                Ok(_) => continue,
+                                Err(_) => return,
+                            }
+                        };
+                        let granted = answer["response"]["response"]["behavior"] == "allow";
+                        format!("outil : {}", if granted { "autorisé" } else { "refusé" })
+                    };
+                    session.start_text();
+                    session.text(&reply);
                     session.result(false);
                     continue;
                 }

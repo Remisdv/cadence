@@ -163,6 +163,21 @@ describe("cadence.conversations", () => {
         plugin: "gestion-projet",
       }),
     ).toEqual({ id: "x", state: "idle" });
+    // N10 : « En attente de votre réponse » reste lisible par un plugin écrit pour l'API 1.
+    expect(
+      conversationEvent("gestion-projet", {
+        session: "x",
+        state: "waiting-reply",
+        plugin: "gestion-projet",
+      }),
+    ).toEqual({ id: "x", state: "waiting-approval", waiting: "reply" });
+    expect(
+      conversationEvent("gestion-projet", {
+        session: "x",
+        state: "waiting-approval",
+        plugin: "gestion-projet",
+      }),
+    ).toEqual({ id: "x", state: "waiting-approval", waiting: "approval" });
 
     // Les deux variantes : `evt` du cœur, sujet `conversations` du SDK publié.
     const core = bridgeFor("gestion-projet");
