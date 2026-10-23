@@ -68,8 +68,7 @@ public, avec un README initial).
 Ouvrir un dépôt :
 
 - importe ses **milestones** comme versions et ses issues dans le cache local ;
-- lit son `.cadence/config.toml` s'il existe (sinon, les valeurs par défaut s'appliquent, voir
-  [la référence](configuration.md)) ;
+- lit son `.cadence/config.toml` s'il existe (sinon, les valeurs par défaut s'appliquent) ;
 - est mémorisé : Cadence rouvre ce dépôt au lancement suivant.
 
 Un dépôt sans milestone s'ouvre normalement ; créez la première version depuis GitHub (un

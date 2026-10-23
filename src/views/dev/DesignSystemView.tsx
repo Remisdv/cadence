@@ -21,10 +21,24 @@ import { SectionLabel } from "@/components/ui/SectionLabel";
 import { Spinner } from "@/components/ui/Spinner";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { Switch, SwitchField } from "@/components/ui/Switch";
+import { RailButton, RailCategory } from "@/components/layout/AppRail";
+import {
+  ContextBarHint,
+  ContextBarItem,
+  ContextBarSection,
+  ContextBarSubItem,
+  ContextBarSubItems,
+  ConversationItem,
+} from "@/components/layout/ContextBar";
 import { ActivityItem, Em } from "@/components/domain/ActivityItem";
-import { AgentBadge } from "@/components/domain/AgentBadge";
-import { AgentStatusCard, RunLogRow } from "@/components/domain/AgentConsole";
-import { AgentQuestion } from "@/components/domain/AgentQuestion";
+import { NeutralTile, PluginTile } from "@/components/domain/PluginTile";
+import { SettingsForm } from "@/components/domain/SettingsForm";
+import { mockAppSettings, mockPlugins, mockSettingsSchema } from "@/lib/ipc/mock/plugins";
+import { mockToolsReport } from "@/lib/ipc/mock/tools";
+import { MOCK_QUESTIONS } from "@/lib/ipc/mock/chat";
+import { AiCard } from "@/components/domain/AiCard";
+import { CommandBox } from "@/components/domain/CommandBox";
+import { ToolsTable } from "@/components/domain/ToolsTable";
 import { TypeBadge, VersionBadge } from "@/components/domain/Badges";
 import { Burndown } from "@/components/domain/Burndown";
 import { DiffViewer, TextDiff } from "@/components/domain/Diff";
@@ -50,11 +64,45 @@ import {
   TitledCard,
 } from "@/components/domain/Panels";
 import { SessionConsole } from "@/components/domain/SessionConsole";
+import { ChatThread } from "@/components/domain/ChatThread";
+import { ChatModeMenu } from "@/components/domain/ChatModeMenu";
+import { ToastCard } from "@/components/ui/Toaster";
+import { buildThread } from "@/lib/domain/chat";
+import type { AiEvent, ChatPermissions } from "@/lib/types";
 import { MeterList, StatCard, StatStrip } from "@/components/domain/Stats";
 import { OnboardingSteps, PipelineStages, StepTimeline } from "@/components/domain/Steps";
-import { agentOrder, devSteps } from "@/lib/domain/agents";
 import { issueTypes, statusOrder } from "@/lib/domain/issues";
-import { currentVersion, issueDetail, issues } from "@/lib/ipc/mock/fixtures";
+import { currentVersion, issues } from "@/lib/ipc/mock/fixtures";
+
+/** Machine des maquettes V2-Onboarding-AI / Tools (Git, gh manquant, Codex à connecter…). */
+function ToolsGallery() {
+  const report = mockToolsReport(mockAppSettings, mockPlugins);
+  const tool = (id: string) => report.tools.find((t) => t.id === id)!;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid max-w-[940px] grid-cols-3 gap-4">
+        {(["claude", "codex", "opencode"] as const).map((id) => (
+          <AiCard
+            key={id}
+            tool={tool(id)}
+            node={tool("node")}
+            platform={report.platform}
+            isDefault={id === "claude"}
+            onSetDefault={() => {}}
+          />
+        ))}
+      </div>
+      <CommandBox command="winget install --id GitHub.cli -e" className="max-w-[420px]" />
+      <div className="max-w-[916px]">
+        <ToolsTable
+          tools={report.tools.filter((t) => t.requestedBy.length > 0)}
+          plugins={mockPlugins}
+          platform={report.platform}
+        />
+      </div>
+    </div>
+  );
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -96,12 +144,11 @@ const swatches = [
 
 export default function DesignSystemView() {
   const [switchOn, setSwitchOn] = useState(true);
+  const [chatMode, setChatMode] = useState<ChatPermissions>("ask");
   const [next, setNext] = useState("0.1.3");
   const [carry, setCarry] = useState("move");
   const [tab, setTab] = useState("scope");
-  const [answer, setAnswer] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const question = issueDetail(156).questions[0]!;
 
   return (
     <Page
@@ -138,6 +185,169 @@ export default function DesignSystemView() {
             <p className="mono text-tiny text-tx3">Mono 11 — #156 · feat/142-github-device-flow</p>
             <SectionLabel>Section label 10.5</SectionLabel>
           </Card>
+        </Section>
+
+        <Section title="Coque Cadence 2 : rail, barre contextuelle, tuiles">
+          <div className="flex gap-3">
+            <Card className="flex w-14 flex-col items-center gap-1 py-3">
+              <RailButton label="Chat" detail="Chat global · tous les plugins" active>
+                <Icon name="chat" size={19} />
+              </RailButton>
+              <RailCategory label="Projet" />
+              <RailButton label="Gestion de projet" detail="Projet" dot="purple">
+                <PluginTile color="blue" icon="board" />
+              </RailButton>
+              <RailCategory label="Études" />
+              <RailButton label="Bibliographie" detail="Études · à configurer" dot="amber">
+                <PluginTile color="purple" icon="bookmark" />
+              </RailButton>
+              <RailButton label="Catalogue de plugins">
+                <Icon name="grid" size={18} />
+              </RailButton>
+            </Card>
+            <Card className="flex w-[220px] flex-col gap-4 px-2.5 py-3">
+              <ContextBarSection title="Pilotage">
+                <ContextBarItem icon="sprint" label="Sprint en cours" />
+                <ContextBarItem icon="issue" label="Issues" count={18} active />
+                <ContextBarItem icon="review" label="Revues à faire" count={3} countTone="clay" />
+              </ContextBarSection>
+              <ContextBarSection title="Plugins">
+                <ContextBarItem icon="grid" label="Plugins activés" />
+                <ContextBarSubItems>
+                  <ContextBarSubItem
+                    leading={<PluginTile color="blue" icon="board" size={14} />}
+                    label="Gestion de projet"
+                  />
+                  <ContextBarSubItem
+                    leading={<PluginTile color="green" icon="library" size={14} />}
+                    label="Documents"
+                    active
+                  />
+                </ContextBarSubItems>
+              </ContextBarSection>
+              <ContextBarSection title="Conversations">
+                <ConversationItem
+                  title="Ma semaine, tous projets"
+                  time="11:20"
+                  active
+                  context={
+                    <>
+                      <NeutralTile icon="chat" size={13} />
+                      <span className="truncate">Global · tous les plugins</span>
+                    </>
+                  }
+                />
+                <ConversationItem
+                  title="Préparer le sprint 0.1.3"
+                  time="10:42"
+                  context={
+                    <>
+                      <PluginTile color="blue" icon="board" size={13} />
+                      <span className="truncate">Gestion de projet · desktop</span>
+                    </>
+                  }
+                />
+              </ContextBarSection>
+              <ContextBarHint>
+                Les conversations ouvertes depuis un plugin apparaissent aussi ici.
+              </ContextBarHint>
+            </Card>
+            <div className="flex min-w-0 grow flex-col gap-3">
+              <Card className="flex flex-wrap items-center gap-2.5 p-4">
+                {mockPlugins.map((p) => (
+                  <PluginTile key={p.id} color={p.color} icon={p.railIcon} />
+                ))}
+                {mockPlugins.map((p) => (
+                  <PluginTile key={p.id} color={p.color} icon={p.railIcon} size={22} />
+                ))}
+                {mockPlugins.map((p) => (
+                  <PluginTile key={p.id} color={p.color} icon={p.railIcon} size={18} />
+                ))}
+                <NeutralTile icon="chat" />
+                <NeutralTile icon="settings" />
+              </Card>
+              <Card className="p-4">
+                <SettingsForm
+                  settings={{
+                    plugin: "gestion-projet",
+                    schema: mockSettingsSchema["gestion-projet"]!,
+                    value: { sprintDays: 14, tagPrefix: "v", confirmMajorBump: true },
+                    errors: [],
+                  }}
+                  errors={[{ field: "sprintDays", message: "Au plus 60." }]}
+                  onSave={() => {}}
+                />
+              </Card>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Fil du chat : bulles, outils, commandes, approbation, erreur">
+          <Card className="p-5">
+            <ChatThread
+              items={buildThread(
+                sampleChat.map((event, i) => ({ seq: i + 1, turn: 1, at: "", event })),
+                { "m2:0": "Je relance les tests après votre accord" },
+              )}
+              ai="Claude Code"
+              model="claude-opus-5"
+              running
+              onApprove={() => {}}
+            />
+          </Card>
+        </Section>
+
+        <Section title="Chat : questions à choix de l'IA (en attente, puis répondue)">
+          <Card className="p-5">
+            <ChatThread
+              items={buildThread(
+                sampleQuestions.map((event, i) => ({ seq: i + 1, turn: 1, at: "", event })),
+              )}
+              ai="Claude Code"
+              model="claude-opus-5"
+              onAnswer={() => {}}
+            />
+          </Card>
+        </Section>
+
+        <Section title="Chat : mode de la conversation, commandes masquées (résumé repliable)">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <ChatModeMenu value={chatMode} onChange={setChatMode} />
+              <ChatModeMenu value="full" onChange={() => {}} running />
+            </div>
+            <Card className="p-5">
+              <ChatThread
+                items={buildThread(
+                  sampleChat.map((event, i) => ({ seq: i + 1, turn: 1, at: "", event })),
+                )}
+                ai="Claude Code"
+                model="claude-opus-5"
+                showCommands={false}
+                onApprove={() => {}}
+              />
+            </Card>
+          </div>
+        </Section>
+
+        <Section title="Toasts (cadence.notify, messages du shell)">
+          <div className="flex max-w-[360px] flex-col gap-2">
+            <ToastCard
+              toast={{
+                id: -1,
+                kind: "success",
+                message: "Bonjour depuis le plugin Exemple",
+                source: "Exemple",
+              }}
+            />
+            <ToastCard
+              toast={{ id: -2, kind: "error", message: "Le serveur du plugin ne répond plus." }}
+            />
+          </div>
+        </Section>
+
+        <Section title="IA de code et outils (onboarding, Réglages › IA et Outils)">
+          <ToolsGallery />
         </Section>
 
         <Section title={`Icônes (${iconNames.length})`}>
@@ -262,21 +472,12 @@ export default function DesignSystemView() {
           </Row>
         </Section>
 
-        <Section title="Avatars et agents">
+        <Section title="Avatars">
           <Row>
             <Avatar initials="RL" size={19} />
             <Avatar initials="RL" size={24} />
             <Avatar initials="MB" size={21} tone="neutral" />
             <Avatar initials="CD" size={26} tone="neutral" />
-            {agentOrder.map((a) => (
-              <AgentBadge key={a} agent={a} size={17} />
-            ))}
-            {agentOrder.map((a) => (
-              <AgentBadge key={a} agent={a} size={22} />
-            ))}
-            {agentOrder.map((a) => (
-              <AgentBadge key={a} agent={a} size={32} />
-            ))}
           </Row>
         </Section>
 
@@ -306,19 +507,14 @@ export default function DesignSystemView() {
                 ))}
               </Select>
             </Field>
-            <Field
-              label="Description"
-              htmlFor="ds-desc"
-              aside="facultative — l'agent CTO la complétera"
-              className="col-span-2"
-            >
+            <Field label="Description" htmlFor="ds-desc" aside="facultative" className="col-span-2">
               <Textarea id="ds-desc" rows={3} placeholder="Deux lignes suffisent." />
             </Field>
             <SwitchField
               checked={switchOn}
               onCheckedChange={setSwitchOn}
-              label="Envoyer à l'agent CTO à la création"
-              hint="Il complétera la description et posera ses questions dans la foulée."
+              label="Générer les notes de version"
+              hint="Un brouillon de release est créé sur GitHub à la clôture."
             />
             <Row>
               <Switch checked={false} onCheckedChange={() => {}} aria-label="Exemple éteint" />
@@ -380,7 +576,7 @@ export default function DesignSystemView() {
           <div className="flex gap-3">
             <StatCard label="Portée" value="18" hint="issues · 11 fermées" />
             <StatCard label="Avancement" value="61 %" hint="+3 aujourd'hui" tone="clay" />
-            <StatCard label="PR ouvertes" value="4" hint="1 écrite par un agent" tone="green" />
+            <StatCard label="PR ouvertes" value="4" hint="2 fusionnées" tone="green" />
             <StatCard label="Revues à faire" value="3" hint="la plus ancienne : 2 j" tone="amber" />
             <StatCard label="Rythme" value="2,4" hint="issues fermées / jour" tone="blue" />
           </div>
@@ -421,14 +617,17 @@ export default function DesignSystemView() {
               />
             </Card>
             <Card className="p-[15px]">
-              <CardHeader title="Activité des agents" actions={<a href="#console">Console</a>} />
+              <CardHeader title="Activité" />
               <div className="mt-1.5">
-                <ActivityItem agent="dev" time="il y a 4 min">
+                <ActivityItem badge={<Avatar initials="RL" size={21} />} time="il y a 4 min">
                   Branche <Em mono>feat/142-github-device-flow</Em> créée, PR #88 ouverte en
                   brouillon.
                 </ActivityItem>
-                <ActivityItem agent="ceo" time="il y a 1 h">
-                  <Em>5 issues proposées</Em> pour la version 0.2.0.
+                <ActivityItem
+                  badge={<Avatar initials="MB" size={21} tone="neutral" />}
+                  time="il y a 1 h"
+                >
+                  <Em>5 issues créées</Em> pour la version 0.2.0.
                 </ActivityItem>
               </div>
             </Card>
@@ -461,13 +660,13 @@ export default function DesignSystemView() {
           <div className="grid grid-cols-3 gap-3">
             <Card className="p-6 bg-aside">
               <OnboardingSteps
-                steps={["Compte GitHub", "Agents de code", "Projet et mapping"]}
+                steps={["Bienvenue", "IA de code", "Plugins", "Configuration"]}
                 current={1}
               />
             </Card>
             <Card className="p-4">
               <StepTimeline
-                steps={devSteps.map((title, i) => ({
+                steps={["Analyse", "Branche et PR", "Implémentation", "Tests"].map((title, i) => ({
                   title,
                   state: i < 2 ? "done" : i === 2 ? "current" : "pending",
                   detail: i === 0 ? "18 fichiers lus · 3 modules identifiés" : undefined,
@@ -507,7 +706,7 @@ export default function DesignSystemView() {
           />
         </Section>
 
-        <Section title="Console d'agent et diff">
+        <Section title="Console de session et diff">
           <div className="grid grid-cols-[320px_1fr] gap-3">
             <Card className="h-[300px] overflow-hidden">
               <SessionConsole
@@ -557,6 +756,11 @@ export default function DesignSystemView() {
                 "",
                 "- [ ] Bandeau, jamais de toast rouge",
                 "- [x] Heure dans le fuseau local",
+                "",
+                "| Issue | SP | PR | Base |",
+                "| --- | --- | --- | --- |",
+                "| #26 — Option `--bis` | 1 | #28 (brouillon) | `release/0.3.0` |",
+                "| #2 — Modèle + API | 8 | — | — |",
               ].join("\n")}
             />
           </Card>
@@ -570,50 +774,6 @@ export default function DesignSystemView() {
               },
             ]}
           />
-        </Section>
-
-        <Section title="Console des agents">
-          <div className="flex gap-3">
-            <AgentStatusCard
-              agent="ceo"
-              autonomy="Propose seulement"
-              status={{ label: "5 à valider", tone: "amber", dot: true }}
-              description="Lit la roadmap et les versions livrées, puis dérive les issues probables des paliers à venir."
-              note="5 issues proposées pour 0.2.0"
-              footer="Dernier passage : il y a 1 h · cible 0.2.0"
-              highlight="amber"
-              onOpen={() => {}}
-            />
-            <AgentStatusCard
-              agent="dev"
-              autonomy="Applique après validation"
-              status={{ label: "#142 · 04:12", tone: "green", dot: true }}
-              description="Crée la branche et la PR en brouillon, puis implémente dans un worktree isolé."
-              note="PR #88 ouverte en brouillon"
-              footer="Étape 3/6 : implémentation"
-              highlight="green"
-              onOpen={() => {}}
-            />
-            <AgentStatusCard
-              agent="deploy"
-              autonomy="Applique après validation"
-              status={{ label: "inactif", tone: "neutral" }}
-              description="Publie la version, rédige la documentation et rejoue les tests d'acceptation."
-              footer="Dernier passage : hier · v0.1.1"
-              onOpen={() => {}}
-            />
-          </div>
-          <Card className="overflow-hidden">
-            <RunLogRow agent="dev" time="11:24" status={{ label: "en cours", tone: "blue" }} onClick={() => {}}>
-              Tâche #142 · étape 3/6 · PR #88
-            </RunLogRow>
-            <RunLogRow agent="ceo" time="10:31" status={{ label: "à valider", tone: "amber" }}>
-              Passage sur la version 0.2.0 · 5 à valider
-            </RunLogRow>
-            <RunLogRow agent="cto" time="hier" status={{ label: "appliqué", tone: "green" }}>
-              Passage sur la version 0.1.2 · 18/18 traitées · 12 appliquées
-            </RunLogRow>
-          </Card>
         </Section>
 
         <Section title="Panneaux">
@@ -666,33 +826,17 @@ export default function DesignSystemView() {
                 control={<span className="mono text-small text-clay">type/*</span>}
               />
               <SettingRow title="Version obligatoire" control={<Badge>verrouillé</Badge>} />
-              <Note>2 questions sans réponse sur #156</Note>
-              <Note tone="purple">
-                L'agent CEO reste en « Proposer » : il ne crée jamais d'issue seul.
-              </Note>
+              <Note>2 PR sans relecteur sur 0.1.2</Note>
+              <Note tone="purple">Les plugins s'installent depuis le catalogue public.</Note>
             </Card>
           </div>
           <Callout tone="info">
-            Cadence n'écrit jamais sur GitHub sans confirmation tant que l'autonomie des agents
-            reste sur <span className="text-tx">Proposer</span>.
+            L'IA travaille dans un dossier neutre de Cadence, jamais dans un de vos dépôts.
           </Callout>
           <Callout tone="warning">
             Deux PR de cette version sont encore ouvertes (<span className="mono">#84</span>,{" "}
             <span className="mono">#88</span>).
           </Callout>
-          <Card className="max-w-[420px] bg-p2 p-3.5">
-            <div className="flex items-center gap-2">
-              <AgentBadge agent="cto" size={22} />
-              <span className="grow text-body-sm font-semibold">Agent CTO</span>
-              <Badge tone="amber">2 questions</Badge>
-            </div>
-            <AgentQuestion
-              question={question}
-              value={answer}
-              onChange={setAnswer}
-              suggestion="Oui, avec l'heure exacte"
-            />
-          </Card>
         </Section>
       </div>
 
@@ -721,3 +865,80 @@ export default function DesignSystemView() {
     </Page>
   );
 }
+
+/** Fil d'exemple de la galerie (V2-Chat.dc.html). */
+/** Questions à choix (`AskUserQuestion`) : une carte répondue, puis une en attente. */
+const sampleQuestions: AiEvent[] = [
+  { type: "user-message", text: "Prépare la fiche du chapitre 3." },
+  {
+    type: "question",
+    request: "q0",
+    text: "Pour quel examen ?",
+    options: ["Partiel", "Final"],
+    questions: [
+      {
+        id: "Pour quel examen ?",
+        header: "Examen",
+        question: "Pour quel examen ?",
+        options: [
+          { label: "Partiel", description: null },
+          { label: "Final", description: null },
+        ],
+        multiSelect: false,
+        other: true,
+      },
+    ],
+  },
+  {
+    type: "question-answered",
+    request: "q0",
+    answer: "Partiel",
+    answers: [{ id: "Pour quel examen ?", answers: ["Partiel"] }],
+  },
+  {
+    type: "question",
+    request: "q1",
+    text: MOCK_QUESTIONS.map((q) => q.question).join("\n"),
+    options: MOCK_QUESTIONS[0]!.options.map((o) => o.label),
+    questions: MOCK_QUESTIONS,
+  },
+];
+
+const sampleChat: AiEvent[] = [
+  {
+    type: "user-message",
+    text: "Qu'est-ce que j'ai sur le feu cette semaine ? Je suis absent jeudi.",
+  },
+  {
+    type: "tool-started",
+    call: "t1",
+    source: { kind: "cadence", plugin: "gestion-projet", tool: "lister_issues" },
+    name: "mcp__cadence__gestion-projet__lister_issues",
+    input: { depots: "tous", assignee: "@rlhuillier" },
+  },
+  { type: "tool-completed", call: "t1", ok: true, summary: "7 issues · 3 dépôts", output: null },
+  {
+    type: "tool-started",
+    call: "t2",
+    source: { kind: "cadence", plugin: "documents", tool: "revisions_dues" },
+    name: "mcp__cadence__documents__revisions_dues",
+    input: { jours: 7 },
+  },
+  { type: "tool-completed", call: "t2", ok: false, summary: "Plugin indisponible", output: null },
+  { type: "command", call: "c1", command: "pnpm test", exitCode: 1, output: "1 test en échec" },
+  {
+    type: "message-completed",
+    message: "m1:0",
+    text: "Sans jeudi, il vous reste **4 jours**. Le rendu BDD est vendredi : [ouvrir l'issue](cadence:gestion-projet/issue?number=12).",
+  },
+  { type: "error", kind: "quota", message: "Limite d'utilisation de l'abonnement atteinte." },
+  { type: "turn-completed", ok: true, interrupted: false, error: null, durationMs: 12_400 },
+  { type: "user-message", text: "Relance les tests." },
+  {
+    type: "approval-requested",
+    request: "p1",
+    kind: "command",
+    title: "Bash : pnpm test",
+    detail: { command: "pnpm test" },
+  },
+];

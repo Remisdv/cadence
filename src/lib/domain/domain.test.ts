@@ -87,7 +87,14 @@ describe("parseMarkdown", () => {
     const blocks = parseMarkdown(
       "## Contexte\nLe client\nremonte l'erreur.\n\n## Attendu\n- un\n- deux\n\n- [ ] à faire\n- [x] fait\n\n> cité",
     );
-    expect(blocks.map((b) => b.kind)).toEqual(["heading", "paragraph", "heading", "list", "tasks", "quote"]);
+    expect(blocks.map((b) => b.kind)).toEqual([
+      "heading",
+      "paragraph",
+      "heading",
+      "list",
+      "tasks",
+      "quote",
+    ]);
     expect(blocks[1]).toEqual({ kind: "paragraph", text: "Le client remonte l'erreur." });
     expect(blocks[4]).toEqual({
       kind: "tasks",
@@ -96,6 +103,27 @@ describe("parseMarkdown", () => {
         { done: true, text: "fait" },
       ],
     });
+  });
+
+  it("lit les tableaux des réponses de l'IA", async () => {
+    const { parseMarkdown } = await import("@/components/domain/Markdown");
+    const blocks = parseMarkdown(
+      "**Contenu** (2 entrées)\n\n| Entrée | Type |\n|---|:--:|\n| `.git` | dossier |\n| `README.md` | fichier |\nfin",
+      { breaks: true },
+    );
+    expect(blocks).toEqual([
+      { kind: "paragraph", text: "**Contenu** (2 entrées)" },
+      {
+        kind: "table",
+        head: ["Entrée", "Type"],
+        rows: [
+          ["`.git`", "dossier"],
+          ["`README.md`", "fichier"],
+        ],
+      },
+      { kind: "paragraph", text: "fin" },
+    ]);
+    expect(parseMarkdown("a | b\nsuite")).toEqual([{ kind: "paragraph", text: "a | b suite" }]);
   });
 });
 

@@ -12,6 +12,6 @@ title: string, kind: VersionKind, state: VersionState, milestoneNumber: number,
  */
 name: string | null, startOn: string | null, dueOn: string | null, openIssues: number, closedIssues: number, 
 /**
- * Thèmes du palier (markdown), lus par l'agent CEO.
+ * Thèmes du palier (markdown), un élément de liste par thème.
  */
 description: string | null, };

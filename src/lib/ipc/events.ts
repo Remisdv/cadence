@@ -2,11 +2,19 @@
  * Événements back → front. Les noms doivent refléter `src-tauri/src/events.rs`.
  */
 import type {
-  AgentEvent,
-  AgentStateEvent,
   AuthChanged,
+  CatalogUpdated,
+  ChatEventPayload,
+  ChatStatePayload,
+  OpenViewRequest,
+  PluginEventPayload,
+  PluginInstallEvent,
+  PluginStateEvent,
   RateLimitInfo,
+  ReposChanged,
+  RunReport,
   SyncUpdated,
+  ToolRunEvent,
 } from "@/lib/types";
 import { isMockIpc } from "./transport";
 import { mockBus } from "./mock/bus";
@@ -14,9 +22,24 @@ import { mockBus } from "./mock/bus";
 export interface Events {
   "sync://updated": SyncUpdated;
   "sync://rate-limit": RateLimitInfo;
-  "agent://event": AgentEvent;
-  "agent://state": AgentStateEvent;
   "auth://changed": AuthChanged;
+  "plugin://state": PluginStateEvent;
+  "plugin://install": PluginInstallEvent;
+  /** `notifications/cadence/event` d'un serveur, relayée aux iframes du plugin. */
+  "plugin://event": PluginEventPayload;
+  /** Catalogue relu : nombre de mises à jour disponibles (badge). */
+  "catalog://updated": CatalogUpdated;
+  /** Une IA demande d'ouvrir une vue de plugin (`cadence__open_view`). */
+  "ui://open-view": OpenViewRequest;
+  /** Progression ou résultat d'une exécution de fond (`cadence__run_report`). */
+  "run://report": RunReport;
+  /** Événement d'une conversation ; `seq` nul pour un delta (jamais enregistré). */
+  "chat://event": ChatEventPayload;
+  "chat://state": ChatStatePayload;
+  /** Journal d'une installation ou d'une connexion d'outil (ligne, ou fin avec `done`). */
+  "tool://install": ToolRunEvent;
+  /** Dépôts suivis d'un plugin modifiés (relayé à ses iframes : événement `repos`). */
+  "repos://changed": ReposChanged;
 }
 
 export type EventName = keyof Events;

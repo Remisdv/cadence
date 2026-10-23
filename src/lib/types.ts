@@ -10,6 +10,90 @@ export type { IpcError } from "./bindings/IpcError";
 // Commun
 export type { UserRef } from "./bindings/UserRef";
 
+// App et préférences de la machine (Cadence 2)
+export type { AppStatus } from "./bindings/AppStatus";
+export type { ActionRunInput } from "./bindings/ActionRunInput";
+export type { ActionRunResult } from "./bindings/ActionRunResult";
+export type { AppDirs } from "./bindings/AppDirs";
+export type { AiId } from "./bindings/AiId";
+export type { AiCliSettings } from "./bindings/AiCliSettings";
+export type { AiSettings } from "./bindings/AiSettings";
+export type { AppSettings } from "./bindings/AppSettings";
+export type { AiCliPatch } from "./bindings/AiCliPatch";
+export type { AppSettingsPatch } from "./bindings/AppSettingsPatch";
+
+// Registre d'outils (Git, GitHub CLI, IA de code, Node.js)
+export type { ToolId } from "./bindings/ToolId";
+export type { ToolStatus } from "./bindings/ToolStatus";
+export type { ToolRequesterKind } from "./bindings/ToolRequesterKind";
+export type { ToolRequester } from "./bindings/ToolRequester";
+export type { ToolRecipe } from "./bindings/ToolRecipe";
+export type { ToolInfo } from "./bindings/ToolInfo";
+export type { ToolsReport } from "./bindings/ToolsReport";
+export type { ToolRunKind } from "./bindings/ToolRunKind";
+export type { ToolRunResult } from "./bindings/ToolRunResult";
+export type { ToolRunEvent } from "./bindings/ToolRunEvent";
+
+// Plugins
+export type { PluginCategory } from "./bindings/PluginCategory";
+export type { PluginColor } from "./bindings/PluginColor";
+export type { PluginService } from "./bindings/PluginService";
+export type { PluginSource } from "./bindings/PluginSource";
+export type { PluginStatus } from "./bindings/PluginStatus";
+export type { PluginViewInfo } from "./bindings/PluginViewInfo";
+export type { PluginSecretInfo } from "./bindings/PluginSecretInfo";
+export type { InstalledPluginView } from "./bindings/InstalledPluginView";
+export type { ActionMode } from "./bindings/ActionMode";
+export type { PluginActionInfo } from "./bindings/PluginActionInfo";
+export type { PluginSetupStep } from "./bindings/PluginSetupStep";
+export type { ProcessState } from "./bindings/ProcessState";
+export type { PluginStateEvent } from "./bindings/PluginStateEvent";
+export type { PluginProcessView } from "./bindings/PluginProcessView";
+export type { InstallPhase } from "./bindings/InstallPhase";
+export type { PluginInstallEvent } from "./bindings/PluginInstallEvent";
+export type { PluginToolResult } from "./bindings/PluginToolResult";
+export type { PluginEventPayload } from "./bindings/PluginEventPayload";
+export type { CatalogView } from "./bindings/CatalogView";
+export type { CatalogEntryView } from "./bindings/CatalogEntryView";
+export type { CatalogViewInfo } from "./bindings/CatalogViewInfo";
+export type { CatalogActionInfo } from "./bindings/CatalogActionInfo";
+export type { CatalogUpdated } from "./bindings/CatalogUpdated";
+export type { OpenViewRequest } from "./bindings/OpenViewRequest";
+export type { RunReport } from "./bindings/RunReport";
+
+// IA et chat du cœur
+export type { AiEvent } from "./bindings/AiEvent";
+export type { AiErrorKind } from "./bindings/AiErrorKind";
+export type { ApprovalDecision } from "./bindings/ApprovalDecision";
+export type { ApprovalKind } from "./bindings/ApprovalKind";
+export type { FileChange } from "./bindings/FileChange";
+export type { PlanItem } from "./bindings/PlanItem";
+export type { AiQuestion } from "./bindings/AiQuestion";
+export type { QuestionAnswer } from "./bindings/QuestionAnswer";
+export type { QuestionOption } from "./bindings/QuestionOption";
+export type { PlanStatus } from "./bindings/PlanStatus";
+export type { ToolSource } from "./bindings/ToolSource";
+export type { ChatState } from "./bindings/ChatState";
+export type { ChatMode } from "./bindings/ChatMode";
+export type { ChatPermissions } from "./bindings/ChatPermissions";
+export type { ChatSessionRow } from "./bindings/ChatSessionRow";
+export type { ChatGroup } from "./bindings/ChatGroup";
+export type { ConversationInfo } from "./bindings/ConversationInfo";
+export type { ConversationDetail } from "./bindings/ConversationDetail";
+export type { ConversationMessage } from "./bindings/ConversationMessage";
+export type { ConversationRole } from "./bindings/ConversationRole";
+export type { ConversationTool } from "./bindings/ConversationTool";
+export type { ConversationUsage } from "./bindings/ConversationUsage";
+export type { ConversationWaiting } from "./bindings/ConversationWaiting";
+export type { ChatEventRow } from "./bindings/ChatEventRow";
+export type { ChatSessionDetail } from "./bindings/ChatSessionDetail";
+export type { ChatSendInput } from "./bindings/ChatSendInput";
+export type { ChatSendResult } from "./bindings/ChatSendResult";
+export type { ChatEventPayload } from "./bindings/ChatEventPayload";
+export type { ChatStatePayload } from "./bindings/ChatStatePayload";
+export type { SettingsFieldError } from "./bindings/SettingsFieldError";
+export type { PluginSettingsView } from "./bindings/PluginSettingsView";
+
 // Auth
 export type { AuthProvider } from "./bindings/AuthProvider";
 export type { ProviderStatus } from "./bindings/ProviderStatus";
@@ -24,6 +108,11 @@ export type { AuthFailure } from "./bindings/AuthFailure";
 
 // Projet
 export type { Repo } from "./bindings/Repo";
+export type { CloneState } from "./bindings/CloneState";
+export type { SkillInfo } from "./bindings/SkillInfo";
+export type { RepoCheckout } from "./bindings/RepoCheckout";
+export type { RepoCloneView } from "./bindings/RepoCloneView";
+export type { ReposChanged } from "./bindings/ReposChanged";
 export type { ProjectState } from "./bindings/ProjectState";
 export type { OwnerKind } from "./bindings/OwnerKind";
 export type { RepoOwner } from "./bindings/RepoOwner";
@@ -45,11 +134,9 @@ export type { IssueType } from "./bindings/IssueType";
 export type { IssueStatus } from "./bindings/IssueStatus";
 export type { IssueFlag } from "./bindings/IssueFlag";
 export type { IssueRow } from "./bindings/IssueRow";
-export type { CtoQuestion } from "./bindings/CtoQuestion";
 export type { IssueDetail } from "./bindings/IssueDetail";
 export type { IssueFilter } from "./bindings/IssueFilter";
 export type { IssueCreateInput } from "./bindings/IssueCreateInput";
-export type { CtoAnswer } from "./bindings/CtoAnswer";
 
 // Pull requests
 export type { PrState } from "./bindings/PrState";
@@ -61,47 +148,11 @@ export type { PrDetail } from "./bindings/PrDetail";
 export type { PrFilter } from "./bindings/PrFilter";
 export type { ReviewAudience } from "./bindings/ReviewAudience";
 export type { ReviewRow } from "./bindings/ReviewRow";
-export type { AgentRunDetail } from "./bindings/AgentRunDetail";
-export type { AgentRunEntry } from "./bindings/AgentRunEntry";
-export type { AgentLogLine } from "./bindings/AgentLogLine";
-export type { CtoItem } from "./bindings/CtoItem";
-export type { CtoItemState } from "./bindings/CtoItemState";
-export type { DevTask } from "./bindings/DevTask";
-export type { DevTaskState } from "./bindings/DevTaskState";
-export type { DevFile } from "./bindings/DevFile";
-export type { DeployState } from "./bindings/DeployState";
-export type { DeployStage } from "./bindings/DeployStage";
-export type { DeployStageState } from "./bindings/DeployStageState";
-export type { DeployTest } from "./bindings/DeployTest";
-export type { DeployTestStatus } from "./bindings/DeployTestStatus";
-export type { DeployDecision } from "./bindings/DeployDecision";
-export type { DeployArtifact } from "./bindings/DeployArtifact";
-export type { CeoProposal } from "./bindings/CeoProposal";
-export type { CeoProposalState } from "./bindings/CeoProposalState";
-
-// Agents
-export type { AgentKind } from "./bindings/AgentKind";
-export type { Autonomy } from "./bindings/Autonomy";
-export type { RunState } from "./bindings/RunState";
-export type { AgentActivity } from "./bindings/AgentActivity";
-export type { RunSummary } from "./bindings/RunSummary";
-export type { AgentOverview } from "./bindings/AgentOverview";
-export type { AgentInput } from "./bindings/AgentInput";
-export type { AgentControl } from "./bindings/AgentControl";
-export type { AgentAction } from "./bindings/AgentAction";
-export type { ProposedAction } from "./bindings/ProposedAction";
-export type { ApplyFailure } from "./bindings/ApplyFailure";
-export type { ApplyReport } from "./bindings/ApplyReport";
 
 // Réglages
 export type { ProjectConfig } from "./bindings/ProjectConfig";
 export type { VersioningConfig } from "./bindings/VersioningConfig";
 export type { IssuesConfig } from "./bindings/IssuesConfig";
-export type { AgentEngine } from "./bindings/AgentEngine";
-export type { EngineChoice } from "./bindings/EngineChoice";
-export type { AgentEngines } from "./bindings/AgentEngines";
-export type { AgentConfig } from "./bindings/AgentConfig";
-export type { AgentsConfig } from "./bindings/AgentsConfig";
 export type { Config } from "./bindings/Config";
 
 // Sync
@@ -111,7 +162,4 @@ export type { RateLimitMode } from "./bindings/RateLimitMode";
 // Événements
 export type { SyncUpdated } from "./bindings/SyncUpdated";
 export type { RateLimitInfo } from "./bindings/RateLimitInfo";
-export type { AgentEvent } from "./bindings/AgentEvent";
-export type { AgentEventKind } from "./bindings/AgentEventKind";
-export type { AgentStateEvent } from "./bindings/AgentStateEvent";
 export type { AuthChanged } from "./bindings/AuthChanged";

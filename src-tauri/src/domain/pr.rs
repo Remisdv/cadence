@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::{agent::AgentKind, UserRef};
+use super::UserRef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
@@ -43,8 +43,6 @@ pub struct PrRow {
     pub branch: String,
     pub base: String,
     pub author: UserRef,
-    /// Agent auteur, si la PR a été ouverte par un agent.
-    pub agent: Option<AgentKind>,
     pub state: PrState,
     pub ci: CiState,
     /// Checks réussis (ou neutres / ignorés) sur le dernier commit, parmi `ci_total`.

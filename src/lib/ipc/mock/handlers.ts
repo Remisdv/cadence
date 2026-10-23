@@ -3,24 +3,67 @@
  * le type `Handlers` le vérifie à la compilation.
  *
  * Scénario de démarrage via l'URL :
- * - `?scenario=app` (défaut) : connecté, projet ouvert ;
- * - `?scenario=onboarding` : compte GitHub non connecté ;
- * - `?scenario=no-project` : connecté, aucun projet choisi.
+ * - `?scenario=app` (défaut) : connecté, projet ouvert, plugins factices installés ;
+ * - `?scenario=onboarding` : onboarding à faire, compte GitHub non connecté ;
+ * - `?scenario=no-project` : connecté, aucun projet choisi ;
+ * - `?scenario=empty` : aucun plugin installé ;
+ * - `?scenario=plugin-crash` : le serveur de Gestion de projet est en échec.
  *
  * Issue de la connexion GitHub simulée (navigateur ou code) : `&flow=ok` (défaut, autorisée
  * après quelques secondes), `denied`, `expired`, `config` (client ID / secret absent). Session de test de Claude Code : `&cli=ok` (défaut) ou `fail`.
  */
-import type { AuthChanged, CliAgentInfo, IssueRow, ProjectState } from "@/lib/types";
+import type {
+  AuthChanged,
+  CliAgentInfo,
+  InstalledPluginView,
+  IssueRow,
+  PluginEventPayload,
+  PluginInstallEvent,
+  PluginProcessView,
+  PluginStateEvent,
+  ProjectState,
+  RepoCloneView,
+  ReposChanged,
+} from "@/lib/types";
 import type { CommandArgs, CommandName, CommandResult } from "../commands";
 import { CommandError } from "../errors";
 import { mockBus } from "./bus";
 import * as data from "./fixtures";
-import { ceoMock } from "./ceo";
-import { ctoMock } from "./cto";
-import { devMock } from "./dev";
-import { agentsMock } from "./agents";
 import { versionReport } from "./versions";
-import { deployMock } from "./deploy";
+import { mockCatalogEntries, mockCatalogView } from "./catalog";
+import {
+  answerApproval,
+  answerQuestion,
+  listMockChats,
+  allowPendingApprovals,
+  mockActionGroup,
+  mockChats,
+  mockContexts,
+  mockConversation,
+  mockConversations,
+  newChat,
+  recordMockChatEvent,
+  requestInterrupt,
+  simulateTurn,
+} from "./chat";
+import {
+  mockAppSettings,
+  mockInstalledPlugin,
+  mockPlugins,
+  mockProcesses,
+  mockSettingsSchema,
+  validateMockSettings,
+  withMockDefaults,
+} from "./plugins";
+import {
+  mockCancelTool,
+  mockToolInput,
+  mockInstallTool,
+  mockLoginTool,
+  mockSetToolPath,
+  mockTestAi,
+  mockToolsReport,
+} from "./tools";
 
 type Handlers = {
   [C in CommandName]: (args: CommandArgs<C>) => CommandResult<C> | Promise<CommandResult<C>>;
@@ -31,12 +74,33 @@ const scenario = params.get("scenario") ?? "app";
 const flow = params.get("flow") ?? "ok";
 const cliOutcome = params.get("cli") ?? "ok";
 
+/** Emplacement des clones simulé (`AppDirs.repos`). */
+const REPOS_DIR = String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\repos`;
+const winPath = (...parts: string[]) => parts.join("\\");
+
 const state = {
   github: scenario === "onboarding" ? data.githubDisconnected : data.githubConnected,
   claudeCode: scenario === "onboarding" ? data.claudeDetected : data.claudeConnected,
   codex: data.cliNotFound,
-  engines: data.defaultEngines,
   project: scenario === "app" ? data.project : (null as ProjectState | null),
+  settings:
+    scenario === "onboarding"
+      ? { ...structuredClone(mockAppSettings), onboarded: false, defaultAi: null, trackedRepos: {} }
+      : structuredClone(mockAppSettings),
+  plugins: scenario === "empty" || scenario === "onboarding" ? [] : structuredClone(mockPlugins),
+  pluginSettings: {} as Record<string, Record<string, unknown>>,
+  secrets: new Set<string>(),
+  processes: mockProcesses(scenario === "plugin-crash"),
+  chats: mockChats(scenario !== "app"),
+  counter: 0,
+  /** Copies locales simulées du service Dépôts (`owner/nom` en minuscules). */
+  clones: {
+    "cadence-app/desktop": {
+      path: winPath(REPOS_DIR, "cadence-app", "desktop"),
+      worktrees: ["issue-142"],
+    },
+  } as Record<string, { path: string; worktrees: string[]; linked?: boolean }>,
+  catalogFetchedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
 };
 let flowTimer: number | undefined;
 
@@ -60,7 +124,563 @@ function cliKey(provider: string): "claudeCode" | "codex" {
   return provider === "codex" ? "codex" : "claudeCode";
 }
 
+function installed(command: string, id: string): InstalledPluginView {
+  const plugin = state.plugins.find((p) => p.id === id);
+  if (!plugin) fail(command, `Le plugin « ${id} » n'est pas installé.`);
+  return plugin;
+}
+
+function declaredSecret(command: string, plugin: string, secret: string): string {
+  const found = installed(command, plugin).secrets.some((s) => s.id === secret);
+  if (!found) fail(command, `Le plugin « ${plugin} » ne déclare pas le secret « ${secret} ».`);
+  return `plugin/${plugin}/${secret}`;
+}
+
+/** Statut recalculé après un changement de secret (`needs-setup` tant qu'un requis manque). */
+function refreshStatus(plugin: InstalledPluginView) {
+  if (plugin.status === "invalid") return;
+  const missing = plugin.secrets.some(
+    (s) => s.required && !state.secrets.has(`plugin/${plugin.id}/${s.id}`),
+  );
+  plugin.status = missing ? "needs-setup" : "ok";
+}
+
+function emitState(process: PluginProcessView) {
+  mockBus.emit<PluginStateEvent>("plugin://state", {
+    plugin: process.plugin,
+    state: process.state,
+    message: process.message,
+  });
+}
+
+/** Le serveur d'un plugin s'arrête (désactivation, secret changé, désinstallation). */
+function stopProcess(plugin: string) {
+  const process = state.processes.find((p) => p.plugin === plugin);
+  if (!process || process.state === "stopped") return;
+  Object.assign(process, { state: "stopped", pid: null, tools: 0, message: null });
+  emitState(process);
+}
+
+/** Dernier segment d'un chemin Windows ou Unix. */
+const baseName = (path: string) =>
+  path
+    .replace(/[\\/]+$/, "")
+    .split(/[\\/]/)
+    .pop() ?? "";
+
+function addPlugin(command: string, plugin: InstalledPluginView) {
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(plugin.id))
+    fail(command, `« ${plugin.id} » n'est pas un identifiant de plugin.`);
+  const previous = state.plugins.find((p) => p.id === plugin.id);
+  if (previous) return Object.assign(previous, { ...plugin, enabled: previous.enabled });
+  state.plugins.push(plugin);
+  return plugin;
+}
+
+/** Téléchargement et installation simulés d'un plugin du catalogue. */
+async function installFromMockCatalog(command: string, id: string) {
+  const entry = mockCatalogEntries.find((e) => e.id === id);
+  if (!entry) fail(command, `« ${id} » n'est pas au catalogue.`);
+  if (entry.minCadence && entry.minCadence > "0.3.0")
+    fail(command, `Nécessite Cadence ${entry.minCadence} ou plus récent.`);
+  const total = entry.size ?? 4_000_000;
+  for (let i = 1; i <= 8; i++) {
+    mockBus.emit<PluginInstallEvent>("plugin://install", {
+      id,
+      received: Math.round((total * i) / 8),
+      total,
+      phase: "downloading",
+    });
+    await delay(150);
+  }
+  mockBus.emit<PluginInstallEvent>("plugin://install", {
+    id,
+    received: total,
+    total,
+    phase: "extracting",
+  });
+  await delay(300);
+  stopProcess(id);
+  const existing = state.plugins.find((p) => p.id === id);
+  const plugin = existing
+    ? Object.assign(existing, { version: entry.version, source: "catalog" as const })
+    : addPlugin(command, {
+        ...mockInstalledPlugin(id, entry.version, "catalog"),
+        name: entry.name,
+        description: entry.description,
+        category: entry.category,
+        color: entry.color,
+        railIcon: entry.railIcon,
+        services: entry.services,
+        actions: entry.actions.map((a) => ({
+          ...a,
+          skill: a.id,
+          context: null,
+          description: null,
+          icon: null,
+          confirm: null,
+        })),
+        views: entry.views.map((v, i) => ({ ...v, section: null, hidden: false, home: i === 0 })),
+      });
+  mockBus.emit<PluginInstallEvent>("plugin://install", {
+    id,
+    received: 0,
+    total: 0,
+    phase: "done",
+  });
+  return plugin;
+}
+
 const handlers: Handlers = {
+  app_status: () => ({
+    onboarded: state.settings.onboarded,
+    version: "0.3.0-dev",
+    gateway: "http://127.0.0.1:52417/mcp",
+    dirs: {
+      plugins: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins`,
+      pluginsData: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins-data`,
+      sessions: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\sessions`,
+      repos: REPOS_DIR,
+    },
+  }),
+  app_settings_get: () => state.settings,
+  app_export_config: ({ path }) => {
+    if (!path.trim()) fail("app_export_config", "Chemin d'export vide.");
+    return null;
+  },
+  app_settings_set: ({ patch }) => {
+    const next = structuredClone(state.settings);
+    if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
+    if (patch.defaultAi !== undefined) next.defaultAi = patch.defaultAi;
+    for (const change of patch.ai ?? []) {
+      const key = change.ai === "claude-code" ? "claudeCode" : change.ai;
+      if (change.path !== undefined) next.ai[key].path = change.path.trim() || null;
+      if (change.enabled !== undefined) next.ai[key].enabled = change.enabled;
+    }
+    for (const [action, ai] of Object.entries(patch.actionAi ?? {})) {
+      if (!/^[a-z0-9_-]+\/[a-z0-9_-]+$/.test(action))
+        fail("app_settings_set", `« ${action} » n'est pas une action <plugin>/<action>.`);
+      if (ai) next.actionAi[action] = ai;
+      else delete next.actionAi[action];
+    }
+    if (patch.catalogUrl !== undefined) {
+      const url = patch.catalogUrl.trim();
+      if (url && !url.startsWith("https://"))
+        fail("app_settings_set", "L'URL du catalogue doit commencer par https://.");
+      next.catalogUrl = url || null;
+    }
+    if (patch.pluginAutoUpdate !== undefined) next.pluginAutoUpdate = patch.pluginAutoUpdate;
+    if (patch.devPlugins !== undefined)
+      next.devPlugins = [...new Set(patch.devPlugins.map((d) => d.trim()).filter(Boolean))];
+    for (const [plugin, repos] of Object.entries(patch.trackedRepos ?? {})) {
+      const list = [...new Set(repos.map((r) => r.trim().replace(/\.git$/, "")))];
+      const bad = list.find((r) => !/^[\w.-]+\/[\w.-]+$/.test(r));
+      if (bad) fail("app_settings_set", `« ${bad} » n'est pas un dépôt owner/nom.`);
+      if (list.length) next.trackedRepos[plugin] = list;
+      else delete next.trackedRepos[plugin];
+    }
+    for (const [plugin, repo] of Object.entries(patch.repoSelection ?? {})) {
+      if (repo === null) {
+        delete next.repoSelection[plugin];
+        continue;
+      }
+      const tracked = (next.trackedRepos[plugin] ?? []).find(
+        (r) => r.toLowerCase() === repo.trim().toLowerCase(),
+      );
+      if (!tracked)
+        fail("app_settings_set", `Le plugin « ${plugin} » ne suit pas le dépôt ${repo}.`);
+      next.repoSelection[plugin] = tracked;
+    }
+    for (const [plugin, repo] of Object.entries(next.repoSelection))
+      if (!(next.trackedRepos[plugin] ?? []).includes(repo)) delete next.repoSelection[plugin];
+    if (patch.ignoredTools !== undefined)
+      next.ignoredTools = [...new Set(patch.ignoredTools)].sort();
+    state.settings = next;
+    const touched = new Set([
+      ...Object.keys(patch.trackedRepos ?? {}),
+      ...Object.keys(patch.repoSelection ?? {}),
+    ]);
+    for (const plugin of touched)
+      mockBus.emit<ReposChanged>("repos://changed", {
+        plugin,
+        repos: next.trackedRepos[plugin] ?? [],
+        selection: next.repoSelection[plugin] ?? null,
+      });
+    return next;
+  },
+
+  repos_status: () => {
+    const seen = new Set<string>();
+    return Object.values(state.settings.trackedRepos)
+      .flat()
+      .filter((repo) => !seen.has(repo.toLowerCase()) && seen.add(repo.toLowerCase()))
+      .map((repo) => cloneView(repo));
+  },
+  repos_checkout: ({ plugin, repo, task }) => {
+    if (!installed("repos_checkout", plugin).services.includes("repos"))
+      fail("repos_checkout", `Le plugin « ${plugin} » ne déclare pas services = ["repos"].`);
+    const tracked = state.settings.trackedRepos[plugin] ?? [];
+    if (!tracked.some((r) => r.toLowerCase() === repo.toLowerCase()))
+      fail("repos_checkout", `Le plugin « ${plugin} » ne suit pas le dépôt ${repo}.`);
+    const key = repo.toLowerCase();
+    const clone = (state.clones[key] ??= {
+      path: winPath(REPOS_DIR, ...key.split("/")),
+      worktrees: [],
+    });
+    const slug = task
+      ?.toLowerCase()
+      .normalize("NFD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    if (!slug) return { path: clone.path };
+    if (!clone.worktrees.includes(slug)) clone.worktrees = [...clone.worktrees, slug].sort();
+    return { path: winPath(REPOS_DIR, ".worktrees", ...key.split("/"), slug) };
+  },
+  repos_link: ({ repo, path }) => {
+    const key = repo.toLowerCase();
+    if (path === null) {
+      if (state.clones[key]?.linked) delete state.clones[key];
+      delete state.settings.repoClones[key];
+      return cloneView(repo);
+    }
+    if (!/^([a-z]:[\/]|\/)/i.test(path.trim()))
+      fail("repos_link", `${path} n'est pas un dépôt Git.`);
+    state.clones[key] = {
+      path: path.trim(),
+      worktrees: state.clones[key]?.worktrees ?? [],
+      linked: true,
+    };
+    state.settings.repoClones[key] = path.trim();
+    return cloneView(repo);
+  },
+
+  tools_list: async ({ refresh }) => {
+    if (refresh) await delay(900);
+    return mockToolsReport(state.settings, state.plugins);
+  },
+  tool_install: async ({ tool, recipe }) => {
+    try {
+      return await mockInstallTool(tool, recipe);
+    } catch (e) {
+      fail("tool_install", (e as Error).message);
+    }
+  },
+  tool_login: async ({ tool }) => {
+    try {
+      return await mockLoginTool(tool);
+    } catch (e) {
+      fail("tool_login", (e as Error).message);
+    }
+  },
+  tool_cancel: ({ tool }) => mockCancelTool(tool),
+  tool_input: ({ tool, text }) => mockToolInput(tool, text),
+  tool_set_path: ({ tool, path }) => {
+    try {
+      mockSetToolPath(tool, path?.trim() || null);
+    } catch (e) {
+      fail("tool_set_path", (e as Error).message);
+    }
+    const ai = { claude: "claudeCode", codex: "codex", opencode: "opencode" } as const;
+    if (tool in ai) {
+      const slot = state.settings.ai[ai[tool as keyof typeof ai]];
+      slot.path = path?.trim() || null;
+      if (slot.path) slot.enabled = true;
+    } else if (path?.trim()) state.settings.toolPaths[tool] = path.trim();
+    else delete state.settings.toolPaths[tool];
+    return mockToolsReport(state.settings, state.plugins);
+  },
+  ai_test: async ({ ai }) => {
+    const tool = ai === "claude-code" ? "claude" : ai;
+    try {
+      return await mockTestAi(tool, cliOutcome);
+    } catch (e) {
+      fail("ai_test", (e as Error).message);
+    }
+  },
+
+  plugins_installed: () => state.plugins,
+  plugins_set_enabled: ({ id, enabled }) => {
+    const plugin = installed("plugins_set_enabled", id);
+    plugin.enabled = enabled;
+    return plugin;
+  },
+  plugins_reorder: ({ order }) => {
+    const ids = state.plugins.map((p) => p.id).sort();
+    if (new Set(order).size !== order.length || [...order].sort().join() !== ids.join())
+      fail(
+        "plugins_reorder",
+        "L'ordre du rail doit citer chaque plugin installé exactement une fois.",
+      );
+    const categories = ["projet", "etudes", "code", "donnees", "outils"];
+    state.plugins = order
+      .map((id) => state.plugins.find((p) => p.id === id)!)
+      .sort((a, b) => categories.indexOf(a.category) - categories.indexOf(b.category));
+    return state.plugins;
+  },
+  plugin_settings_get: ({ plugin }) => {
+    installed("plugin_settings_get", plugin);
+    const schema = mockSettingsSchema[plugin] ?? null;
+    return {
+      plugin,
+      schema,
+      value: withMockDefaults(schema, state.pluginSettings[plugin] ?? {}),
+      errors: [],
+    };
+  },
+  plugin_settings_set: ({ plugin, value }) => {
+    installed("plugin_settings_set", plugin);
+    const schema = mockSettingsSchema[plugin] ?? null;
+    const errors = validateMockSettings(schema, value);
+    if (errors.length === 0) state.pluginSettings[plugin] = value;
+    return { plugin, schema, value: withMockDefaults(schema, value), errors };
+  },
+  plugin_secret_set: ({ plugin, secret, value }) => {
+    const account = declaredSecret("plugin_secret_set", plugin, secret);
+    if (!value.trim()) fail("plugin_secret_set", "Le secret est vide.");
+    state.secrets.add(account);
+    refreshStatus(installed("plugin_secret_set", plugin));
+    return null;
+  },
+  plugin_secret_has: ({ plugin, secret }) =>
+    state.secrets.has(declaredSecret("plugin_secret_has", plugin, secret)),
+  plugin_secret_delete: ({ plugin, secret }) => {
+    state.secrets.delete(`plugin/${plugin}/${secret}`);
+    const found = state.plugins.find((p) => p.id === plugin);
+    if (found) refreshStatus(found);
+    stopProcess(plugin);
+    return null;
+  },
+  plugin_install_zip: async ({ path }) => {
+    if (!path.toLowerCase().endsWith(".zip")) fail("plugin_install_zip", "Archive zip invalide.");
+    // `journal-0.2.0.zip` → plugin `journal`, version 0.2.0.
+    const [, id = "", version = "0.1.0"] =
+      /^(.*?)(?:-(\d+\.\d+\.\d+))?\.zip$/i.exec(baseName(path)) ?? [];
+    const total = 4_200_000;
+    for (const [phase, received] of [
+      ["verifying", total],
+      ["extracting", total / 2],
+      ["extracting", total],
+    ] as const) {
+      mockBus.emit<PluginInstallEvent>("plugin://install", { id, received, total, phase });
+      await delay(200);
+    }
+    stopProcess(id);
+    const plugin = addPlugin("plugin_install_zip", mockInstalledPlugin(id, version, "file"));
+    // Archive construite pour cette machine seulement (`--allow-missing-targets`).
+    const warnings = /windows/i.test(path)
+      ? [
+          "Installé pour Windows x64 (cette machine). Binaire du serveur absent pour macOS (Apple Silicon, Intel) et Linux x64 : le plugin ne fonctionnera pas sur ces systèmes.",
+        ]
+      : [];
+    mockBus.emit<PluginInstallEvent>("plugin://install", {
+      id,
+      received: 0,
+      total: 0,
+      phase: "done",
+    });
+    return warnings.length ? { ...plugin, installWarnings: warnings } : plugin;
+  },
+  plugin_install_dev: ({ path }) => {
+    const plugin = addPlugin("plugin_install_dev", {
+      ...mockInstalledPlugin(baseName(path), "0.1.0", "dev"),
+      devPath: path,
+    });
+    if (!state.settings.devPlugins.includes(path)) state.settings.devPlugins.push(path);
+    stopProcess(plugin.id);
+    return plugin;
+  },
+  plugin_uninstall: ({ id, deleteSecrets }) => {
+    const plugin = installed("plugin_uninstall", id);
+    stopProcess(id);
+    state.plugins = state.plugins.filter((p) => p.id !== id);
+    state.processes = state.processes.filter((p) => p.plugin !== id);
+    if (deleteSecrets) plugin.secrets.forEach((s) => state.secrets.delete(`plugin/${id}/${s.id}`));
+    if (plugin.source === "dev")
+      state.settings.devPlugins = state.settings.devPlugins.filter((d) => baseName(d) !== id);
+    return null;
+  },
+  chat_sessions: ({ group, all }) => listMockChats(state.chats, group ?? null, all ?? false),
+  plugin_conversations: ({ plugin, group }) => mockConversations(state.chats, plugin, group),
+  plugin_conversation_get: ({ plugin, id }) =>
+    mockConversation(state.chats, plugin, id) ??
+    fail("plugin_conversation_get", `Conversation « ${id} » introuvable.`),
+  chat_session_get: ({ id }) => {
+    const chat = state.chats.get(id);
+    if (!chat) fail("chat_session_get", `Conversation « ${id} » introuvable.`);
+    return structuredClone(chat);
+  },
+  chat_send: ({ input }) => {
+    const text = input.text.trim();
+    if (!text) fail("chat_send", "Le message est vide.");
+    const ai = input.ai ?? state.settings.defaultAi ?? "claude-code";
+    const origin = input.plugin ? `plugin:${input.plugin}` : "user";
+    const id = input.session ?? newChat(state.chats, text, ai, input.permissions, origin).id;
+    const chat = state.chats.get(id);
+    if (!chat) fail("chat_send", `Conversation « ${id} » introuvable.`);
+    if (chat.session.state === "running" || chat.session.state === "waiting-approval")
+      fail("chat_send", "Un tour est déjà en cours dans cette conversation.");
+    // Comme le back : pièces jointes copiées dans `pieces-jointes/`, listées après le texte.
+    const joined = (input.attachments ?? []).map(
+      (p) => `- pieces-jointes/${p.split(/[\\/]/).pop()}`,
+    );
+    const message = joined.length
+      ? `${text}\n\nPièces jointes (copiées dans ton dossier de travail) :\n${joined.join("\n")}`
+      : text;
+    recordMockChatEvent(state.chats, id, { type: "user-message", text: message });
+    void simulateTurn(state.chats, id, text);
+    return { session: id };
+  },
+  chat_interrupt: ({ session }) => {
+    const chat = state.chats.get(session);
+    if (chat?.session.state !== "running")
+      fail("chat_interrupt", "Aucun tour en cours dans cette conversation.");
+    requestInterrupt(session);
+    return null;
+  },
+  chat_answer: ({ session, request, answers }) => {
+    if (!state.chats.has(session)) fail("chat_answer", `Conversation « ${session} » introuvable.`);
+    const problem = answerQuestion(request, answers);
+    if (problem) fail("chat_answer", problem);
+    return null;
+  },
+  action_run: async ({ input }) => {
+    const plugin = installed("action_run", input.plugin);
+    const action = plugin.actions.find((a) => a.id === input.action);
+    if (!action)
+      fail("action_run", `« ${plugin.name} » ne déclare pas l'action « ${input.action} ».`);
+    if (action.context && (input.context as { type?: string } | null)?.type !== action.context)
+      fail(
+        "action_run",
+        `L'action « ${action.label} » attend un contexte de type « ${action.context} ».`,
+      );
+    const ai =
+      input.ai ??
+      state.settings.actionAi[`${plugin.id}/${action.id}`] ??
+      state.settings.defaultAi ??
+      "claude-code";
+    let grouping: ReturnType<typeof mockActionGroup>;
+    try {
+      grouping = mockActionGroup(plugin.id, input.context ?? null);
+    } catch (err) {
+      fail("action_run", (err as Error).message);
+    }
+    const prompt = `/cadence:${plugin.id}-${action.skill}\n\nAction : ${action.label}`;
+    const row = newChat(state.chats, action.label, ai);
+    Object.assign(row, {
+      origin: `action:${plugin.id}/${action.id}`,
+      mode: action.mode === "background" ? "background" : "chat",
+      permissions: action.mode === "background" ? "auto-edit" : "ask",
+      ...grouping,
+    });
+    if (input.context) mockContexts.set(row.id, input.context);
+    recordMockChatEvent(state.chats, row.id, { type: "user-message", text: prompt });
+    void simulateTurn(state.chats, row.id, prompt).then(() => {
+      if (action.mode === "background")
+        recordMockChatEvent(state.chats, row.id, {
+          type: "report",
+          text: `${action.label} : terminé (simulation).`,
+          progress: 100,
+          isFinal: true,
+          data: null,
+        });
+    });
+    return { session: row.id, mode: action.mode, ai };
+  },
+  chat_approve: ({ request, decision }) => {
+    if (!answerApproval(request, decision))
+      fail("chat_approve", "Cette demande d'approbation n'attend plus de réponse.");
+    return null;
+  },
+  chat_session_rename: ({ id, title }) => {
+    const chat = state.chats.get(id);
+    if (!chat) fail("chat_session_rename", `Conversation « ${id} » introuvable.`);
+    if (!title.trim()) fail("chat_session_rename", "Le titre est vide.");
+    chat.session = { ...chat.session, title: title.trim() };
+    return chat.session;
+  },
+  chat_set_permissions: ({ session, permissions }) => {
+    const chat = state.chats.get(session);
+    if (!chat) fail("chat_set_permissions", `Conversation « ${session} » introuvable.`);
+    chat.session = { ...chat.session, permissions };
+    if (permissions === "full") allowPendingApprovals(session);
+    return chat.session;
+  },
+  chat_session_delete: ({ id }) => {
+    if (!state.chats.delete(id)) fail("chat_session_delete", `Conversation « ${id} » introuvable.`);
+    return null;
+  },
+  catalog_get: ({ refresh }) => {
+    const offline = scenario === "offline";
+    if (refresh && !offline) state.catalogFetchedAt = new Date().toISOString();
+    const view = mockCatalogView(state.plugins, offline, state.catalogFetchedAt);
+    mockBus.emit("catalog://updated", { updates: view.updates });
+    return view;
+  },
+  plugin_install: ({ id }) => installFromMockCatalog("plugin_install", id),
+  plugin_update: ({ id }) => installFromMockCatalog("plugin_update", id),
+  plugin_call: ({ plugin, tool, args }) => {
+    if (!installed("plugin_call", plugin).enabled)
+      fail("plugin_call", `Le plugin « ${plugin} » est désactivé.`);
+    if (plugin !== "exemple")
+      fail("plugin_call", `Le plugin « ${plugin} » n'a pas de serveur en mode mock.`);
+    const result = (structured: unknown) => ({
+      isError: false,
+      structured,
+      text: JSON.stringify(structured),
+    });
+    switch (tool) {
+      case "compteur": {
+        state.counter += Number(args?.pas ?? 1);
+        // Le serveur prévient les iframes du plugin (notifications/cadence/event).
+        setTimeout(() =>
+          mockBus.emit<PluginEventPayload>("plugin://event", {
+            plugin,
+            event: "compteur.change",
+            data: { valeur: state.counter },
+          }),
+        );
+        return result({ valeur: state.counter });
+      }
+      case "heure":
+        return result({ iso: new Date().toISOString() });
+      case "echo":
+        return result({ echo: args ?? {} });
+      case "erreur":
+        return { isError: true, structured: null, text: "L'outil a échoué (exprès)." };
+      default:
+        fail("plugin_call", `exemple__${tool} : outil inconnu.`);
+    }
+  },
+  plugin_status: () =>
+    state.processes.filter((p) => state.plugins.some((plugin) => plugin.id === p.plugin)),
+  plugin_restart: async ({ plugin }) => {
+    if (!installed("plugin_restart", plugin).enabled)
+      fail("plugin_restart", `Le plugin « ${plugin} » est désactivé.`);
+    let process = state.processes.find((p) => p.plugin === plugin);
+    if (!process) {
+      process = {
+        plugin,
+        state: "stopped",
+        pid: null,
+        restarts: 0,
+        tools: 0,
+        message: null,
+        logPath: null,
+      };
+      state.processes.push(process);
+    }
+    Object.assign(process, { state: "starting", message: null, pid: null });
+    emitState(process);
+    await delay(600);
+    Object.assign(process, {
+      state: "ready",
+      pid: 4000 + Math.floor(Math.random() * 1000),
+      tools: 12,
+    });
+    emitState(process);
+    return null;
+  },
+
   auth_start_device_flow: () => {
     if (flow === "config") {
       fail(
@@ -224,7 +844,8 @@ const handlers: Handlers = {
   version_current: () => data.currentVersion,
   version_detail: ({ title }) => {
     const report = versionReport(title ?? state.project?.currentVersion ?? null);
-    if (!report) fail("version_detail", `La version ${title ?? ""} n'est pas un milestone du dépôt.`);
+    if (!report)
+      fail("version_detail", `La version ${title ?? ""} n'est pas un milestone du dépôt.`);
     return report;
   },
   version_close: ({ input }) => {
@@ -240,7 +861,6 @@ const handlers: Handlers = {
       releaseUrl: input.generateNotes
         ? `https://github.com/cadence-app/desktop/releases/tag/untagged-${closed}`
         : null,
-      deployRun: null,
     };
   },
 
@@ -252,21 +872,7 @@ const handlers: Handlers = {
         (!filter.issueType || i.issueType === filter.issueType) &&
         (!filter.query || i.title.toLowerCase().includes(filter.query.toLowerCase())),
     ),
-  issue_get: ({ number }) => {
-    const detail = data.issueDetail(number);
-    const item = ctoMock.item(number);
-    const questions = item?.state === "questions" ? structuredClone(item.questions) : [];
-    return {
-      ...detail,
-      body: ctoMock.appliedBody(number) ?? detail.body,
-      questions,
-      activeAgent: item?.state === "running" ? "cto" : null,
-      flags: [
-        ...detail.flags.filter((f) => f !== "cto-questions"),
-        ...(questions.length > 0 ? (["cto-questions"] as const) : []),
-      ],
-    };
-  },
+  issue_get: ({ number }) => data.issueDetail(number),
   issue_create: ({ input }) => {
     if (!input.title?.trim()) fail("issue_create", "Une issue doit avoir un titre.");
     if (!input.version?.trim())
@@ -282,25 +888,12 @@ const handlers: Handlers = {
       labels: input.labels ?? [],
       assignee: input.assignee ? data.me : null,
       estimate: null,
-      activeAgent: input.sendToCto ? "cto" : null,
       linkedPr: null,
       flags: input.body ? [] : ["incomplete-description"],
       updatedAt: new Date().toISOString(),
     };
     data.issues.unshift(row);
-    if (input.sendToCto) {
-      ctoMock.start([row.number]);
-      row.activeAgent = "cto";
-    }
     return row;
-  },
-  issue_answer_cto: ({ number, answers }) => {
-    try {
-      ctoMock.answer(number, answers);
-    } catch (e) {
-      fail("issue_answer_cto", (e as Error).message);
-    }
-    return null;
   },
 
   prs_list: ({ filter }) =>
@@ -316,134 +909,17 @@ const handlers: Handlers = {
     if (!detail) fail("pr_detail", `PR #${number} absente du cache.`);
     return detail;
   },
-
-  agent_engines_get: () => state.engines,
-  agent_engines_set: ({ engines }) => {
-    state.engines = engines;
-    return engines;
-  },
-  agents_overview: () =>
-    agentsMock.overview().map((a) => {
-      if (a.kind !== "ceo") return a;
-      const run = ceoMock.latest();
-      const pending = run?.proposals.filter((p) => p.state === "ready").length ?? 0;
-      const running = run?.state === "running";
-      return { ...a, pendingActions: pending, activity: running ? "running" : pending > 0 ? "waiting" : "idle" };
-    }),
-  agent_start: ({ kind, input }) => {
-    if (kind === "dev") {
-      if (!input.issues?.length) fail("agent_start", "Choisissez au moins une tâche.");
-      try {
-        return devMock.start(input.issues);
-      } catch (e) {
-        fail("agent_start", (e as Error).message);
-      }
-    }
-    if (kind === "deploy") {
-      try {
-        return deployMock.start(input.version);
-      } catch (e) {
-        fail("agent_start", (e as Error).message);
-      }
-    }
-    if (kind === "ceo") {
-      try {
-        return ceoMock.start(input.version);
-      } catch (e) {
-        fail("agent_start", (e as Error).message);
-      }
-    }
-    if (kind !== "cto") fail("agent_start", "Cet agent arrive plus tard.");
-    return ctoMock.start(input.issues?.length ? input.issues : undefined);
-  },
-  agent_control: ({ run, cmd }) => {
-    const dev = run.startsWith("dev-");
-    if (run.startsWith("ceo-")) {
-      if (cmd.cmd !== "stop") fail("agent_control", "L'agent CEO se met seulement en arrêt.");
-      ceoMock.stop();
-      return null;
-    }
-    const steps = run.startsWith("deploy-") ? deployMock : dev ? devMock : null;
-    if (cmd.cmd === "stop") (steps ?? ctoMock).stop();
-    else if (!steps && cmd.cmd !== "message") ctoMock.pause(cmd.cmd === "pause");
-    else if (!steps) fail("agent_control", "L'agent CTO ne prend pas d'intervention en cours de route.");
-    else if (cmd.cmd === "pause") steps.pause(true);
-    else if (cmd.cmd === "resume") steps.pause(false);
-    else steps.message(cmd.text);
-    return null;
-  },
-  agent_actions: () => [],
-  agent_apply: ({ run, ids }) =>
-    run.startsWith("ceo-")
-      ? ceoMock.apply(ids)
-      : run.startsWith("deploy-")
-        ? deployMock.apply(ids)
-        : run.startsWith("dev-")
-          ? devMock.push(ids)
-          : ctoMock.apply(ids),
-  agent_latest_run: ({ kind }) =>
-    structuredClone(
-      kind === "cto"
-        ? ctoMock.latest()
-        : kind === "dev"
-          ? devMock.latest()
-          : kind === "deploy"
-            ? deployMock.latest()
-            : kind === "ceo"
-              ? ceoMock.latest()
-              : null,
-    ),
-  agent_run_get: ({ run }) => {
-    const found = run.startsWith("ceo-")
-      ? ceoMock.latest()
-      : run.startsWith("deploy-")
-        ? deployMock.latest()
-        : run.startsWith("dev-")
-          ? devMock.latest()
-          : ctoMock.latest();
-    if (!found) fail("agent_run_get", "Exécution introuvable.");
-    return structuredClone(found);
-  },
-  agent_reject: ({ run, numbers }) => {
-    (run.startsWith("ceo-")
-      ? ceoMock.reject
-      : run.startsWith("deploy-")
-        ? deployMock.ignore
-        : run.startsWith("dev-")
-          ? devMock.skip
-          : ctoMock.reject)(numbers);
-    return null;
-  },
-  agent_edit_body: ({ number, body }) => {
-    ctoMock.edit(number, body);
-    return null;
-  },
-  agent_runs_list: ({ limit }) => agentsMock.runs(limit),
-  agent_edit_notes: ({ notes }) => {
-    try {
-      deployMock.editNotes(notes);
-    } catch (e) {
-      fail("agent_edit_notes", (e as Error).message);
-    }
-    return null;
-  },
-  agent_edit_proposal: ({ index, title, body }) => {
-    try {
-      ceoMock.edit(index, title, body);
-    } catch (e) {
-      fail("agent_edit_proposal", (e as Error).message);
-    }
-    return null;
-  },
-
-  settings_get: () => data.config,
-  settings_set: ({ config }) => {
-    if (!(config.versioning.sprintDays >= 1 && config.versioning.sprintDays <= 60))
-      fail("settings_set", "Un sprint dure entre 1 et 60 jours.");
-    Object.assign(data.config, config);
-    return config;
-  },
 };
+
+function cloneView(repo: string): RepoCloneView {
+  const clone = state.clones[repo.toLowerCase()];
+  return {
+    repo,
+    state: clone ? (clone.linked ? "linked" : "cloned") : "missing",
+    path: clone?.path ?? null,
+    worktrees: clone?.worktrees ?? [],
+  };
+}
 
 export async function handleMock<C extends CommandName>(
   command: C,

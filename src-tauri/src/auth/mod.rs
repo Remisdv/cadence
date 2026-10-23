@@ -36,7 +36,7 @@ pub const BLOCKING_SCOPES: [&str; 1] = ["repo"];
 pub const TOKEN_REFUSED: &str = "GitHub refuse ce jeton.";
 
 /// Service sous lequel le jeton est rangé dans le trousseau.
-pub const KEYRING_SERVICE: &str = "app.cadence.desktop";
+pub const KEYRING_SERVICE: &str = crate::secrets::SERVICE;
 
 /// Binaires des agents de code.
 pub const CLAUDE_CODE_BIN: &str = "claude";
@@ -190,7 +190,7 @@ pub async fn sign_out(state: &AppState) -> AppResult<()> {
     *state.repos.write().await = None;
     *state.project.write().await = None;
     state.delete_caches().await;
-    state.settings.update(|s| s.last_project = None)?;
+    state.settings.update(|s| s.legacy.last_project = None)?;
     Ok(())
 }
 

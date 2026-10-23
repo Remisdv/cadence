@@ -1,0 +1,6 @@
+# Même réglage que src-tauri/.cargo/config.toml, pour les commandes lancées depuis la racine
+# (`pnpm test:rust`, `pnpm bindings`) : cargo cherche sa configuration à partir du dossier
+# courant, pas du manifeste.
+[env]
+TS_RS_EXPORT_DIR = { value = "src/lib/bindings", relative = true }
+TS_RS_LARGE_INT = "number"

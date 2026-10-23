@@ -29,3 +29,7 @@ src-tauri/target
 # Worktrees des sous-agents et dossier de build séparé
 .claude/worktrees/
 src-tauri/target-agents/
+
+# Rapports et captures du skill tester-cadence
+qa/rapports/
+src-tauri/target-release/

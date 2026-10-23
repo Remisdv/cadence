@@ -1,8 +1,8 @@
 /**
  * Issues (maquette Issues.dc.html) : toutes les issues du dépôt ouvert, groupées par version.
  *
- * Lecture seule en 0.1.0 : les actions groupées (version, assignation, fermeture) et l'agent
- * CTO arrivent avec les versions qui écrivent sur GitHub ; leurs boutons sont désactivés.
+ * Lecture seule : les actions groupées (version, assignation, fermeture) arrivent avec
+ * l'écriture sur GitHub ; leurs boutons sont désactivés.
  */
 import { useMemo, useState } from "react";
 import { Page } from "@/components/layout/Page";
@@ -28,7 +28,6 @@ import {
   type StateFilter,
 } from "@/lib/domain/issueGroups";
 import { useCurrentProject, useIssues, useVersions } from "@/lib/query/queries";
-import { useNavigation } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 import { IssueTable } from "./IssueTable";
 
@@ -45,7 +44,6 @@ export default function IssuesView() {
   const issues = useIssues({}, { live: true });
   const versions = useVersions().data ?? [];
   const openDialog = useUiStore((s) => s.openDialog);
-  const navigate = useNavigation((s) => s.navigate);
 
   const [filter, setFilter] = useState<IssueViewFilter>(defaultFilter);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -77,9 +75,6 @@ export default function IssuesView() {
       }
       actions={
         <>
-          <Button icon="bot" onClick={() => navigate({ id: "agent", kind: "cto" })}>
-            Agent CTO
-          </Button>
           <Button variant="primary" icon="plus" onClick={() => openDialog("issue-create")}>
             Nouvelle issue
           </Button>

@@ -1,25 +1,462 @@
 /**
  * Hooks de données, un par intention métier. Les vues n'appellent jamais `call()` directement.
  */
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call } from "@/lib/ipc/transport";
+import { buildThread } from "@/lib/domain/chat";
+import { startLog, type ToolRunLog } from "@/lib/domain/tools";
 import type {
-  AgentControl,
-  AgentEngines,
-  AgentInput,
-  AgentKind,
+  ActionRunInput,
+  ApprovalDecision,
+  AppSettingsPatch,
+  ChatPermissions,
+  ChatSendInput,
+  ChatSessionDetail,
+  ChatSessionRow,
+  QuestionAnswer,
   AuthProvider,
   AuthStatus,
   CliAgentInfo,
-  Config,
-  CtoAnswer,
+  InstalledPluginView,
   IssueCreateInput,
   IssueFilter,
   PrFilter,
+  AiId,
   RepoCreateInput,
+  ToolId,
+  ToolRunResult,
   VersionCloseInput,
 } from "@/lib/types";
 import { keys } from "./keys";
+
+/* ---------- App et préférences de la machine ---------- */
+
+/** Écran de départ (onboarding de Cadence 2 terminé ?) et version de l'app. */
+export const useAppStatus = () =>
+  useQuery({ queryKey: keys.appStatus(), queryFn: () => call("app_status") });
+
+export const useAppSettings = () =>
+  useQuery({ queryKey: keys.appSettings(), queryFn: () => call("app_settings_get") });
+
+export function useSaveAppSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: AppSettingsPatch) => call("app_settings_set", { patch }),
+    onSuccess: (settings) => {
+      qc.setQueryData(keys.appSettings(), settings);
+      void qc.invalidateQueries({ queryKey: keys.appStatus() });
+      void qc.invalidateQueries({ queryKey: keys.reposStatus() });
+      // IA par défaut, IA ignorées, outils écartés : les demandeurs changent.
+      void qc.invalidateQueries({ queryKey: keys.toolsReport() });
+    },
+  });
+}
+
+/** Exporte la configuration dans `path` (fichier JSON choisi par l'utilisateur). */
+export function useExportConfig() {
+  return useMutation({ mutationFn: (path: string) => call("app_export_config", { path }) });
+}
+
+/* ---------- Service Dépôts GitHub ---------- */
+
+/** Copie locale de chaque dépôt suivi : clonée par Cadence, désignée, ou pas encore clonée. */
+export const useReposStatus = () =>
+  useQuery({ queryKey: keys.reposStatus(), queryFn: () => call("repos_status") });
+
+/** « Désigner un clone existant… » (`path` nul : revenir au clone de Cadence). */
+export function useLinkRepoClone() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { repo: string; path: string | null }) => call("repos_link", input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.reposStatus() });
+      void qc.invalidateQueries({ queryKey: keys.appSettings() });
+    },
+  });
+}
+
+/* ---------- Registre d'outils ---------- */
+
+/** Outils de la machine (détection en cache côté Rust ; « Revérifier » = `useRecheckTools`). */
+export const useTools = () =>
+  useQuery({
+    queryKey: keys.toolsReport(),
+    queryFn: () => call("tools_list", { refresh: false }),
+    staleTime: 60_000,
+  });
+
+/** Relance toute la détection (« Revérifier », « Relancer la détection »). */
+export function useRecheckTools() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => call("tools_list", { refresh: true }),
+    onSuccess: (report) => qc.setQueryData(keys.toolsReport(), report),
+  });
+}
+
+/** Journal en direct de la dernière installation ou connexion de l'outil. */
+export const useToolRun = (tool: ToolId) =>
+  useQuery<ToolRunLog | null>({
+    queryKey: keys.toolRun(tool),
+    queryFn: () => null,
+    enabled: false,
+    staleTime: Infinity,
+    initialData: null,
+  });
+
+function useToolRunMutation<A extends { tool: ToolId; command: string }>(
+  kind: "install" | "login",
+  run: (args: A) => Promise<ToolRunResult>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: run,
+    onMutate: ({ tool, command }) => {
+      qc.setQueryData<ToolRunLog>(keys.toolRun(tool), (prev) => startLog(kind, command, prev));
+    },
+    onSettled: (result, error, { tool }) => {
+      // Le résultat est aussi poussé par `tool://install` ; une erreur de lancement, non.
+      if (error)
+        qc.setQueryData<ToolRunLog>(keys.toolRun(tool), (prev) =>
+          prev ? { ...prev, running: false } : prev,
+        );
+      else if (result)
+        qc.setQueryData<ToolRunLog>(keys.toolRun(tool), (prev) =>
+          prev ? { ...prev, running: false, result } : prev,
+        );
+      void qc.invalidateQueries({ queryKey: keys.toolsReport() });
+      void qc.invalidateQueries({ queryKey: keys.auth });
+    },
+  });
+}
+
+/** Lance une recette d'installation (`recipe` null = la première utilisable). */
+export const useInstallTool = () =>
+  useToolRunMutation(
+    "install",
+    ({ tool, recipe }: { tool: ToolId; recipe: string | null; command: string }) =>
+      call("tool_install", { tool, recipe }),
+  );
+
+/** « Se connecter » : commande de connexion de l'outil. */
+export const useLoginTool = () =>
+  useToolRunMutation("login", ({ tool }: { tool: ToolId; command: string }) =>
+    call("tool_login", { tool }),
+  );
+
+/** Répond à une invite de l'installation ou de la connexion en cours. */
+export function useToolInput() {
+  return useMutation({
+    mutationFn: ({ tool, text }: { tool: ToolId; text: string }) =>
+      call("tool_input", { tool, text }),
+  });
+}
+
+export function useCancelTool() {
+  return useMutation({ mutationFn: (tool: ToolId) => call("tool_cancel", { tool }) });
+}
+
+/** « Localiser le binaire… » ; `path` null = détection automatique. */
+export function useSetToolPath() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ tool, path }: { tool: ToolId; path: string | null }) =>
+      call("tool_set_path", { tool, path }),
+    onSuccess: (report) => {
+      qc.setQueryData(keys.toolsReport(), report);
+      void qc.invalidateQueries({ queryKey: keys.appSettings() });
+    },
+  });
+}
+
+/** Session de test d'une IA ; le résultat s'affiche dans sa carte. */
+export function useTestAi() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ai: AiId) => call("ai_test", { ai }),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.toolsReport() }),
+  });
+}
+
+/* ---------- Plugins installés ---------- */
+
+/** Plugins installés, dans l'ordre du rail (catégories, puis ordre choisi). */
+export const usePlugins = () =>
+  useQuery({ queryKey: keys.pluginsInstalled(), queryFn: () => call("plugins_installed") });
+
+/** Remplace un plugin dans la liste en cache, sans tout relire. */
+function usePatchPlugin() {
+  const qc = useQueryClient();
+  return (plugin: InstalledPluginView) =>
+    qc.setQueryData<InstalledPluginView[]>(keys.pluginsInstalled(), (prev) =>
+      prev?.map((p) => (p.id === plugin.id ? plugin : p)),
+    );
+}
+
+export function useSetPluginEnabled() {
+  const patch = usePatchPlugin();
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      call("plugins_set_enabled", { id, enabled }),
+    onSuccess: patch,
+  });
+}
+
+/** Nouvel ordre du rail : optimiste, la liste réordonnée revient du back. */
+export function useReorderPlugins() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (order: string[]) => call("plugins_reorder", { order }),
+    onMutate: (order) =>
+      qc.setQueryData<InstalledPluginView[]>(keys.pluginsInstalled(), (prev) =>
+        prev ? order.map((id) => prev.find((p) => p.id === id)!).filter(Boolean) : prev,
+      ),
+    onSuccess: (plugins) => qc.setQueryData(keys.pluginsInstalled(), plugins),
+    onError: () => qc.invalidateQueries({ queryKey: keys.pluginsInstalled() }),
+  });
+}
+
+/** Réglages globaux d'un plugin, avec son schéma. */
+export const usePluginSettings = (plugin: string | null) =>
+  useQuery({
+    queryKey: keys.pluginSettings(plugin ?? ""),
+    queryFn: () => call("plugin_settings_get", { plugin: plugin! }),
+    enabled: plugin !== null,
+  });
+
+/** Enregistre si la valeur respecte le schéma ; les erreurs par champ reviennent dans `data`. */
+export function useSavePluginSettings(plugin: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (value: Record<string, unknown>) => call("plugin_settings_set", { plugin, value }),
+    onSuccess: (view) => {
+      if (view.errors.length === 0) qc.setQueryData(keys.pluginSettings(plugin), view);
+    },
+  });
+}
+
+/** Le secret est-il au trousseau ? (sa valeur n'est jamais lue par le front). */
+export const usePluginSecret = (plugin: string, secret: string) =>
+  useQuery({
+    queryKey: keys.pluginSecret(plugin, secret),
+    queryFn: () => call("plugin_secret_has", { plugin, secret }),
+  });
+
+/** Écrit (`value`) ou supprime (`null`) un secret, puis relit l'état du plugin. */
+export function useSetPluginSecret(plugin: string, secret: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (value: string | null) =>
+      value === null
+        ? call("plugin_secret_delete", { plugin, secret })
+        : call("plugin_secret_set", { plugin, secret, value }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.pluginSecret(plugin, secret) });
+      void qc.invalidateQueries({ queryKey: keys.pluginsInstalled() });
+    },
+  });
+}
+
+/** Installe une archive zip locale (ou un dossier de dev), puis relit le rail et les préférences. */
+export function useInstallPlugin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      source: { kind: "zip"; path: string; sha256?: string } | { kind: "dev"; path: string },
+    ) =>
+      source.kind === "zip"
+        ? call("plugin_install_zip", { path: source.path, sha256: source.sha256 ?? null })
+        : call("plugin_install_dev", { path: source.path }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.plugins });
+      void qc.invalidateQueries({ queryKey: keys.appSettings() });
+    },
+  });
+}
+
+/** Catalogue en ligne, comparé aux plugins installés. */
+export const useCatalog = () =>
+  useQuery({
+    queryKey: keys.catalog(),
+    queryFn: () => call("catalog_get", { refresh: false }),
+    staleTime: 5 * 60_000,
+  });
+
+/** Relit le catalogue sur le réseau (« Actualiser »). */
+export function useRefreshCatalog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => call("catalog_get", { refresh: true }),
+    onSuccess: (view) => qc.setQueryData(keys.catalog(), view),
+  });
+}
+
+/** Installe ou met à jour un plugin du catalogue (progression par `plugin://install`). */
+export function useInstallFromCatalog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, update }: { id: string; update: boolean }) =>
+      update ? call("plugin_update", { id }) : call("plugin_install", { id }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.plugins }),
+  });
+}
+
+/** Désinstalle un plugin ; ses secrets ne sont supprimés que si `deleteSecrets`. */
+export function useUninstallPlugin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, deleteSecrets }: { id: string; deleteSecrets: boolean }) =>
+      call("plugin_uninstall", { id, deleteSecrets }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.plugins });
+      void qc.invalidateQueries({ queryKey: keys.appSettings() });
+    },
+  });
+}
+
+/** État des serveurs MCP des plugins (rafraîchi par `plugin://state`). */
+export const usePluginStatus = () =>
+  useQuery({ queryKey: keys.pluginStatus(), queryFn: () => call("plugin_status") });
+
+/** Relance le serveur d'un plugin, même après un échec. */
+export function useRestartPlugin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (plugin: string) => call("plugin_restart", { plugin }),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.pluginStatus() }),
+  });
+}
+
+/* ---------- Chat du cœur ---------- */
+
+/**
+ * Conversations, la plus récemment active d'abord, cachées comprises (rangées dans un groupe,
+ * un sprint) : la liste du chat les écarte (`globalConversations`), la recherche et l'alerte
+ * « attend votre réponse » les voient.
+ */
+export const useChatSessions = () =>
+  useQuery({ queryKey: keys.chatSessions(), queryFn: () => call("chat_sessions", { all: true }) });
+
+/** Historique d'une conversation, tenu à jour par `chat://event` (useBackendEvents). */
+export const useChatSession = (id: string | null) =>
+  useQuery({
+    queryKey: keys.chatSession(id ?? ""),
+    queryFn: () => call("chat_session_get", { id: id! }),
+    enabled: id !== null,
+  });
+
+/** Fil affichable d'une conversation, textes en cours de diffusion compris. */
+export function useChatThread(id: string | null) {
+  const detail = useChatSession(id);
+  const drafts = useQuery<Record<string, string>>({
+    queryKey: keys.chatDrafts(id ?? ""),
+    queryFn: () => ({}),
+    enabled: false,
+    initialData: {},
+  }).data;
+  const items = useMemo(
+    () => buildThread(detail.data?.events ?? [], drafts),
+    [detail.data?.events, drafts],
+  );
+  return { ...detail, items };
+}
+
+/** Envoie un message ; sans `session`, ouvre une conversation (renvoie son id). */
+export function useSendChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ChatSendInput) => call("chat_send", { input }),
+    onSuccess: ({ session }) => {
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
+      void qc.invalidateQueries({ queryKey: keys.chatSession(session) });
+    },
+  });
+}
+
+export function useInterruptChat() {
+  return useMutation({ mutationFn: (session: string) => call("chat_interrupt", { session }) });
+}
+
+export function useApproveChat(session: string) {
+  return useMutation({
+    mutationFn: ({ request, decision }: { request: string; decision: ApprovalDecision }) =>
+      call("chat_approve", { session, request, decision }),
+  });
+}
+
+export function useAnswerChat(session: string) {
+  return useMutation({
+    mutationFn: ({ request, answers }: { request: string; answers: QuestionAnswer[] }) =>
+      call("chat_answer", { session, request, answers }),
+  });
+}
+
+/** Lance une action de plugin ; la conversation (ou l'exécution de fond) apparaît dans le chat. */
+export function useRunAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ActionRunInput) => call("action_run", { input }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.chatSessions() }),
+  });
+}
+
+export function useRenameChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      call("chat_session_rename", { id, title }),
+    onSuccess: (row) => {
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
+      void qc.invalidateQueries({ queryKey: keys.chatSession(row.id) });
+    },
+  });
+}
+
+/**
+ * Mode d'une conversation (Demander, Édition auto, Accès complet). Affiché tout de suite ; la
+ * CLI le reçoit au tour suivant.
+ */
+export function useSetChatPermissions() {
+  const qc = useQueryClient();
+  const patch = (session: string, permissions: ChatPermissions) => {
+    qc.setQueryData<ChatSessionDetail>(keys.chatSession(session), (prev) =>
+      prev ? { ...prev, session: { ...prev.session, permissions } } : prev,
+    );
+    qc.setQueryData<ChatSessionRow[]>(keys.chatSessions(), (prev) =>
+      prev?.map((row) => (row.id === session ? { ...row, permissions } : row)),
+    );
+  };
+  return useMutation({
+    mutationFn: ({ session, permissions }: { session: string; permissions: ChatPermissions }) =>
+      call("chat_set_permissions", { session, permissions }),
+    onMutate: ({ session, permissions }) => {
+      const before = qc.getQueryData<ChatSessionDetail>(keys.chatSession(session))?.session;
+      patch(session, permissions);
+      return { before };
+    },
+    onError: (_, { session }, context) => {
+      if (context?.before) patch(session, context.before.permissions);
+    },
+    onSettled: (_, __, { session }) => {
+      void qc.invalidateQueries({ queryKey: keys.chatSession(session) });
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
+    },
+  });
+}
+
+export function useDeleteChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => call("chat_session_delete", { id }),
+    onSuccess: (_, id) => {
+      qc.removeQueries({ queryKey: keys.chatSession(id) });
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
+    },
+  });
+}
+
+/* ---------- GitHub (Cadence 1, futur plugin gestion-projet) ---------- */
 
 /* ---------- Auth & projet ---------- */
 
@@ -90,20 +527,6 @@ export function useSetCliEnabled(provider: CliProvider) {
   return useMutation({
     mutationFn: (enabled: boolean) => call("cli_agent_set_enabled", { provider, enabled }),
     onSuccess: (info) => patch(cliPatch(provider, info)),
-  });
-}
-
-export const useAgentEngines = () =>
-  useQuery({ queryKey: keys.agentEngines(), queryFn: () => call("agent_engines_get") });
-
-export function useSaveAgentEngines() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (engines: AgentEngines) => call("agent_engines_set", { engines }),
-    // Optimiste : le select reflète le choix tout de suite.
-    onMutate: (engines) => qc.setQueryData(keys.agentEngines(), engines),
-    onSuccess: (engines) => qc.setQueryData(keys.agentEngines(), engines),
-    onError: () => qc.invalidateQueries({ queryKey: keys.agentEngines() }),
   });
 }
 
@@ -198,17 +621,6 @@ export function useCreateIssue() {
   });
 }
 
-export function useAnswerCto(number: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (answers: CtoAnswer[]) => call("issue_answer_cto", { number, answers }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.issue(number) });
-      void qc.invalidateQueries({ queryKey: keys.agents });
-    },
-  });
-}
-
 /* ---------- Pull requests & revues ---------- */
 
 /** PR ouvertes et récentes. `live` : relit toutes les 60 s (une requête GraphQL côté Rust). */
@@ -233,134 +645,6 @@ export const usePrDetail = (number: number | null) =>
     queryFn: () => call("pr_detail", { number: number! }),
     enabled: number !== null,
   });
-
-/* ---------- Agents ---------- */
-
-export const useAgentsOverview = () =>
-  useQuery({ queryKey: keys.agentsOverview(), queryFn: () => call("agents_overview") });
-
-export function useStartAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ kind, input }: { kind: AgentKind; input: AgentInput }) =>
-      call("agent_start", { kind, input }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Dernière exécution d'un agent (file, journal) ; rafraîchie à chaque `agent://state`. */
-export const useAgentLatestRun = (kind: AgentKind) =>
-  useQuery({ queryKey: keys.agentLatestRun(kind), queryFn: () => call("agent_latest_run", { kind }) });
-
-/** Pause (après l'étape en cours), reprise, ou intervention dans le terminal de l'agent. */
-export function useControlAgent(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (cmd: AgentControl) => call("agent_control", { run, cmd }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-export function useStopAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (run: string) => call("agent_control", { run, cmd: { cmd: "stop" } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Passe des issues de la file sans rien écrire. */
-export function useRejectItems(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (numbers: number[]) => call("agent_reject", { run, numbers }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Remplace la description proposée (« Éditer avant d'appliquer »). */
-export function useEditProposal(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ number, body }: { number: number; body: string }) =>
-      call("agent_edit_body", { run, number, body }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Journal des exécutions récentes, tous agents confondus ; rafraîchi à chaque `agent://state`. */
-export const useAgentRuns = (limit: number) =>
-  useQuery({
-    queryKey: keys.agentRunsList(limit),
-    queryFn: () => call("agent_runs_list", { limit }),
-    placeholderData: (previous) => previous,
-  });
-
-/** Même commande pour plusieurs exécutions (« Tout suspendre » de la console). */
-export function useControlAgents() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ runs, cmd }: { runs: string[]; cmd: AgentControl }) =>
-      Promise.all(runs.map((run) => call("agent_control", { run, cmd }))),
-    onSettled: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Agent déploiement : remplace les notes de version avant la publication. */
-export function useEditReleaseNotes(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (notes: string) => call("agent_edit_notes", { run, notes }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-/** Agent CEO : titre et corps d'une proposition, avant sa création. */
-export function useEditCeoProposal(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ index, title, body }: { index: number; title: string; body: string }) =>
-      call("agent_edit_proposal", { run, index, title, body }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.agents }),
-  });
-}
-
-export const useAgentActions = (run: string | null) =>
-  useQuery({
-    queryKey: keys.agentActions(run ?? ""),
-    queryFn: () => call("agent_actions", { run: run! }),
-    enabled: run !== null,
-  });
-
-export function useApplyActions(run: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (ids: string[]) => call("agent_apply", { run, ids }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.agents });
-      void qc.invalidateQueries({ queryKey: keys.issues });
-    },
-  });
-}
-
-/* ---------- Réglages ---------- */
-
-export const useSettings = () =>
-  useQuery({ queryKey: keys.settings, queryFn: () => call("settings_get") });
-
-export function useSaveSettings() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (config: Config) => call("settings_set", { config }),
-    onSuccess: (config) => {
-      qc.setQueryData(keys.settings, config);
-      // `hasConfig` du projet passe à vrai au premier enregistrement.
-      void qc.invalidateQueries({ queryKey: keys.project });
-      // L'autonomie des agents (rail, console) vient du fichier.
-      void qc.invalidateQueries({ queryKey: keys.agents });
-    },
-  });
-}
 
 /* ---------- Version de l'app et mise à jour automatique ---------- */
 

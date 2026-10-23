@@ -23,6 +23,18 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** Emplacement d'un fichier à enregistrer ; `null` si l'utilisateur annule. */
+export async function pickSavePath(title: string, defaultName: string): Promise<string | null> {
+  if (!isTauri) return `C:/Users/moi/Documents/${defaultName}`;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({
+    title,
+    defaultPath: defaultName,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  return selected ?? null;
+}
+
 /** Sélecteur de fichier natif ; `null` si l'utilisateur annule. */
 export async function pickFile(title: string): Promise<string | null> {
   if (!isTauri) {
@@ -31,6 +43,51 @@ export async function pickFile(title: string): Promise<string | null> {
   }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({ title, multiple: false, directory: false });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** Sélecteur natif pour un plugin (`cadence.pickFiles`) ; liste vide si l'utilisateur annule. */
+export async function pickPaths(options: {
+  title?: string;
+  multiple: boolean;
+  directory: boolean;
+  filters: { name: string; extensions: string[] }[];
+}): Promise<string[]> {
+  if (!isTauri)
+    return options.directory ? ["C:/Users/moi/Documents/Cours"] : ["C:/Users/moi/cours.pdf"];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    title: options.title,
+    multiple: options.multiple,
+    directory: options.directory,
+    filters: options.filters.length > 0 ? options.filters : undefined,
+  });
+  if (selected === null) return [];
+  return Array.isArray(selected) ? selected : [selected];
+}
+
+/** Choix d'une archive de plugin (`.zip`) ; `null` si l'utilisateur annule. */
+export async function pickArchive(): Promise<string | null> {
+  if (!isTauri) return "C:/Users/moi/Téléchargements/tests-couverture-0.3.1.zip";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    title: "Installer un plugin depuis une archive",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Archive de plugin", extensions: ["zip"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** Choix du dossier d'un plugin en développement (il porte `plugin.toml`) ; `null` si annulé. */
+export async function pickPluginFolder(): Promise<string | null> {
+  if (!isTauri) return "C:/Users/moi/projets/cadence-plugins/plugins/minuteur";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    title: "Installer un plugin depuis son dossier de développement",
+    multiple: false,
+    directory: true,
+  });
   return typeof selected === "string" ? selected : null;
 }
 

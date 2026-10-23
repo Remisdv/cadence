@@ -66,7 +66,7 @@ le redemander une fois.
 ### « .cadence/config.toml illisible » ou « valeur invalide »
 
 Le fichier du dépôt contient une erreur de syntaxe TOML ou une valeur hors bornes. Le message
-indique la clé en cause ; corrigez-la (voir la [référence](configuration.md)) et poussez.
+indique la clé en cause ; corrigez-la et poussez.
 
 ### L'enregistrement des réglages est refusé
 

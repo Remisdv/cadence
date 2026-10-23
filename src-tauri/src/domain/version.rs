@@ -41,7 +41,7 @@ pub struct Version {
     pub due_on: Option<String>,
     pub open_issues: u32,
     pub closed_issues: u32,
-    /// Thèmes du palier (markdown), lus par l'agent CEO.
+    /// Thèmes du palier (markdown), un élément de liste par thème.
     pub description: Option<String>,
 }
 
@@ -98,8 +98,6 @@ pub struct CloseReport {
     pub tag: String,
     /// Brouillon de release avec les notes générées, si demandé et créé.
     pub release_url: Option<String>,
-    /// Exécution de l'agent déploiement déclenchée, le cas échéant.
-    pub deploy_run: Option<String>,
 }
 
 /// Règles de clôture tirées de `.cadence/config.toml`.

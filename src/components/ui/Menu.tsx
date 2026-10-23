@@ -13,15 +13,19 @@ export function MenuContent({
   children,
   align = "start",
   className,
+  onCloseAutoFocus,
 }: {
   children: ReactNode;
   align?: "start" | "end";
   className?: string;
+  /** Focus à la fermeture (par défaut : retour au déclencheur ; `preventDefault` pour l'éviter). */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   return (
     <DropdownMenu.Portal>
       <DropdownMenu.Content
         align={align}
+        onCloseAutoFocus={onCloseAutoFocus}
         sideOffset={6}
         collisionPadding={12}
         className={cn(
@@ -94,9 +98,18 @@ export function MenuRadioGroup({
   );
 }
 
-export function MenuRadioItem({ value, children }: { value: string; children: ReactNode }) {
+export function MenuRadioItem({
+  value,
+  children,
+  className,
+}: {
+  value: string;
+  children: ReactNode;
+  /** Ex. `h-auto py-1.5` pour un choix sur deux lignes. */
+  className?: string;
+}) {
   return (
-    <DropdownMenu.RadioItem value={value} className={itemClass}>
+    <DropdownMenu.RadioItem value={value} className={cn(itemClass, className)}>
       <span className="flex size-4 items-center justify-center text-clay">
         <DropdownMenu.ItemIndicator>
           <Icon name="check" size={13} />

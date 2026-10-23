@@ -36,6 +36,14 @@ pub enum AppError {
     #[error("{0}")]
     Config(String),
 
+    /// Serveur de plugin arrêté, en échec ou injoignable.
+    #[error("{0}")]
+    PluginUnavailable(String),
+
+    /// Un outil de plugin a répondu par une erreur MCP ou n'a pas répondu à temps.
+    #[error("{0}")]
+    ToolError(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -57,6 +65,8 @@ pub enum ErrorKind {
     NoProject,
     Network,
     Config,
+    PluginUnavailable,
+    ToolError,
     Io,
     Internal,
 }
@@ -80,6 +90,8 @@ impl AppError {
             AppError::NoProject => ErrorKind::NoProject,
             AppError::Network(_) => ErrorKind::Network,
             AppError::Config(_) => ErrorKind::Config,
+            AppError::PluginUnavailable(_) => ErrorKind::PluginUnavailable,
+            AppError::ToolError(_) => ErrorKind::ToolError,
             AppError::Io(_) => ErrorKind::Io,
             AppError::Internal(_) => ErrorKind::Internal,
         }

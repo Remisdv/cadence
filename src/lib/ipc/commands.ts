@@ -4,32 +4,44 @@
  * Les types viennent de ts-rs : si Rust change une structure, ce fichier casse à la compilation.
  */
 import type {
-  AgentControl,
-  AgentEngines,
-  AgentInput,
-  AgentKind,
-  AgentOverview,
-  AgentRunDetail,
-  AgentRunEntry,
-  ApplyReport,
+  ActionRunInput,
+  ActionRunResult,
+  AiId,
+  AppSettings,
+  AppSettingsPatch,
+  AppStatus,
   AuthProvider,
+  ApprovalDecision,
   AuthStatus,
+  CatalogView,
+  ChatPermissions,
+  ChatSendInput,
+  ChatSendResult,
+  ChatSessionDetail,
+  ChatSessionRow,
   CliAgentInfo,
+  CliTest,
   CloseReport,
-  Config,
-  CtoAnswer,
+  ConversationDetail,
+  ConversationInfo,
   DeviceFlowStart,
   GithubAuth,
+  InstalledPluginView,
   IssueCreateInput,
   IssueDetail,
   IssueFilter,
   IssueRow,
   PrFilter,
+  QuestionAnswer,
   PrDetail,
   PrRow,
+  PluginProcessView,
+  PluginToolResult,
+  PluginSettingsView,
   ProjectState,
-  ProposedAction,
   Repo,
+  RepoCheckout,
+  RepoCloneView,
   RepoCreateInput,
   RepoOwner,
   ReviewRow,
@@ -38,12 +50,114 @@ import type {
   VersionDetail,
   VersionReport,
   WebFlowStart,
+  ToolId,
+  ToolRunResult,
+  ToolsReport,
 } from "@/lib/types";
 
 /** Commande sans argument : `keyof` vide, l'argument devient facultatif dans `call()`. */
 type NoArgs = Record<never, never>;
 
 export interface Commands {
+  // App (Cadence 2)
+  app_status: { args: NoArgs; result: AppStatus };
+  app_settings_get: { args: NoArgs; result: AppSettings };
+  app_settings_set: { args: { patch: AppSettingsPatch }; result: AppSettings };
+  /** Réglages, plugins installés et leurs réglages dans un fichier JSON (jamais de secret). */
+  app_export_config: { args: { path: string }; result: null };
+  // Registre d'outils : rien ne s'installe sans clic, la commande exacte est affichée.
+  /** Détection au premier appel puis cache ; `refresh` relance tout (« Revérifier »). */
+  tools_list: { args: { refresh: boolean }; result: ToolsReport };
+  /** Journal par `tool://install` ; réponse à la fin, outil redétecté. `recipe` null = la première utilisable. */
+  tool_install: { args: { tool: ToolId; recipe: string | null }; result: ToolRunResult };
+  /** Connexion guidée (navigateur, code d'appairage dans le journal, ou terminal du système). */
+  tool_login: { args: { tool: ToolId }; result: ToolRunResult };
+  tool_cancel: { args: { tool: ToolId }; result: boolean };
+  /** Réponse à une invite de la commande en cours (pseudo-terminal) ; `false` si impossible. */
+  tool_input: { args: { tool: ToolId; text: string }; result: boolean };
+  /** « Localiser le binaire… » ; `null` = détection automatique. */
+  tool_set_path: { args: { tool: ToolId; path: string | null }; result: ToolsReport };
+  /** Session de test de quelques secondes d'une IA de code. */
+  ai_test: { args: { ai: AiId }; result: CliTest };
+  // Plugins installés
+  plugins_installed: { args: NoArgs; result: InstalledPluginView[] };
+  plugins_set_enabled: { args: { id: string; enabled: boolean }; result: InstalledPluginView };
+  plugins_reorder: { args: { order: string[] }; result: InstalledPluginView[] };
+  plugin_settings_get: { args: { plugin: string }; result: PluginSettingsView };
+  plugin_settings_set: {
+    args: { plugin: string; value: Record<string, unknown> };
+    result: PluginSettingsView;
+  };
+  /** Écriture seule : aucune commande ne renvoie la valeur d'un secret. */
+  plugin_secret_set: { args: { plugin: string; secret: string; value: string }; result: null };
+  plugin_secret_has: { args: { plugin: string; secret: string }; result: boolean };
+  plugin_secret_delete: { args: { plugin: string; secret: string }; result: null };
+  /** Archive zip locale ; progression par `plugin://install`. */
+  plugin_install_zip: {
+    args: { path: string; sha256: string | null };
+    result: InstalledPluginView;
+  };
+  /** Dossier local non zippé (mode développement), retenu dans `devPlugins`. */
+  plugin_install_dev: { args: { path: string }; result: InstalledPluginView };
+  plugin_uninstall: { args: { id: string; deleteSecrets: boolean }; result: null };
+  /** Serveurs MCP des plugins installés qui en déclarent un ; changements par `plugin://state`. */
+  plugin_status: { args: NoArgs; result: PluginProcessView[] };
+  plugin_restart: { args: { plugin: string }; result: null };
+  /** Catalogue en ligne (cache de 6 h, `refresh` force la relecture ; hors ligne : le cache). */
+  catalog_get: { args: { refresh: boolean }; result: CatalogView };
+  /** Plugin du catalogue ; progression par `plugin://install`. */
+  plugin_install: { args: { id: string }; result: InstalledPluginView };
+  plugin_update: { args: { id: string }; result: InstalledPluginView };
+  /** Pont de l'iframe : outil du plugin (outils `ui` compris), nom sans préfixe. */
+  plugin_call: {
+    args: { plugin: string; tool: string; args: Record<string, unknown> | null };
+    result: PluginToolResult;
+  };
+  // Service Dépôts GitHub
+  /** Copie locale de chaque dépôt suivi (clonée, désignée ou pas encore clonée). */
+  repos_status: { args: NoArgs; result: RepoCloneView[] };
+  /** Pont de l'iframe (`repos.checkout`) : clone au besoin, worktree de la tâche. */
+  repos_checkout: {
+    args: { plugin: string; repo: string; task: string | null };
+    result: RepoCheckout;
+  };
+  /** « Désigner un clone existant… » ; `path` nul = revenir au clone de Cadence. */
+  repos_link: { args: { repo: string; path: string | null }; result: RepoCloneView };
+  // Chat du cœur (réponses par `chat://event` et `chat://state`)
+  /** Sans les conversations cachées (de groupe), sauf avec `group` (id préfixé par le plugin). */
+  chat_sessions: {
+    /** `group` : celles du groupe (id préfixé) ; `all` : cachées comprises. */
+    args: { group?: string | null; all?: boolean };
+    result: ChatSessionRow[];
+  };
+  chat_session_get: { args: { id: string }; result: ChatSessionDetail };
+  /** Pont de l'iframe (`conversations.list`) : conversations des actions du plugin ; `group` = id vu par lui. */
+  plugin_conversations: {
+    args: { plugin: string; group: string | null };
+    result: ConversationInfo[];
+  };
+  /** Pont de l'iframe (`conversations.get`, `.open`) : sans sorties d'outils ; un autre plugin : introuvable. */
+  plugin_conversation_get: { args: { plugin: string; id: string }; result: ConversationDetail };
+  chat_send: { args: { input: ChatSendInput }; result: ChatSendResult };
+  chat_interrupt: { args: { session: string }; result: null };
+  /** Réponses aux questions à choix de l'IA (Claude Code, Codex, OpenCode), une par question. */
+  chat_answer: {
+    args: { session: string; request: string; answers: QuestionAnswer[] };
+    result: null;
+  };
+  /** Action d'un plugin : conversation (mode chat) ou exécution de fond. */
+  action_run: { args: { input: ActionRunInput }; result: ActionRunResult };
+  chat_approve: {
+    args: { session: string; request: string; decision: ApprovalDecision };
+    result: null;
+  };
+  chat_session_rename: { args: { id: string; title: string }; result: ChatSessionRow };
+  /** Mode de la conversation ; s'applique au tour suivant (la CLI est relancée, reprise). */
+  chat_set_permissions: {
+    args: { session: string; permissions: ChatPermissions };
+    result: ChatSessionRow;
+  };
+  chat_session_delete: { args: { id: string }; result: null };
   // Auth
   auth_start_device_flow: { args: NoArgs; result: DeviceFlowStart };
   auth_start_web_flow: { args: NoArgs; result: WebFlowStart };
@@ -72,29 +186,10 @@ export interface Commands {
   issues_list: { args: { filter: IssueFilter }; result: IssueRow[] };
   issue_get: { args: { number: number }; result: IssueDetail };
   issue_create: { args: { input: IssueCreateInput }; result: IssueRow };
-  issue_answer_cto: { args: { number: number; answers: CtoAnswer[] }; result: null };
   // Pull requests & revues
   prs_list: { args: { filter: PrFilter }; result: PrRow[] };
   reviews_pending: { args: NoArgs; result: ReviewRow[] };
   pr_detail: { args: { number: number }; result: PrDetail };
-  // Agents
-  agent_engines_get: { args: NoArgs; result: AgentEngines };
-  agent_engines_set: { args: { engines: AgentEngines }; result: AgentEngines };
-  agents_overview: { args: NoArgs; result: AgentOverview[] };
-  agent_start: { args: { kind: AgentKind; input: AgentInput }; result: string };
-  agent_control: { args: { run: string; cmd: AgentControl }; result: null };
-  agent_actions: { args: { run: string }; result: ProposedAction[] };
-  agent_apply: { args: { run: string; ids: string[] }; result: ApplyReport };
-  agent_latest_run: { args: { kind: AgentKind }; result: AgentRunDetail | null };
-  agent_run_get: { args: { run: string }; result: AgentRunDetail };
-  agent_reject: { args: { run: string; numbers: number[] }; result: null };
-  agent_edit_body: { args: { run: string; number: number; body: string }; result: null };
-  agent_runs_list: { args: { limit: number }; result: AgentRunEntry[] };
-  agent_edit_notes: { args: { run: string; notes: string }; result: null };
-  agent_edit_proposal: { args: { run: string; index: number; title: string; body: string }; result: null };
-  // Réglages
-  settings_get: { args: NoArgs; result: Config };
-  settings_set: { args: { config: Config }; result: Config };
 }
 
 export type CommandName = keyof Commands;

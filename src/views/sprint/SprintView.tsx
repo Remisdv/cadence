@@ -1,16 +1,15 @@
 /**
  * Sprint en cours (maquette Main.dc.html) : KPI de la version en cours, tableau des issues
- * par état, burndown, activité des agents et ce qui attend l'utilisateur.
+ * par état, burndown et ce qui attend l'utilisateur.
  *
- * Tout vient de `version_detail` (version en cours), des revues en attente et de l'aperçu
- * des agents. Une carte ouvre le détail de l'issue.
+ * Tout vient de `version_detail` (version en cours) et des revues en attente. Une carte
+ * ouvre le détail de l'issue.
  */
 import type { ReactNode } from "react";
 import type { VersionReport } from "@/lib/types";
 import { Page } from "@/components/layout/Page";
 import { EmptyState, ErrorState, LoadingState } from "@/components/layout/EmptyState";
 import { Icon } from "@/components/icons/Icon";
-import { ActivityItem, Em } from "@/components/domain/ActivityItem";
 import { Burndown } from "@/components/domain/Burndown";
 import { KanbanColumn } from "@/components/domain/IssueCard";
 import { StatCard } from "@/components/domain/Stats";
@@ -20,7 +19,6 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
 import { formatDecimal, formatPercent, formatRange } from "@/lib/domain/format";
 import {
-  agentActivity,
   daysLeftLabel,
   delayLabel,
   gainedToday,
@@ -28,9 +26,8 @@ import {
   reviewsToDo,
   sprintBoard,
   sprintTodos,
-  withActiveAgents,
 } from "@/lib/domain/sprint";
-import { useAgentsOverview, usePendingReviews, useVersionDetail } from "@/lib/query/queries";
+import { usePendingReviews, useVersionDetail } from "@/lib/query/queries";
 import { useNavigation } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 
@@ -82,11 +79,10 @@ export default function SprintView() {
 
 function Sprint({ report }: { report: VersionReport }) {
   const navigate = useNavigation((s) => s.navigate);
-  const overview = useAgentsOverview().data ?? [];
   const reviews = usePendingReviews({ live: true }).data ?? [];
 
   const { detail } = report;
-  const issues = withActiveAgents(report.issues, overview);
+  const issues = report.issues;
   const total = issues.length || detail.version.openIssues + detail.version.closedIssues;
   const closed = issues.length
     ? issues.filter((i) => i.status === "done").length
@@ -113,11 +109,7 @@ function Sprint({ report }: { report: VersionReport }) {
         <StatCard
           label="PR ouvertes"
           value={prs.open}
-          hint={
-            prs.openByAgent > 0
-              ? `${prs.openByAgent} écrite${prs.openByAgent > 1 ? "s" : ""} par un agent`
-              : "aucune écrite par un agent"
-          }
+          hint={`${prs.merged} fusionnée${prs.merged > 1 ? "s" : ""}`}
           tone="green"
         />
         <StatCard
@@ -169,8 +161,7 @@ function Sprint({ report }: { report: VersionReport }) {
 
         <div className="flex w-[330px] shrink-0 flex-col gap-3">
           <BurndownCard report={report} scope={total} />
-          <AgentActivityCard />
-          <TodosCard issues={report.issues} />
+          <TodosCard />
         </div>
       </div>
     </div>
@@ -213,42 +204,9 @@ function BurndownCard({ report, scope }: { report: VersionReport; scope: number 
   );
 }
 
-function AgentActivityCard() {
+function TodosCard() {
   const navigate = useNavigation((s) => s.navigate);
-  const lines = agentActivity(useAgentsOverview().data ?? []);
-  return (
-    <Card className="min-h-0 grow overflow-hidden px-[15px] py-3.5">
-      <div className="flex h-full flex-col">
-        <CardHeader
-          title="Activité des agents"
-          actions={<TextLink onClick={() => navigate({ id: "agents" })}>Console</TextLink>}
-        />
-        <div className="mt-1.5 min-h-0 grow overflow-y-auto">
-          {lines.length === 0 ? (
-            <p className="py-2.5 text-caption text-tx3">
-              Aucun agent n'a encore travaillé sur ce dépôt.
-            </p>
-          ) : (
-            lines.map((line) => (
-              <ActivityItem key={line.agent} agent={line.agent} time={line.time ?? "jamais lancé"}>
-                {line.lead && (
-                  <>
-                    <Em mono={line.lead.startsWith("#")}>{line.lead}</Em>{" "}
-                  </>
-                )}
-                {line.text}
-              </ActivityItem>
-            ))
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function TodosCard({ issues }: { issues: VersionReport["issues"] }) {
-  const navigate = useNavigation((s) => s.navigate);
-  const todos = sprintTodos(issues, usePendingReviews({ live: true }).data ?? []);
+  const todos = sprintTodos(usePendingReviews({ live: true }).data ?? []);
   if (todos.length === 0) {
     return (
       <Card className="px-[15px] py-[13px]">
@@ -267,18 +225,12 @@ function TodosCard({ issues }: { issues: VersionReport["issues"] }) {
       <div className="mt-2.5 flex flex-col gap-2">
         {todos.map((todo) => (
           <button
-            key={todo.kind === "review" ? `pr-${todo.pr}` : `issue-${todo.issue}`}
+            key={todo.pr}
             type="button"
-            onClick={() =>
-              navigate(
-                todo.kind === "review"
-                  ? { id: "reviews", pr: todo.pr }
-                  : { id: "issue", number: todo.issue },
-              )
-            }
+            onClick={() => navigate({ id: "reviews", pr: todo.pr })}
             className="flex items-center gap-2 text-left text-body-sm text-tx2 hover:text-tx"
           >
-            <Icon name={todo.kind === "review" ? "pullRequest" : "review"} size={14} />
+            <Icon name="pullRequest" size={14} />
             {todo.text}
           </button>
         ))}

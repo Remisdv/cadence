@@ -18,7 +18,7 @@ pub async fn project_current(state: State<'_, AppState>) -> AppResult<Option<Pro
     if let Some(project) = state.project.read().await.clone() {
         return Ok(Some(project));
     }
-    let last = state.settings.get().last_project;
+    let last = state.settings.get().legacy.last_project;
     if let Some(project) = &last {
         *state.project.write().await = Some(project.clone());
     }
@@ -86,7 +86,7 @@ pub async fn project_open(state: State<'_, AppState>, repo: String) -> AppResult
         ProjectState { repo, current_version: repos::current_version(&versions), has_config };
     state.install_cache(cache).await;
     *state.project.write().await = Some(project.clone());
-    state.settings.update(|s| s.last_project = Some(project.clone()))?;
+    state.settings.update(|s| s.legacy.last_project = Some(project.clone()))?;
     Ok(project)
 }
 

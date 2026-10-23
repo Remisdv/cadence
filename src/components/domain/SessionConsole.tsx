@@ -1,9 +1,12 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import type { AgentEventKind } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
-/** Couleur de chaque nature de ligne dans le terminal d'agent. */
-export const consoleLineClass: Record<AgentEventKind, string> = {
+/** Nature d'une ligne de console (lecture, écriture, message de l'IA…). */
+export type ConsoleLineKind =
+  "system" | "read" | "write" | "message" | "success" | "question" | "error";
+
+/** Couleur de chaque nature de ligne dans le terminal d'une session d'IA. */
+export const consoleLineClass: Record<ConsoleLineKind, string> = {
   system: "text-tx3",
   read: "text-blue",
   write: "text-clay",
@@ -14,7 +17,7 @@ export const consoleLineClass: Record<AgentEventKind, string> = {
 };
 
 export interface ConsoleLine {
-  kind: AgentEventKind;
+  kind: ConsoleLineKind;
   text: string;
 }
 
@@ -27,7 +30,7 @@ export interface SessionConsoleProps {
   className?: string;
 }
 
-/** Terminal de session Claude Code : fond console, mono 11px, une couleur par nature de ligne. */
+/** Terminal d'une session d'IA : fond console, mono 11px, une couleur par nature de ligne. */
 export function SessionConsole({ lines, header, footer, className }: SessionConsoleProps) {
   const logRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);

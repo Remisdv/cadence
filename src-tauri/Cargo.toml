@@ -1,6 +1,6 @@
 [package]
 name = "cadence"
-version = "0.1.0"
+version = "0.3.3"
 description = "Cockpit de projet logiciel adossé à GitHub"
 authors = ["Rémi Lhuillier"]
 edition = "2024"
@@ -27,7 +27,7 @@ semver = "1.0.28"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 ts-rs = { version = "12.0.1", features = ["serde-compat", "serde-json-impl"] }
-tokio = { version = "1.53.3", features = ["sync", "time", "macros", "process", "net", "io-util"] }
+tokio = { version = "1.53.3", features = ["sync", "time", "macros", "process", "net", "io-util", "fs", "rt-multi-thread"] }
 which = "8.0.6"
 secrecy = "0.10.3"
 tauri-plugin-dialog = "2.8.3"
@@ -39,7 +39,24 @@ base64 = "0.23.1"
 url = "2.5.8"
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio"] }
 toml = "1.1.8"
+zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# MCP : client des serveurs de plugin (stdio) et passerelle des IA (streamable HTTP, axum).
+rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-async-rw", "server", "transport-streamable-http-server"] }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1"] }
+http = "1.5.0"
+# Processus des serveurs de plugin : job object (Windows) ou groupe (Unix).
+process-wrap = { version = "10.0.1", default-features = false, features = ["tokio1", "kill-on-drop", "job-object", "creation-flags", "process-group"] }
+portable-pty = "0.9"
 
+
+[target.'cfg(windows)'.dependencies]
+# `CREATE_NO_WINDOW` pour les serveurs de plugin (pas de console qui s'ouvre).
+windows = { version = "0.62.2", features = ["Win32_System_Threading"] }
+
+[dev-dependencies]
+# Serveur MCP du binaire de test `fake-plugin` (examples/fake-plugin.rs).
+# Client HTTP des tests de la passerelle (tests/gateway.rs).
+rmcp = { version = "3.5.1", default-features = false, features = ["server", "transport-io", "transport-streamable-http-client-reqwest"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

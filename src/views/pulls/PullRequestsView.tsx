@@ -1,8 +1,6 @@
 /**
  * Pull requests (maquette Pull-Requests.dc.html) : PR ouvertes et récentes du dépôt, triées
  * par activité. Une ligne ouvre l'écran de revue de la PR.
- *
- * Le bandeau « l'agent développeur écrit la PR » arrive avec l'agent (0.2.0).
  */
 import { useMemo, useState } from "react";
 import type { PrRow } from "@/lib/types";
@@ -12,7 +10,6 @@ import { Icon } from "@/components/icons/Icon";
 import { VersionBadge } from "@/components/domain/Badges";
 import { CiStatus, Diffstat, InlineMeta, PrStateIcon } from "@/components/domain/Inline";
 import { FilterChip } from "@/components/domain/Filters";
-import { AgentBadge } from "@/components/domain/AgentBadge";
 import { Avatar, initialsOf } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -28,14 +25,12 @@ import {
   MenuTrigger,
 } from "@/components/ui/Menu";
 import { cn } from "@/lib/cn";
-import { agents } from "@/lib/domain/agents";
 import { prStateMeta } from "@/lib/domain/issues";
 import {
   defaultPrFilter,
   isOpenPr,
   matchesPr,
   reviewSummary,
-  type PrOriginFilter,
   type PrStateFilter,
   type PrViewFilter,
 } from "@/lib/domain/prs";
@@ -48,12 +43,6 @@ const stateLabels: Record<PrStateFilter, string> = {
   merged: "fusionnées",
   closed: "fermées",
   all: "toutes",
-};
-
-const originLabels: Record<PrOriginFilter, string> = {
-  all: "humain et agent",
-  human: "humain",
-  agent: "agent",
 };
 
 export default function PullRequestsView() {
@@ -69,20 +58,17 @@ export default function PullRequestsView() {
   const visible = useMemo(() => all.filter((p) => matchesPr(p, filter)), [all, filter]);
   const current = project?.currentVersion ?? null;
   const open = all.filter(isOpenPr);
-  const byAgent = open.filter((p) => p.agent !== null).length;
   const mergedOnCurrent = all.filter((p) => p.state === "merged" && p.version === current).length;
   const versionTitles = [...new Set(all.map((p) => p.version ?? ""))].sort();
   const stageOf = (title: string | null) => versions.find((v) => v.title === title)?.state;
   const filtered =
     filter.versions.length > 0 ||
     filter.state !== "open" ||
-    filter.author !== "all" ||
-    filter.origin !== "all";
+    filter.author !== "all";
 
   const subtitle = prs.data
     ? [
         `${open.length} ouverte${open.length > 1 ? "s" : ""}`,
-        byAgent > 0 && `${byAgent} écrite${byAgent > 1 ? "s" : ""} par un agent`,
         current && `${mergedOnCurrent} fusionnée${mergedOnCurrent > 1 ? "s" : ""} sur ${current}`,
       ]
         .filter(Boolean)
@@ -160,14 +146,6 @@ export default function PullRequestsView() {
           defaultValue="all"
           labels={{ all: "tous", me: "moi" }}
           onChange={(author) => set({ author })}
-        />
-        <RadioFilter
-          icon="bot"
-          label="Origine"
-          value={filter.origin}
-          defaultValue="all"
-          labels={originLabels}
-          onChange={(origin) => set({ origin })}
         />
 
         <div className="grow" />
@@ -265,11 +243,6 @@ function PrLine({
           </span>
           <span className="text-line2">→</span>
           <span className="mono">{pr.base}</span>
-          {pr.agent && (
-            <InlineMeta icon="bot" tone={agents[pr.agent].tone}>
-              agent {pr.agent}
-            </InlineMeta>
-          )}
           {pr.linkedIssue && (
             <InlineMeta icon="link">
               {closesVerb} #{pr.linkedIssue}
@@ -298,17 +271,13 @@ function PrLine({
         )}
       </span>
       <span className="flex w-[26px] shrink-0 justify-end">
-        {pr.agent ? (
-          <AgentBadge agent={pr.agent} size={21} />
-        ) : (
-          <Avatar
-            size={21}
-            tone={pr.author.isSelf ? "clay" : "neutral"}
-            initials={initialsOf(pr.author.name ?? pr.author.login)}
-            src={pr.author.avatarUrl}
-            title={pr.author.login}
-          />
-        )}
+        <Avatar
+          size={21}
+          tone={pr.author.isSelf ? "clay" : "neutral"}
+          initials={initialsOf(pr.author.name ?? pr.author.login)}
+          src={pr.author.avatarUrl}
+          title={pr.author.login}
+        />
       </span>
     </div>
   );

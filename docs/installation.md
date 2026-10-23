@@ -1,7 +1,7 @@
 # Installation
 
 Les installeurs sont publiés sur la page des
-[releases GitHub de Cadence](https://github.com/cadence-app/desktop/releases). Choisissez le
+[releases GitHub de Cadence](https://github.com/RemiSDV/cadence/releases). Choisissez le
 fichier correspondant à votre système.
 
 | Système | Fichier | Remarques |

@@ -1,39 +1,31 @@
 import { useEffect, useState } from "react";
-import { useAuthStatus, useCurrentProject } from "@/lib/query/queries";
-import { useNavigation, type View } from "@/stores/navigation";
-import { useUiStore } from "@/stores/ui";
-import { isViewId } from "@/views/registry";
+import { useAppStatus } from "@/lib/query/queries";
+import { storedView, useNavigation, type View } from "@/stores/navigation";
+import { isViewId, preloadShellViews } from "@/views/registry";
 
 /**
- * Choisit l'écran de départ : onboarding tant que GitHub n'est pas connecté, sinon le sprint
- * du dépôt mémorisé (ou le sélecteur de dépôt ouvert, s'il n'y en a pas encore).
+ * Choisit l'écran de départ : l'onboarding de Cadence 2 (Bienvenue → IA → plugins → outils →
+ * configuration) tant que `onboarded` est faux, le chat global ensuite. Après un rechargement
+ * du webview, l'écran d'avant (la conversation ouverte comprise) est rouvert.
  *
- * En dev, `?view=<id>&<param>=…` force un écran (ex. `?view=agent&kind=dev`, `?view=issue&number=156`).
+ * En dev, `?view=<id>&<param>=…` force un écran : `?view=settings&section=plugins`,
+ * `?view=plugin&plugin=documents&page=flashcards`, `?view=issue&number=156`.
  */
 export function useBoot(): { ready: boolean; error: unknown } {
-  const auth = useAuthStatus();
-  const connected = auth.data?.github.status === "connected";
-  const project = useCurrentProject(connected);
+  const status = useAppStatus();
   const replace = useNavigation((s) => s.replace);
-  const openPicker = useUiStore((s) => s.setProjectPickerOpen);
   const [ready, setReady] = useState(false);
 
-  const settled = auth.isSuccess && (!connected || project.isSuccess || project.isError);
-
   useEffect(() => {
-    if (ready || !settled) return;
+    if (ready || !status.isSuccess) return;
     const forced = import.meta.env.DEV ? forcedView() : null;
-    if (forced) replace(forced);
-    else if (!connected) replace({ id: "onboarding-github" });
-    else {
-      replace({ id: "sprint" });
-      // Aucun dépôt mémorisé : le sélecteur de la barre latérale s'ouvre de lui-même.
-      if (!project.data) openPicker(true);
-    }
+    const reloaded = status.data.onboarded ? storedView(isViewId) : null;
+    replace(forced ?? reloaded ?? (status.data.onboarded ? { id: "chat" } : { id: "onboarding" }));
     setReady(true);
-  }, [ready, settled, connected, project.data, replace, openPicker]);
+    preloadShellViews();
+  }, [ready, status.isSuccess, status.data, replace]);
 
-  return { ready, error: auth.error };
+  return { ready, error: status.error };
 }
 
 function forcedView(): View | null {
@@ -43,7 +35,9 @@ function forcedView(): View | null {
   const view: Record<string, string | number> = { id };
   params.forEach((value, key) => {
     if (key === "view" || key === "scenario") return;
-    view[key] = /^\d+$/.test(value) ? Number(value) : value;
+    // `?view=plugin&plugin=documents&page=flashcards` : `page` donne la vue du plugin.
+    const name = id === "plugin" && key === "page" ? "view" : key;
+    view[name] = /^\d+$/.test(value) ? Number(value) : value;
   });
   return view as unknown as View;
 }

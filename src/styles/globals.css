@@ -72,6 +72,7 @@
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
 
   /* Échelle typographique des maquettes (px exacts) */
+  --text-nano: 8.5px; /* libellés de catégorie du rail (Cadence 2) */
   --text-micro: 10.5px; /* section labels, méta mono */
   --text-tiny: 11px; /* compteurs, numéros d'issue, kbd */
   --text-caption: 11.5px; /* sous-titres, badges, hints */
@@ -80,7 +81,10 @@
   --text-body: 13px; /* taille de base de l'app */
   --text-body-lg: 13.5px;
   --text-title-sm: 14px;
+  --text-title-md: 14.5px; /* titre de la barre du plugin (Cadence 2) */
   --text-title: 15px;
+  --text-title-lg: 17px; /* titre d'une fiche (catalogue, Cadence 2) */
+  --text-section: 16px; /* titre de section des réglages (Cadence 2) */
   --text-kpi: 24px;
   --text-display-sm: 24px;
   --text-display: 27px;
@@ -89,6 +93,7 @@
   --radius-badge: 5px;
   --radius-control: 7px;
   --radius-field: 9px;
+  --radius-tile: 10px; /* boutons du rail (Cadence 2) */
   --radius-card: 12px;
   --radius-modal: 14px;
 

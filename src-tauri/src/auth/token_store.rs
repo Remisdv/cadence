@@ -1,13 +1,13 @@
-//! Rangement du jeton GitHub.
+//! Rangement du jeton GitHub de Cadence 1 : compte `github` du trousseau générique
+//! (`crate::secrets`). Le service `repos` de Cadence 2 le reprendra.
 //!
-//! En production : trousseau de l'OS (Keychain, Credential Manager, Secret Service) via `keyring`.
 //! Le jeton n'est jamais écrit sur disque par Cadence, ni dans `config.toml`, ni dans le webview.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use secrecy::SecretString;
 
-use crate::error::{AppError, AppResult};
+use crate::{error::AppResult, secrets::SecretStore};
 
 pub trait TokenStore: Send + Sync {
     fn get(&self) -> AppResult<Option<SecretString>>;
@@ -15,45 +15,31 @@ pub trait TokenStore: Send + Sync {
     fn delete(&self) -> AppResult<()>;
 }
 
-/// Entrée du trousseau système : service `app.cadence.desktop`, compte `github`.
-pub struct KeyringStore {
-    service: &'static str,
+/// Une entrée du trousseau de Cadence.
+pub struct SecretEntry {
+    secrets: Arc<dyn SecretStore>,
     account: &'static str,
 }
 
-impl KeyringStore {
-    pub fn github() -> Self {
-        Self { service: super::KEYRING_SERVICE, account: "github" }
-    }
-
-    fn entry(&self) -> AppResult<keyring::Entry> {
-        keyring::Entry::new(self.service, self.account).map_err(keychain_error)
+impl SecretEntry {
+    /// Compte `github` (service `app.cadence.desktop`).
+    pub fn github(secrets: Arc<dyn SecretStore>) -> Self {
+        Self { secrets, account: "github" }
     }
 }
 
-impl TokenStore for KeyringStore {
+impl TokenStore for SecretEntry {
     fn get(&self) -> AppResult<Option<SecretString>> {
-        match self.entry()?.get_password() {
-            Ok(token) => Ok(Some(SecretString::from(token))),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(err) => Err(keychain_error(err)),
-        }
+        self.secrets.get(self.account)
     }
 
     fn set(&self, token: &str) -> AppResult<()> {
-        self.entry()?.set_password(token).map_err(keychain_error)
+        self.secrets.set(self.account, token)
     }
 
     fn delete(&self) -> AppResult<()> {
-        match self.entry()?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(err) => Err(keychain_error(err)),
-        }
+        self.secrets.delete(self.account)
     }
-}
-
-fn keychain_error(err: keyring::Error) -> AppError {
-    AppError::Internal(format!("trousseau du système : {err}"))
 }
 
 /// Rangement en mémoire, pour les tests.

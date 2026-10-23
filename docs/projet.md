@@ -48,7 +48,7 @@ multiple.
 
 **Nouvelle issue** (bouton des écrans ou `Ctrl+K`) : le titre et la version (un milestone ouvert)
 sont obligatoires ; le type est posé en label `type/*` ; labels libres et assignation à soi en
-option. Cocher **Envoyer à l'agent CTO** l'ajoute à la file de l'agent (voir [les agents](agents.md)).
+option.
 
 Un clic sur une issue ouvre son **détail** : description rendue, état de l'agent CTO (en file, en
 cours, proposition à relire, questions, validée), propriétés (version, labels, assigné, branche

@@ -4,6 +4,8 @@ import { ErrorState, LoadingState } from "@/components/layout/EmptyState";
 import { queryClient } from "@/lib/query/client";
 import { useBackendEvents } from "@/lib/query/useBackendEvents";
 import { useUpdateCheckOnLaunch } from "@/lib/query/queries";
+import { Toaster } from "@/components/ui/Toaster";
+import { FramePool } from "@/plugin-host/FramePool";
 import { DialogHost } from "./DialogHost";
 import { ViewOutlet } from "./ViewOutlet";
 import { useBoot } from "./useBoot";
@@ -27,8 +29,10 @@ function Root() {
   return (
     <>
       <ViewOutlet />
+      <FramePool />
       <CommandPalette />
       <DialogHost />
+      <Toaster />
     </>
   );
 }

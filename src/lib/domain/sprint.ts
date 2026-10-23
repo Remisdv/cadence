@@ -1,10 +1,8 @@
 /**
  * Sprint en cours et détail de version : tableau par état, KPI, burndown, points à traiter,
- * fil d'activité des agents, notes de version et conditions de clôture.
+ * notes de version et conditions de clôture.
  */
 import type {
-  AgentKind,
-  AgentOverview,
   BurndownPoint,
   IssueRow,
   IssueStatus,
@@ -13,7 +11,7 @@ import type {
   ReviewRow,
 } from "@/lib/types";
 import type { ProgressTone } from "@/components/ui/ProgressBar";
-import { formatAgo, formatDecimal } from "./format";
+import { formatDecimal } from "./format";
 import { issueStatuses, statusOrder } from "./issues";
 import { isOpenPr, waitingFor } from "./prs";
 
@@ -41,18 +39,6 @@ export function sprintBoard(issues: IssueRow[], doneLimit = 3): BoardColumn[] {
         : [...all].sort((a, b) => a.number - b.number);
     return { status, issues: shown, total: all.length };
   });
-}
-
-/** Marque les issues sur lesquelles un agent travaille en ce moment. */
-export function withActiveAgents(issues: IssueRow[], overview: AgentOverview[]): IssueRow[] {
-  const busy = new Map<number, AgentKind>();
-  for (const a of overview) {
-    if (a.activity === "running" && a.currentRun?.issue != null)
-      busy.set(a.currentRun.issue, a.kind);
-  }
-  return issues.map((i) =>
-    i.activeAgent || !busy.has(i.number) ? i : { ...i, activeAgent: busy.get(i.number)! },
-  );
 }
 
 /** Jauges « Progression » : fermées, en revue, en cours, à faire. */
@@ -107,21 +93,13 @@ export function requiredPace(remaining: number, daysLeft: number | null): number
 
 export interface PullStats {
   open: number;
-  openByAgent: number;
   merged: number;
-  /** Part des PR fusionnées ouvertes par un agent, 0 → 100. */
-  agentShare: number;
 }
 
 export function pullStats(pulls: PrRow[]): PullStats {
-  const open = pulls.filter(isOpenPr);
-  const merged = pulls.filter((p) => p.state === "merged");
-  const mergedByAgent = merged.filter((p) => p.agent !== null).length;
   return {
-    open: open.length,
-    openByAgent: open.filter((p) => p.agent !== null).length,
-    merged: merged.length,
-    agentShare: merged.length === 0 ? 0 : (mergedByAgent / merged.length) * 100,
+    open: pulls.filter(isOpenPr).length,
+    merged: pulls.filter((p) => p.state === "merged").length,
   };
 }
 
@@ -134,24 +112,11 @@ export function reviewsToDo(reviews: ReviewRow[], now: Date = new Date()) {
 
 /* ---------- Points à traiter ---------- */
 
-export type SprintTodo =
-  | { kind: "cto-questions"; issue: number; text: string }
-  | { kind: "review"; pr: number; text: string };
+export type SprintTodo = { kind: "review"; pr: number; text: string };
 
-/** Ce qui attend l'utilisateur : questions du CTO, revues qui attendent depuis plus d'un jour. */
-export function sprintTodos(
-  issues: IssueRow[],
-  reviews: ReviewRow[],
-  now: Date = new Date(),
-): SprintTodo[] {
-  const questions = issues
-    .filter((i) => i.flags.includes("cto-questions"))
-    .map((i): SprintTodo => ({
-      kind: "cto-questions",
-      issue: i.number,
-      text: `Répondre aux questions du CTO sur #${i.number}`,
-    }));
-  const late = reviews
+/** Ce qui attend l'utilisateur : revues qui attendent depuis plus d'un jour. */
+export function sprintTodos(reviews: ReviewRow[], now: Date = new Date()): SprintTodo[] {
+  return reviews
     .filter((r) => r.audience === "you")
     .map((r) => ({ r, hours: (now.getTime() - new Date(r.requestedAt).getTime()) / 3_600_000 }))
     .filter(({ hours }) => hours >= 24)
@@ -163,64 +128,6 @@ export function sprintTodos(
         pr: r.pr.number,
         text: `PR #${r.pr.number} en attente de revue depuis ${plural(days, "jour")}`,
       };
-    });
-  return [...questions, ...late];
-}
-
-/* ---------- Activité des agents ---------- */
-
-export interface ActivityLine {
-  agent: AgentKind;
-  /** Fragment mis en avant (texte tx), avant `text`. */
-  lead: string | null;
-  text: string;
-  time: string | null;
-}
-
-/** Une ligne par agent : en cours d'abord, puis en attente, puis le dernier passage. */
-export function agentActivity(overview: AgentOverview[], now: Date = new Date()): ActivityLine[] {
-  const rank = { running: 0, waiting: 1, idle: 2 } as const;
-  return [...overview]
-    .sort(
-      (a, b) =>
-        rank[a.activity] - rank[b.activity] || (b.lastRunAt ?? "").localeCompare(a.lastRunAt ?? ""),
-    )
-    .flatMap((a): ActivityLine[] => {
-      const run = a.currentRun;
-      if (a.activity === "running" && run) {
-        const step = run.step && run.steps ? ` · étape ${run.step}/${run.steps}` : "";
-        return [
-          {
-            agent: a.kind,
-            lead: run.issue != null ? `#${run.issue}` : null,
-            text:
-              run.issue != null ? `en cours de traitement${step}.` : `Exécution en cours${step}.`,
-            time: formatAgo(run.startedAt, now),
-          },
-        ];
-      }
-      if (a.activity === "waiting" || a.pendingActions > 0) {
-        return [
-          {
-            agent: a.kind,
-            lead: a.pendingActions > 0 ? plural(a.pendingActions, "proposition") : null,
-            text:
-              a.pendingActions > 0
-                ? "en attente de votre validation."
-                : "En attente de vos réponses.",
-            time: a.lastRunAt ? formatAgo(a.lastRunAt, now) : null,
-          },
-        ];
-      }
-      if (!a.lastRunAt) return [];
-      return [
-        {
-          agent: a.kind,
-          lead: null,
-          text: "Dernière exécution terminée.",
-          time: formatAgo(a.lastRunAt, now),
-        },
-      ];
     });
 }
 

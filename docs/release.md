@@ -4,9 +4,10 @@ Deux workflows GitHub Actions :
 
 - **`ci.yml`** — sur chaque push vers `main` et chaque pull request : `pnpm typecheck`,
   `pnpm test`, `pnpm build` ; `cargo clippy --all-targets -- -D warnings` et `cargo test` sur
-  Linux, Windows et macOS ; vérifie que les types TS générés (`src/lib/bindings`) sont à jour.
+  Linux seulement (minutes GitHub) ; vérifie que les types TS générés (`src/lib/bindings`) sont à jour.
   Aucun secret.
-- **`release.yml`** — sur un tag `v*` : vérifie les versions et les clés, crée un **brouillon**
+- **`release.yml`** — **lancé à la main** (Actions › Release › Run workflow, en choisissant le
+  tag `vX.Y.Z` dans « Use workflow from ») pour économiser les minutes : vérifie les versions et les clés, crée un **brouillon**
   de release, construit macOS (binaire universel Apple Silicon + Intel), Windows x64 et Linux x64
   avec `tauri-apps/tauri-action`, signe, notarise, et dépose dans le brouillon les installeurs,
   leurs signatures de mise à jour et `latest.json`. **Rien n'est publié automatiquement.**
@@ -36,7 +37,7 @@ pnpm tauri signer generate -w ~/.tauri/cadence-updater.key
 ### 2. Point de terminaison de l'updater
 
 `plugins.updater.endpoints` vaut
-`https://github.com/cadence-app/desktop/releases/latest/download/latest.json`. Il doit désigner
+`https://github.com/RemiSDV/cadence/releases/latest/download/latest.json`. Il doit désigner
 le dépôt **public** qui héberge les releases (l'app interroge cette URL sans authentification).
 Si les releases sont publiées ailleurs, adaptez l'URL (et le lien `homepage` du bundle).
 

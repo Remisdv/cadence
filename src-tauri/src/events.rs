@@ -2,23 +2,58 @@
 //!
 //! Les noms sont dupliqués dans `src/lib/ipc/events.ts` (ts-rs ne génère que les charges).
 //! Les vues ne relisent jamais GitHub : elles invalident leur cache TanStack Query
-//! sur `sync://updated`, et les écrans d'agent s'abonnent à `agent://*`.
+//! sur `sync://updated`.
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use ts_rs::TS;
 
 use crate::domain::{
-    agent::RunState,
     auth::{AuthFailure, AuthProvider, ProviderStatus},
     sync::{RateLimitMode, SyncResource},
 };
 
 pub const SYNC_UPDATED: &str = "sync://updated";
 pub const SYNC_RATE_LIMIT: &str = "sync://rate-limit";
-pub const AGENT_EVENT: &str = "agent://event";
-pub const AGENT_STATE: &str = "agent://state";
 pub const AUTH_CHANGED: &str = "auth://changed";
+/// `PluginStateEvent` : état du serveur d'un plugin.
+pub const PLUGIN_STATE: &str = "plugin://state";
+/// `PluginInstallEvent` : progression d'une installation.
+pub const PLUGIN_INSTALL: &str = "plugin://install";
+/// `OpenViewRequest` : une IA demande d'ouvrir une vue de plugin (`cadence__open_view`).
+pub const UI_OPEN_VIEW: &str = "ui://open-view";
+/// `RunReport` : progression ou résultat d'une exécution de fond (`cadence__run_report`).
+pub const RUN_REPORT: &str = "run://report";
+/// `ChatEventPayload` : événement d'une conversation (deltas compris).
+pub const CHAT_EVENT: &str = "chat://event";
+/// `ChatStatePayload` : état d'une conversation.
+pub const CHAT_STATE: &str = "chat://state";
+/// `PluginEventPayload` : notification `notifications/cadence/event` d'un serveur de plugin.
+pub const PLUGIN_EVENT: &str = "plugin://event";
+/// `CatalogUpdated` : le catalogue a été relu ; nombre de mises à jour disponibles.
+pub const CATALOG_UPDATED: &str = "catalog://updated";
+/// `ToolRunEvent` : journal d'une installation ou d'une connexion d'outil.
+pub const TOOL_RUN: &str = "tool://install";
+/// `ReposChanged` : dépôts suivis d'un plugin modifiés (relayé à ses iframes, événement `repos`).
+pub const REPOS_CHANGED: &str = "repos://changed";
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReposChanged {
+    pub plugin: String,
+    /// Liste complète des dépôts suivis (`owner/name`).
+    pub repos: Vec<String>,
+    /// Dépôt choisi dans la barre du plugin ; `null` = « Tous les dépôts ».
+    pub selection: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CatalogUpdated {
+    pub updates: u32,
+}
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -36,44 +71,6 @@ pub struct RateLimitInfo {
     pub remaining: u32,
     pub reset_at: String,
     pub mode: RateLimitMode,
-}
-
-/// Ligne du flux d'une session d'agent (stream-json de Claude Code, normalisé).
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct AgentEvent {
-    pub run: String,
-    pub kind: AgentEventKind,
-    pub text: String,
-    /// Charge brute de l'événement, pour les écrans qui veulent le détail.
-    #[ts(type = "unknown")]
-    pub payload: serde_json::Value,
-}
-
-/// Nature d'une ligne de console — détermine sa couleur dans le terminal d'agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, TS)]
-#[serde(rename_all = "kebab-case")]
-#[ts(export)]
-pub enum AgentEventKind {
-    System,
-    Read,
-    Write,
-    Message,
-    Success,
-    Question,
-    Error,
-}
-
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct AgentStateEvent {
-    pub run: String,
-    pub state: RunState,
-    /// Étape courante (1-indexée) et nombre d'étapes, pour les agents à déroulé.
-    pub step: Option<u8>,
-    pub steps: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -98,7 +95,7 @@ impl AuthChanged {
 }
 
 /// Émet un événement en journalisant l'échec plutôt que de le propager :
-/// un front fermé ne doit pas faire échouer la sync ou un agent.
+/// un front fermé ne doit pas faire échouer la sync.
 pub fn emit<P: Serialize + Clone>(app: &AppHandle, name: &str, payload: P) {
     if let Err(err) = app.emit(name, payload) {
         tracing::warn!(event = name, %err, "émission d'événement impossible");

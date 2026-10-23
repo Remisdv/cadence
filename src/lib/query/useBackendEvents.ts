@@ -1,8 +1,11 @@
 import { useEffect } from "react";
+import type { AppSettings, ChatSessionDetail } from "@/lib/types";
 import { useQueryClient } from "@tanstack/react-query";
 import { subscribe } from "@/lib/ipc/events";
 import { keys, keysForResource } from "./keys";
 import { useUiStore } from "@/stores/ui";
+import { applyRunEvent, type ToolRunLog } from "@/lib/domain/tools";
+import { applyReposChanged } from "@/lib/domain/plugins";
 
 /**
  * Pont événements Rust → cache front. Monté une fois à la racine de l'app.
@@ -20,14 +23,69 @@ export function useBackendEvents() {
         }
       }),
       subscribe("sync://rate-limit", setRateLimit),
-      // Toute requête d'agent (statuts, exécution, actions) suit l'état des exécutions.
-      // Le détail d'une issue montre aussi les questions de l'agent CTO et son activité.
-      subscribe("agent://state", () => {
-        void queryClient.invalidateQueries({ queryKey: keys.agents });
-        void queryClient.invalidateQueries({ queryKey: [...keys.issues, "detail"] });
-      }),
       subscribe("auth://changed", () => {
         void queryClient.invalidateQueries({ queryKey: keys.auth });
+      }),
+      subscribe("plugin://state", () => {
+        void queryClient.invalidateQueries({ queryKey: keys.pluginStatus() });
+      }),
+      subscribe("plugin://install", ({ phase }) => {
+        if (phase === "done") {
+          void queryClient.invalidateQueries({ queryKey: keys.plugins });
+          // Un plugin activé peut demander de nouveaux outils.
+          void queryClient.invalidateQueries({ queryKey: keys.toolsReport() });
+        }
+      }),
+      subscribe("tool://install", (event) => {
+        queryClient.setQueryData<ToolRunLog>(keys.toolRun(event.tool), (prev) =>
+          applyRunEvent(prev, event),
+        );
+      }),
+      // Dépôts suivis changés, quel que soit l'auteur (Réglages, onboarding, iframe du plugin) :
+      // les réglages en cache suivent, Réglages › Dépôts GitHub compte juste (N05).
+      subscribe("repos://changed", (change) => {
+        queryClient.setQueryData<AppSettings>(keys.appSettings(), (prev) =>
+          prev ? applyReposChanged(prev, change) : prev,
+        );
+        void queryClient.invalidateQueries({ queryKey: keys.reposStatus() });
+      }),
+      subscribe("catalog://updated", () => {
+        void queryClient.invalidateQueries({ queryKey: keys.catalog(), refetchType: "none" });
+      }),
+      subscribe("chat://event", ({ session, seq, turn, event }) => {
+        const drafts = keys.chatDrafts(session);
+        if (event.type === "message-delta") {
+          queryClient.setQueryData<Record<string, string>>(drafts, (prev = {}) => ({
+            ...prev,
+            [event.message]: (prev[event.message] ?? "") + event.text,
+          }));
+          return;
+        }
+        // Fin de tour : relecture du détail (worktrees ouverts pendant le tour).
+        if (event.type === "turn-completed")
+          void queryClient.invalidateQueries({ queryKey: keys.chatSession(session) });
+        if (event.type === "message-completed" || event.type === "turn-completed") {
+          queryClient.setQueryData<Record<string, string>>(drafts, (prev = {}) => {
+            if (event.type === "turn-completed") return {};
+            const { [event.message]: _done, ...rest } = prev;
+            return rest;
+          });
+        }
+        if (seq === null) return;
+        queryClient.setQueryData<ChatSessionDetail>(keys.chatSession(session), (prev) =>
+          prev && !prev.events.some((e) => e.seq === seq)
+            ? {
+                ...prev,
+                events: [...prev.events, { seq, turn, at: new Date().toISOString(), event }],
+              }
+            : prev,
+        );
+      }),
+      subscribe("chat://state", ({ session, state }) => {
+        queryClient.setQueryData<ChatSessionDetail>(keys.chatSession(session), (prev) =>
+          prev ? { ...prev, session: { ...prev.session, state } } : prev,
+        );
+        void queryClient.invalidateQueries({ queryKey: keys.chatSessions() });
       }),
     ];
     return () => offs.forEach((off) => off());

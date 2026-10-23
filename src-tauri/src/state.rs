@@ -1,7 +1,7 @@
 //! État partagé, injecté dans les commandes par `tauri::State<AppState>`.
 
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -10,7 +10,6 @@ use tauri::async_runtime::JoinHandle;
 use tokio::sync::RwLock;
 
 use crate::{
-    agents::engine::AgentEngine,
     api::github,
     auth::{cli::CliTool, token_store::TokenStore},
     domain::{
@@ -18,10 +17,34 @@ use crate::{
         project::{ProjectState, Repo},
         settings::Config,
     },
+    app_settings::{AppDirs, AppSettingsStore},
     error::{AppError, AppResult},
-    local_settings::SettingsStore,
+    chat::ChatService,
+    gateway::server::Gateway,
+    plugins::{
+        catalog::Catalog,
+        env::{self, HostPaths},
+        host::{HostConfig, PluginEventSink, PluginHost, StateSink},
+        registry::PluginRegistry,
+        settings::PluginSettingsStore,
+    },
+    repos::RepoService,
+    secrets::SecretStore,
     store::RepoCache,
+    tools::ToolService,
 };
+
+/// Dossiers de l'app, résolus au démarrage par Tauri.
+pub struct AppPaths {
+    /// `settings.json`, réglages des plugins (`plugins/<id>.json`).
+    pub config_dir: PathBuf,
+    /// Plugins installés (`plugins/`), leurs données (`plugins-data/`).
+    pub data_dir: PathBuf,
+    /// Caches SQLite de Cadence 1, un par dépôt.
+    pub cache_dir: PathBuf,
+    /// Journaux (`plugins/<id>.log` des serveurs de plugin).
+    pub log_dir: PathBuf,
+}
 
 pub struct AppState {
     /// Projet ouvert ; `None` tant que l'onboarding n'est pas terminé.
@@ -34,7 +57,28 @@ pub struct AppState {
     pub sign_in: Mutex<Option<JoinHandle<()>>>,
     /// Détection des agents de code, gardée pour la session.
     pub cli: RwLock<CliCache>,
-    pub settings: SettingsStore,
+    /// Préférences de la machine (`settings.json` v2).
+    pub settings: Arc<AppSettingsStore>,
+    /// Registre d'outils : détection, installation, connexion (Git, gh, IA, Node.js).
+    pub tools: Arc<ToolService>,
+    /// Dossiers de l'app, montrés dans les réglages.
+    pub dirs: AppDirs,
+    /// Trousseau du système (secrets des plugins, jeton GitHub).
+    pub secrets: Arc<dyn SecretStore>,
+    /// Plugins installés, activation et ordre du rail.
+    pub plugins: Arc<PluginRegistry>,
+    /// Réglages globaux des plugins.
+    pub plugin_settings: Arc<PluginSettingsStore>,
+    /// Serveurs MCP des plugins, un processus par plugin.
+    pub plugin_host: Arc<PluginHost>,
+    /// Catalogue en ligne des plugins (cache disque, hors ligne).
+    pub catalog: Catalog,
+    /// Passerelle MCP des IA ; `None` si elle n'a pas pu démarrer.
+    pub gateway: Option<Gateway>,
+    /// Chat du cœur ; `None` si son historique n'a pas pu s'ouvrir.
+    pub chat: Option<Arc<ChatService>>,
+    /// Service Dépôts : clones et worktrees des dépôts suivis (`<config>/repos`).
+    pub repo_service: Arc<RepoService>,
     /// Dépôts accessibles au jeton, lus une fois puis filtrés localement.
     pub repos: RwLock<Option<Vec<Repo>>>,
     /// Dossier des bases SQLite, une par dépôt.
@@ -43,8 +87,6 @@ pub struct AppState {
     pub cache: RwLock<Option<Arc<RepoCache>>>,
     /// Copies des dépôts lues par les agents (`<données>/repos/<owner>/<nom>`).
     pub checkout_dir: PathBuf,
-    /// Exécutions d'agents du dépôt ouvert.
-    pub agents: AgentEngine,
     /// `.cadence/config.toml` du dépôt ouvert, lu une fois puis gardé.
     pub config: RwLock<Option<LoadedConfig>>,
     /// Moyens de connexion GitHub détectés (gh, GCM), gardés pour la session.
@@ -52,7 +94,40 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config_dir: &Path, cache_dir: PathBuf, tokens: Arc<dyn TokenStore>) -> Self {
+    pub fn new(
+        paths: AppPaths,
+        app_version: &str,
+        secrets: Arc<dyn SecretStore>,
+        tokens: Arc<dyn TokenStore>,
+        plugin_events: StateSink,
+        plugin_notifications: PluginEventSink,
+    ) -> Self {
+        let AppPaths { config_dir, data_dir, cache_dir, log_dir } = paths;
+        let plugins = Arc::new(PluginRegistry::load(data_dir.join("plugins"), app_version));
+        let plugin_settings = Arc::new(PluginSettingsStore::new(config_dir.join("plugins")));
+        let settings = Arc::new(AppSettingsStore::load(&config_dir));
+        let tool_paths: env::ToolPaths = {
+            let settings = settings.clone();
+            Arc::new(move || crate::tools::located_paths(&settings.get()))
+        };
+        let tracked: env::TrackedRepos = {
+            let settings = settings.clone();
+            Arc::new(move |plugin: &str| settings.get().tracked_repos.get(plugin).cloned().unwrap_or_default())
+        };
+        let host_paths = HostPaths {
+            data_root: data_dir.join("plugins-data"),
+            log_dir: log_dir.join("plugins"),
+            tools: Some(tool_paths),
+            repos: Some(tracked),
+        };
+        let resolve = {
+            let (plugins, plugin_settings, secrets) = (plugins.clone(), plugin_settings.clone(), secrets.clone());
+            Arc::new(move |plugin: &str| env::launch_spec(&plugins, &plugin_settings, secrets.as_ref(), &host_paths, plugin))
+        };
+        let plugin_host = Arc::new(
+            PluginHost::new(HostConfig::new(app_version), resolve, plugin_events).with_plugin_events(plugin_notifications),
+        );
+        let repo_service = Arc::new(RepoService::new(config_dir.join("repos"), settings.clone(), secrets.clone()));
         Self {
             project: RwLock::default(),
             http: github::http_client(),
@@ -60,10 +135,24 @@ impl AppState {
             github: RwLock::default(),
             sign_in: Mutex::default(),
             cli: RwLock::default(),
-            settings: SettingsStore::load(config_dir),
+            tools: Arc::new(ToolService::new()),
+            dirs: AppDirs {
+                plugins: data_dir.join("plugins").display().to_string(),
+                plugins_data: data_dir.join("plugins-data").display().to_string(),
+                sessions: data_dir.join("sessions").display().to_string(),
+                repos: config_dir.join("repos").display().to_string(),
+            },
+            settings,
+            secrets,
+            plugins,
+            plugin_settings,
+            plugin_host,
+            catalog: Catalog::new(cache_dir.with_file_name("catalog")),
+            gateway: None,
+            chat: None,
+            repo_service,
             repos: RwLock::default(),
             checkout_dir: cache_dir.with_file_name("repos"),
-            agents: AgentEngine::default(),
             cache_dir,
             cache: RwLock::default(),
             config: RwLock::default(),
@@ -102,14 +191,12 @@ impl AppState {
 
     /// Oublie le dépôt ouvert ; les bases restent sur le disque pour le prochain lancement.
     pub async fn clear_project_data(&self) {
-        self.agents.clear();
         *self.cache.write().await = None;
         *self.config.write().await = None;
     }
 
     /// Déconnexion : supprime les bases de tous les dépôts (issues privées comprises).
     pub async fn delete_caches(&self) {
-        self.agents.clear();
         *self.config.write().await = None;
         if self.checkout_dir.exists()
             && let Err(err) = std::fs::remove_dir_all(&self.checkout_dir)

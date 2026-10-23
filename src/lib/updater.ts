@@ -51,7 +51,7 @@ export async function checkForUpdate(): Promise<AvailableUpdate | null> {
       version: "1.0.1",
       currentVersion: packageVersion,
       date: "2026-10-14T09:00:00Z",
-      notes: "Corrections de stabilité de l'agent développeur.",
+      notes: "Corrections de stabilité du chat.",
     };
   }
   const { check } = await import("@tauri-apps/plugin-updater");

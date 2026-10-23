@@ -1,0 +1,602 @@
+//! Lecture du protocole `codex app-server` (JSON-RPC 2.0, une ligne par message), plan § 4.3,
+//! version de référence 0.163.0 : réponses aux requêtes de Cadence, notifications traduites en
+//! `AiEvent`, requêtes du serveur (approbations) à relayer. Lecture tolérante : champs et
+//! méthodes inconnus ignorés.
+
+use serde_json::{Value, json};
+
+use super::events::{
+    AiErrorKind, AiEvent, AiQuestion, ApprovalDecision, ApprovalKind, FileChange, PlanItem, PlanStatus, QuestionAnswer,
+    ToolSource, question_options, truncate,
+};
+
+/// Ce qu'une ligne du serveur demande à la session.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CodexItem {
+    /// Réponse à une requête de Cadence.
+    Response { id: u64, result: Result<Value, String> },
+    Event(AiEvent),
+    /// Demande d'approbation relayée au chat (l'événement `ApprovalRequested` suit).
+    Approval(PendingCodex),
+    /// Requête du serveur que Cadence ne sait pas traiter : réponse immédiate.
+    Reply(Value),
+}
+
+/// Approbation ou question en attente de la réponse de l'utilisateur.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingCodex {
+    /// Identifiant de la requête JSON-RPC, renvoyé tel quel.
+    pub id: Value,
+    pub request: String,
+    /// Questions de `item/tool/requestUserInput` (vide pour une approbation).
+    pub questions: Vec<String>,
+    /// Fichiers d'une demande `item/fileChange/requestApproval` (vide sinon).
+    pub paths: Vec<String>,
+    /// Accord d'un outil MCP demandé par `mcpServer/elicitation/request` : la réponse suit la
+    /// forme des élicitations (`action`), pas celle des approbations (`decision`).
+    pub elicitation: bool,
+}
+
+/// Réponse JSON-RPC à `requestUserInput` : les réponses de chaque question, par son id.
+pub fn question_reply(pending: &PendingCodex, answers: &[QuestionAnswer]) -> Value {
+    let answers: serde_json::Map<String, Value> = pending
+        .questions
+        .iter()
+        .map(|id| {
+            let given = answers.iter().find(|a| &a.id == id).map(|a| a.answers.clone()).unwrap_or_default();
+            (id.clone(), json!({ "answers": given }))
+        })
+        .collect();
+    json!({ "jsonrpc": "2.0", "id": pending.id, "result": { "answers": answers } })
+}
+
+/// Réponse JSON-RPC à une approbation.
+pub fn approval_reply(pending: &PendingCodex, decision: ApprovalDecision) -> Value {
+    if pending.elicitation {
+        let result = match decision {
+            ApprovalDecision::Allow => json!({ "action": "accept", "content": null }),
+            ApprovalDecision::AllowSession => json!({ "action": "accept", "content": null, "_meta": { "persist": "session" } }),
+            ApprovalDecision::Deny => json!({ "action": "decline", "content": null }),
+        };
+        return json!({ "jsonrpc": "2.0", "id": pending.id, "result": result });
+    }
+    let decision = match decision {
+        ApprovalDecision::Allow => "accept",
+        ApprovalDecision::AllowSession => "acceptForSession",
+        ApprovalDecision::Deny => "decline",
+    };
+    json!({ "jsonrpc": "2.0", "id": pending.id, "result": { "decision": decision } })
+}
+
+/// Outil (`mcp__<serveur>__<outil>`, comme les appels `mcpToolCall`) et message d'une
+/// élicitation de Codex. Lecture tolérante : le nom vient de `_meta` (`tool_name`, `toolName`)
+/// ou du message (« … run tool "gestion-projet__merge_pull_request"? »).
+fn elicited_tool(params: &Value) -> (Option<String>, Option<String>) {
+    let server = str_of(params, "serverName").or_else(|| str_of(params, "server_name")).or_else(|| str_of(params, "server"));
+    let message = params.pointer("/request/message").or_else(|| params.get("message")).and_then(Value::as_str).map(str::to_string);
+    let meta = ["/request/_meta", "/_meta", "/request/meta", "/meta"].iter().find_map(|p| params.pointer(p));
+    let named = meta
+        .and_then(|m| str_of(m, "tool_name").or_else(|| str_of(m, "toolName")).or_else(|| str_of(m, "tool")))
+        .or_else(|| str_of(params, "toolName"))
+        .map(str::to_string)
+        .or_else(|| {
+            // Nom entre guillemets dans le message : `"<plugin>__<outil>"`.
+            let text = message.as_deref()?;
+            text.split(['"', '`', '\u{201c}', '\u{201d}']).find(|part| part.contains("__") && !part.contains(' ')).map(str::to_string)
+        });
+    let tool = named.map(|name| match server {
+        Some(server) if !name.starts_with("mcp__") => format!("mcp__{server}__{name}"),
+        _ => name,
+    });
+    (tool, message)
+}
+
+/// Requête de Cadence.
+pub fn request(id: u64, method: &str, params: Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
+}
+
+/// Notification de Cadence (sans réponse).
+pub fn notification(method: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "method": method })
+}
+
+/// Entrée texte d'un tour (`turn/start`).
+pub fn text_input(text: &str) -> Value {
+    json!([{ "type": "text", "text": text, "text_elements": [] }])
+}
+
+/// État d'un fil : jetons du dernier tour, erreur définitive vue avant `turn/completed`.
+#[derive(Debug, Default)]
+pub struct CodexStream {
+    usage: Option<(u32, u32)>,
+    error_sent: bool,
+    /// Fichiers de chaque modification en cours (`item/started` de type `fileChange`).
+    file_changes: std::collections::HashMap<String, Vec<String>>,
+}
+
+fn str_of<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
+}
+
+/// Erreur d'un tour : 401/403 → connexion, quota → crédit épuisé.
+pub fn error_kind(error: &Value) -> AiErrorKind {
+    let info = error.get("codexErrorInfo").map(Value::to_string).unwrap_or_default();
+    let message = str_of(error, "message").unwrap_or_default().to_lowercase();
+    if info.contains("\"httpStatusCode\":401") || info.contains("\"httpStatusCode\":403") || info.contains("unauthorized")
+        || message.contains("401 unauthorized")
+    {
+        AiErrorKind::Auth
+    } else if info.contains("usageLimit") || info.contains("quota") || message.contains("usage limit") {
+        AiErrorKind::Quota
+    } else {
+        AiErrorKind::Other
+    }
+}
+
+/// Message lisible d'une erreur de tour.
+fn error_message(error: &Value) -> String {
+    match error_kind(error) {
+        AiErrorKind::Auth => "Codex CLI n'est pas connecté : lancez « codex login », puis relancez le message.".into(),
+        AiErrorKind::Quota => {
+            format!("Quota de Codex atteint : {}", str_of(error, "message").unwrap_or("réessayez plus tard"))
+        }
+        _ => str_of(error, "message").unwrap_or("erreur de Codex").to_string(),
+    }
+}
+
+impl CodexStream {
+    /// Traduit une ligne du serveur.
+    pub fn push_line(&mut self, line: &str) -> Vec<CodexItem> {
+        let Ok(message) = serde_json::from_str::<Value>(line.trim()) else { return Vec::new() };
+        let method = str_of(&message, "method");
+        let id = message.get("id");
+        match (method, id) {
+            (None, Some(id)) => {
+                let Some(id) = id.as_u64() else { return Vec::new() };
+                let result = match message.get("error") {
+                    Some(error) => Err(str_of(error, "message").unwrap_or("erreur JSON-RPC").to_string()),
+                    None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+                };
+                vec![CodexItem::Response { id, result }]
+            }
+            (Some(method), Some(id)) => self.server_request(method, id.clone(), message.get("params").unwrap_or(&Value::Null)),
+            (Some(method), None) => self
+                .notification(method, message.get("params").unwrap_or(&Value::Null))
+                .into_iter()
+                .map(CodexItem::Event)
+                .collect(),
+            (None, None) => Vec::new(),
+        }
+    }
+
+    fn server_request(&mut self, method: &str, id: Value, params: &Value) -> Vec<CodexItem> {
+        let request = match &id {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let approval = |kind: ApprovalKind, title: String| {
+            vec![
+                CodexItem::Approval(PendingCodex {
+                    id: id.clone(),
+                    request: request.clone(),
+                    questions: Vec::new(),
+                    paths: if kind == ApprovalKind::FileChange {
+                        str_of(params, "itemId").and_then(|item| self.file_changes.get(item)).cloned().unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    },
+                    elicitation: false,
+                }),
+                CodexItem::Event(AiEvent::ApprovalRequested {
+                    request: request.clone(),
+                    kind,
+                    title,
+                    detail: params.clone(),
+                    tool: None,
+                    scope: None,
+                }),
+            ]
+        };
+        match method {
+            "item/commandExecution/requestApproval" => {
+                let title = str_of(params, "command")
+                    .or_else(|| str_of(params, "reason"))
+                    .unwrap_or("Exécuter une commande")
+                    .to_string();
+                approval(ApprovalKind::Command, title)
+            }
+            "item/fileChange/requestApproval" => {
+                let title = str_of(params, "reason").unwrap_or("Modifier des fichiers").to_string();
+                approval(ApprovalKind::FileChange, title)
+            }
+            "item/tool/requestUserInput" => {
+                let questions = params.get("questions").and_then(Value::as_array).cloned().unwrap_or_default();
+                let asked: Vec<AiQuestion> = questions
+                    .iter()
+                    .filter_map(|q| {
+                        let options = question_options(q.get("options"));
+                        Some(AiQuestion {
+                            id: str_of(q, "id")?.to_string(),
+                            header: str_of(q, "header").filter(|h| !h.is_empty()).map(str::to_string),
+                            question: str_of(q, "question").unwrap_or_default().to_string(),
+                            multi_select: false,
+                            other: q.get("isOther").and_then(Value::as_bool).unwrap_or(false) || options.is_empty(),
+                            options,
+                        })
+                    })
+                    .collect();
+                let ids = asked.iter().map(|q| q.id.clone()).collect();
+                vec![
+                    CodexItem::Approval(PendingCodex {
+                        id: id.clone(),
+                        request: request.clone(),
+                        questions: ids,
+                        paths: Vec::new(),
+                        elicitation: false,
+                    }),
+                    CodexItem::Event(AiEvent::question(request.clone(), asked)),
+                ]
+            }
+            // Accord d'un outil MCP (N12) : Codex le demande pour un outil sans `readOnlyHint`
+            // quand Cadence règle `default_tools_approval_mode = "auto"` (mode « Demander »).
+            "mcpServer/elicitation/request" => {
+                let (tool, message) = elicited_tool(params);
+                vec![
+                    CodexItem::Approval(PendingCodex {
+                        id: id.clone(),
+                        request: request.clone(),
+                        questions: Vec::new(),
+                        paths: Vec::new(),
+                        elicitation: true,
+                    }),
+                    CodexItem::Event(AiEvent::ApprovalRequested {
+                        request: request.clone(),
+                        kind: ApprovalKind::Tool,
+                        title: message.or_else(|| tool.clone()).unwrap_or_else(|| "Outil MCP".into()),
+                        detail: params.clone(),
+                        tool,
+                        scope: None,
+                    }),
+                ]
+            }
+            // Ancien protocole : même sens, autre forme de réponse (refus par défaut).
+            "applyPatchApproval" | "execCommandApproval" => {
+                vec![CodexItem::Reply(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "denied" } }))]
+            }
+            _ => vec![CodexItem::Reply(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": format!("{method} n'est pas pris en charge par Cadence") }
+            }))],
+        }
+    }
+
+    fn notification(&mut self, method: &str, params: &Value) -> Vec<AiEvent> {
+        match method {
+            "item/agentMessage/delta" => match (str_of(params, "itemId"), str_of(params, "delta")) {
+                (Some(item), Some(delta)) if !delta.is_empty() => {
+                    vec![AiEvent::MessageDelta { message: item.into(), text: delta.into() }]
+                }
+                _ => Vec::new(),
+            },
+            "item/started" => {
+                let item = params.get("item").unwrap_or(&Value::Null);
+                if str_of(item, "type") == Some("fileChange")
+                    && let Some(id) = str_of(item, "id")
+                {
+                    let paths = item
+                        .get("changes")
+                        .and_then(Value::as_array)
+                        .map(|c| c.iter().filter_map(|c| str_of(c, "path").map(str::to_string)).collect())
+                        .unwrap_or_default();
+                    self.file_changes.insert(id.to_string(), paths);
+                }
+                started(item)
+            }
+            "item/completed" => {
+                let item = params.get("item").unwrap_or(&Value::Null);
+                if let Some(id) = str_of(item, "id") {
+                    self.file_changes.remove(id);
+                }
+                completed(item)
+            }
+            "turn/plan/updated" => {
+                let items = params
+                    .get("plan")
+                    .and_then(Value::as_array)
+                    .map(|steps| {
+                        steps
+                            .iter()
+                            .filter_map(|s| {
+                                let status = match str_of(s, "status")? {
+                                    "completed" => PlanStatus::Completed,
+                                    "inProgress" => PlanStatus::InProgress,
+                                    _ => PlanStatus::Pending,
+                                };
+                                Some(PlanItem { text: str_of(s, "step")?.into(), status })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                vec![AiEvent::Plan { items }]
+            }
+            "thread/tokenUsage/updated" => {
+                let last = params.pointer("/tokenUsage/last");
+                if let Some(last) = last {
+                    let n = |k: &str| super::events::saturating_u32(last.get(k));
+                    self.usage = Some((n("inputTokens"), n("outputTokens")));
+                }
+                Vec::new()
+            }
+            "error" => {
+                if params.get("willRetry").and_then(Value::as_bool).unwrap_or(false) {
+                    return Vec::new();
+                }
+                let error = params.get("error").cloned().unwrap_or(Value::Null);
+                self.error_sent = true;
+                vec![AiEvent::Error { kind: error_kind(&error), message: error_message(&error) }]
+            }
+            "mcpServer/startupStatus/updated"
+                if str_of(params, "name") == Some("cadence") && str_of(params, "status") == Some("failed") =>
+            {
+                vec![AiEvent::Error {
+                    kind: AiErrorKind::Other,
+                    message: format!(
+                        "Les outils des plugins sont indisponibles : la passerelle de Cadence n'a pas répondu ({}).",
+                        str_of(params, "error").unwrap_or("raison inconnue")
+                    ),
+                }]
+            }
+            "turn/completed" => {
+                let turn = params.get("turn").unwrap_or(&Value::Null);
+                let status = str_of(turn, "status").unwrap_or("completed");
+                let error = turn.get("error").filter(|e| !e.is_null());
+                let mut events = Vec::new();
+                if let Some((input_tokens, output_tokens)) = self.usage.take() {
+                    events.push(AiEvent::Usage { input_tokens, output_tokens, cost_usd: None });
+                }
+                if status == "failed" && !self.error_sent {
+                    let error = error.cloned().unwrap_or(json!({ "message": "Le tour a échoué." }));
+                    events.push(AiEvent::Error { kind: error_kind(&error), message: error_message(&error) });
+                }
+                self.error_sent = false;
+                events.push(AiEvent::TurnCompleted {
+                    ok: status == "completed",
+                    interrupted: status == "interrupted",
+                    error: error.map(error_message).filter(|_| status == "failed"),
+                    duration_ms: super::events::saturating_u32(turn.get("durationMs")),
+                });
+                events
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Début d'un élément du tour.
+fn started(item: &Value) -> Vec<AiEvent> {
+    let id = str_of(item, "id").unwrap_or_default().to_string();
+    match str_of(item, "type") {
+        Some("commandExecution") => vec![AiEvent::Command {
+            call: id,
+            command: str_of(item, "command").unwrap_or_default().into(),
+            exit_code: None,
+            output: None,
+        }],
+        Some("mcpToolCall") => {
+            let server = str_of(item, "server").unwrap_or_default();
+            let tool = str_of(item, "tool").unwrap_or_default();
+            vec![AiEvent::ToolStarted {
+                call: id,
+                source: ToolSource::from_mcp(server, tool),
+                name: format!("mcp__{server}__{tool}"),
+                input: item.get("arguments").cloned().unwrap_or(Value::Null),
+            }]
+        }
+        Some("webSearch") => vec![AiEvent::ToolStarted {
+            call: id,
+            source: ToolSource::Builtin,
+            name: "web_search".into(),
+            input: item.get("query").cloned().unwrap_or(Value::Null),
+        }],
+        Some("dynamicToolCall") => vec![AiEvent::ToolStarted {
+            call: id,
+            source: ToolSource::Builtin,
+            name: str_of(item, "tool").unwrap_or("outil").into(),
+            input: item.get("arguments").cloned().unwrap_or(Value::Null),
+        }],
+        _ => Vec::new(),
+    }
+}
+
+/// Fin d'un élément du tour.
+fn completed(item: &Value) -> Vec<AiEvent> {
+    let id = str_of(item, "id").unwrap_or_default().to_string();
+    match str_of(item, "type") {
+        Some("agentMessage") => {
+            let text = str_of(item, "text").unwrap_or_default();
+            if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![AiEvent::MessageCompleted { message: id, text: text.into() }]
+            }
+        }
+        Some("reasoning") => {
+            let join = |key: &str| {
+                item.get(key)
+                    .and_then(Value::as_array)
+                    .map(|parts| parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"))
+                    .unwrap_or_default()
+            };
+            let text = [join("summary"), join("content")].into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
+            if text.is_empty() { Vec::new() } else { vec![AiEvent::Reasoning { text }] }
+        }
+        Some("commandExecution") => vec![AiEvent::Command {
+            call: id,
+            command: str_of(item, "command").unwrap_or_default().into(),
+            exit_code: item.get("exitCode").and_then(Value::as_i64).map(|c| c as i32),
+            output: str_of(item, "aggregatedOutput").map(truncate),
+        }],
+        Some("fileChange") => item
+            .get("changes")
+            .and_then(Value::as_array)
+            .map(|changes| {
+                changes
+                    .iter()
+                    .filter_map(|c| {
+                        let change = match c.pointer("/kind/type").and_then(Value::as_str) {
+                            Some("add") => FileChange::Added,
+                            Some("delete") => FileChange::Deleted,
+                            _ => FileChange::Modified,
+                        };
+                        Some(AiEvent::FileChanged { path: str_of(c, "path")?.into(), change })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Some("mcpToolCall") => {
+            let error = item.get("error").filter(|e| !e.is_null());
+            let result = item.get("result").filter(|r| !r.is_null());
+            let ok = str_of(item, "status") == Some("completed") && error.is_none();
+            let text = result
+                .and_then(|r| r.get("content"))
+                .and_then(Value::as_array)
+                .and_then(|parts| parts.iter().find_map(|p| str_of(p, "text")))
+                .map(truncate);
+            vec![AiEvent::ToolCompleted {
+                call: id,
+                ok,
+                summary: error.and_then(|e| str_of(e, "message")).map(str::to_string).or(text),
+                output: result.and_then(|r| r.get("structuredContent").filter(|s| !s.is_null()).cloned()),
+            }]
+        }
+        Some("webSearch") | Some("dynamicToolCall") => vec![AiEvent::ToolCompleted {
+            call: id,
+            ok: item.get("success").and_then(Value::as_bool).unwrap_or(true),
+            summary: None,
+            output: None,
+        }],
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn events(lines: &str) -> Vec<AiEvent> {
+        let mut stream = CodexStream::default();
+        lines
+            .lines()
+            .flat_map(|l| stream.push_line(l))
+            .filter_map(|i| match i {
+                CodexItem::Event(e) => Some(e),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// N12 : en « Demander », Codex demande l'accord d'un outil de plugin qui écrit par une
+    /// élicitation ; Cadence en fait une carte d'outil et répond `accept` / `decline`.
+    #[test]
+    fn relays_mcp_tool_elicitations() {
+        let mut stream = CodexStream::default();
+        let line = r#"{"jsonrpc":"2.0","id":12,"method":"mcpServer/elicitation/request","params":{"threadId":"t","turnId":"u","serverName":"cadence","request":{"mode":"form","message":"Allow the cadence MCP server to run tool \"gestion-projet__merge_pull_request\"?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","tool_params":{"pull_number":22}}}}}"#;
+        let items = stream.push_line(line);
+        let pending = items.iter().find_map(|i| if let CodexItem::Approval(p) = i { Some(p.clone()) } else { None }).unwrap();
+        assert!(pending.elicitation);
+        let event = items.iter().find_map(|i| if let CodexItem::Event(e) = i { Some(e.clone()) } else { None }).unwrap();
+        let AiEvent::ApprovalRequested { kind, tool, .. } = event else { panic!("{event:?}") };
+        assert_eq!(kind, ApprovalKind::Tool);
+        assert_eq!(tool.as_deref(), Some("mcp__cadence__gestion-projet__merge_pull_request"));
+        assert_eq!(approval_reply(&pending, ApprovalDecision::Allow)["result"]["action"], "accept");
+        assert_eq!(approval_reply(&pending, ApprovalDecision::Deny)["result"]["action"], "decline");
+        assert_eq!(approval_reply(&pending, ApprovalDecision::Allow)["id"], 12);
+
+        let named = r#"{"jsonrpc":"2.0","id":"e2","method":"mcpServer/elicitation/request","params":{"serverName":"cadence","_meta":{"tool_name":"gestion-projet__create_issue"}}}"#;
+        let items = stream.push_line(named);
+        assert!(items.iter().any(|i| matches!(i, CodexItem::Event(AiEvent::ApprovalRequested { tool: Some(t), .. }) if t == "mcp__cadence__gestion-projet__create_issue")));
+    }
+
+    #[test]
+    fn reads_a_turn_with_a_tool_call() {
+        let fixture = include_str!("../../tests/fixtures/ai/codex/tool-call.jsonl");
+        let got = events(fixture);
+        assert!(got.contains(&AiEvent::MessageDelta { message: "msg_1".into(), text: "J'appelle ".into() }));
+        assert!(got.iter().any(|e| matches!(e, AiEvent::ToolStarted { source: ToolSource::Cadence { plugin, tool }, .. }
+            if plugin == "exemple" && tool == "echo")));
+        assert!(got.iter().any(|e| matches!(e, AiEvent::ToolCompleted { ok: true, summary: Some(s), .. } if s == "bonjour")));
+        assert!(got.contains(&AiEvent::Command {
+            call: "cmd_1".into(),
+            command: "ls".into(),
+            exit_code: Some(0),
+            output: Some("a.txt\n".into())
+        }));
+        assert!(got.contains(&AiEvent::FileChanged { path: "notes.md".into(), change: FileChange::Added }));
+        assert!(got.contains(&AiEvent::MessageCompleted { message: "msg_1".into(), text: "J'appelle l'outil : bonjour.".into() }));
+        assert!(matches!(got[got.len() - 2], AiEvent::Usage { input_tokens: 1200, output_tokens: 40, .. }));
+        assert_eq!(
+            got.last(),
+            Some(&AiEvent::TurnCompleted { ok: true, interrupted: false, error: None, duration_ms: 2300 })
+        );
+    }
+
+    #[test]
+    fn reads_an_authentication_failure_recorded_from_codex() {
+        // Enregistré avec codex-cli 0.163.0 sans compte connecté.
+        let fixture = include_str!("../../tests/fixtures/ai/codex/auth-error.jsonl");
+        let got = events(fixture);
+        let errors: Vec<_> = got.iter().filter(|e| matches!(e, AiEvent::Error { .. })).collect();
+        assert_eq!(errors.len(), 2, "passerelle injoignable + connexion, sans les tentatives : {errors:?}");
+        assert!(matches!(errors[1], AiEvent::Error { kind: AiErrorKind::Auth, .. }));
+        assert!(matches!(got.last(), Some(AiEvent::TurnCompleted { ok: false, interrupted: false, error: Some(_), .. })));
+    }
+
+    #[test]
+    fn relays_approvals_and_refuses_the_rest() {
+        let mut stream = CodexStream::default();
+        let items = stream.push_line(
+            r#"{"jsonrpc":"2.0","id":7,"method":"item/commandExecution/requestApproval","params":{"threadId":"t","turnId":"u","itemId":"i","startedAtMs":1,"environmentId":null,"command":"rm -rf build"}}"#,
+        );
+        let CodexItem::Approval(pending) = &items[0] else { panic!("{items:?}") };
+        assert_eq!(pending.request, "7");
+        assert!(matches!(&items[1], CodexItem::Event(AiEvent::ApprovalRequested { kind: ApprovalKind::Command, title, .. }) if title == "rm -rf build"));
+        assert_eq!(approval_reply(pending, ApprovalDecision::AllowSession)["result"]["decision"], "acceptForSession");
+        assert_eq!(approval_reply(pending, ApprovalDecision::Deny)["id"], 7);
+
+        let question = stream.push_line(
+            r#"{"jsonrpc":"2.0","id":8,"method":"item/tool/requestUserInput","params":{"threadId":"t","turnId":"u","itemId":"i","isBlocking":true,"autoResolutionMs":null,"questions":[{"id":"q1","header":"Langue","question":"En quelle langue ?","isOther":false,"isSecret":false,"options":[{"label":"Français","description":""},{"label":"Anglais","description":""}]}]}}"#,
+        );
+        let CodexItem::Approval(pending) = &question[0] else { panic!("{question:?}") };
+        let CodexItem::Event(AiEvent::Question { text, options, questions, .. }) = &question[1] else { panic!("{question:?}") };
+        assert_eq!((text.as_str(), options.len()), ("En quelle langue ?", 2));
+        assert_eq!(questions[0].id, "q1");
+        assert_eq!(questions[0].header.as_deref(), Some("Langue"));
+        assert_eq!(questions[0].options[0].description, None, "description vide ignorée");
+        assert!(!questions[0].other);
+        let answers = [QuestionAnswer { id: "q1".into(), answers: vec!["Français".into()] }];
+        assert_eq!(question_reply(pending, &answers)["result"]["answers"]["q1"]["answers"][0], "Français");
+
+        // Modification de fichiers : ses chemins (annoncés par `item/started`) suivent la demande.
+        stream.push_line(
+            r#"{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"t","turnId":"u","item":{"type":"fileChange","id":"fc1","status":"inProgress","changes":[{"path":"/wt/a.rs","kind":{"type":"update"},"diff":""}]}}}"#,
+        );
+        let change = stream.push_line(
+            r#"{"jsonrpc":"2.0","id":9,"method":"item/fileChange/requestApproval","params":{"threadId":"t","turnId":"u","itemId":"fc1","reason":null}}"#,
+        );
+        let CodexItem::Approval(pending) = &change[0] else { panic!("{change:?}") };
+        assert_eq!(pending.paths, ["/wt/a.rs"]);
+
+        let other = stream.push_line(r#"{"jsonrpc":"2.0","id":"x","method":"attestation/generate","params":{}}"#);
+        assert!(matches!(&other[0], CodexItem::Reply(v) if v["error"]["code"] == -32601));
+        let response = stream.push_line(r#"{"jsonrpc":"2.0","id":3,"result":{"turn":{"id":"u"}}}"#);
+        assert!(matches!(&response[0], CodexItem::Response { id: 3, result: Ok(v) } if v["turn"]["id"] == "u"));
+    }
+
+    #[test]
+    fn reads_an_interrupted_turn() {
+        let got = events(r#"{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"t","turn":{"id":"u","status":"interrupted","error":null,"durationMs":900}}}"#);
+        assert_eq!(got, vec![AiEvent::TurnCompleted { ok: false, interrupted: true, error: None, duration_ms: 900 }]);
+    }
+}

@@ -4,7 +4,6 @@ import { Avatar, initialsOf } from "@/components/ui/Avatar";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { cn } from "@/lib/cn";
 import { issueStatuses } from "@/lib/domain/issues";
-import { AgentBadge } from "./AgentBadge";
 import { TypeBadge } from "./Badges";
 import { InlineMeta } from "./Inline";
 
@@ -35,14 +34,7 @@ export function IssueCard({ issue, onOpen }: IssueCardProps) {
 function IssueCardFooter({ issue }: { issue: IssueRow }) {
   const parts: ReactNode[] = [];
 
-  if (issue.activeAgent) {
-    parts.push(
-      <span key="agent" className="inline-flex items-center gap-[7px]">
-        <AgentBadge agent={issue.activeAgent} size={19} />
-        <span className="text-tiny text-green">agent {issue.activeAgent}</span>
-      </span>,
-    );
-  } else if (issue.assignee) {
+  if (issue.assignee) {
     parts.push(
       <Avatar
         key="assignee"

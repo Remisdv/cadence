@@ -1,7 +1,8 @@
 /**
  * Clôturer la version (maquette Version-Bump.dc.html) : choix de la version suivante, sort
  * des issues encore ouvertes, aperçu exact de ce qui sera écrit sur GitHub. Non réversible.
- * L'écran de fin propose de lancer l'agent déploiement sur la version close.
+ * Réglages par défaut de `.cadence/config.toml` (sprint de 14 jours, préfixe de tag `v`) :
+ * les réglages du projet reviendront avec le plugin Gestion de projet.
  */
 import { useState, type ReactNode } from "react";
 import type { CarryOver, CloseReport } from "@/lib/types";
@@ -25,11 +26,8 @@ import {
   useCurrentProject,
   useIssues,
   usePullRequests,
-  useSettings,
-  useStartAgent,
   useVersions,
 } from "@/lib/query/queries";
-import { useNavigation } from "@/stores/navigation";
 
 const choices = [
   { title: "Sprint suivant", description: "Incrémente le dernier segment. Le choix par défaut.", tone: "clay" },
@@ -43,7 +41,6 @@ export function VersionCloseDialog({ onDone }: { onDone: () => void }) {
   const versions = useVersions().data ?? [];
   const issues = useIssues().data ?? [];
   const prs = usePullRequests().data ?? [];
-  const config = useSettings().data;
   const close = useCloseVersion();
 
   const candidates = current ? nextVersions(current) : null;
@@ -87,12 +84,12 @@ export function VersionCloseDialog({ onDone }: { onDone: () => void }) {
 
   const currentVersion = versions.find((v) => v.title === current);
   const existingNext = versions.find((v) => v.title === next);
-  const range = nextSprintRange(currentVersion?.dueOn ?? null, new Date(), config?.versioning.sprintDays);
+  const range = nextSprintRange(currentVersion?.dueOn ?? null, new Date(), undefined);
   const openIssues = issues.filter((i) => i.version === current && i.status !== "done");
   const openPrs = prs.filter((p) => isOpenPr(p) && p.version === current);
-  const tag = `${config?.project.tagPrefix ?? "v"}${current}`;
+  const tag = `v${current}`;
   // « Demander confirmation avant un palier » : tout sauf le sprint suivant se confirme.
-  const needsConfirm = Boolean(config?.versioning.confirmMajorBump && next && next !== candidates[0]);
+  const needsConfirm = Boolean(next && next !== candidates[0]);
   const branch = project?.repo.defaultBranch ?? "main";
   const n = openIssues.length;
 
@@ -262,18 +259,6 @@ function WriteLine({ icon, tone, children }: { icon: IconName; tone: string; chi
 }
 
 function CloseDone({ report, onDone }: { report: CloseReport; onDone: () => void }) {
-  const start = useStartAgent();
-  const navigate = useNavigation((s) => s.navigate);
-  const deploy = () =>
-    start.mutate(
-      { kind: "deploy", input: { version: report.closed } },
-      {
-        onSuccess: () => {
-          onDone();
-          navigate({ id: "agent", kind: "deploy" });
-        },
-      },
-    );
   return (
     <>
       <DialogHeader title={`Version ${report.closed} clôturée`} icon="tag" />
@@ -285,20 +270,12 @@ function CloseDone({ report, onDone }: { report: CloseReport; onDone: () => void
             `, ${report.movedIssues} issue${report.movedIssues > 1 ? "s" : ""} traitée${report.movedIssues > 1 ? "s" : ""}`}
           . La version en cours est maintenant <span className="mono">{report.opened}</span>.
         </Callout>
-        {report.releaseUrl ? (
+        {report.releaseUrl && (
           <p className="text-body-sm text-tx2">
-            Les notes de version attendent dans un brouillon de release. L'agent déploiement peut
-            construire <span className="mono">{report.tag}</span>, rejouer un test d'acceptation par
-            issue, rédiger les notes et publier la release après votre validation.
-          </p>
-        ) : (
-          <p className="text-body-sm text-tx2">
-            L'agent déploiement peut construire <span className="mono">{report.tag}</span>, rejouer un
-            test d'acceptation par issue et préparer la release, publiée seulement après votre
-            validation.
+            Les notes de version attendent dans un brouillon de release, à relire avant de le
+            publier sur GitHub.
           </p>
         )}
-        {start.isError && <Callout tone="danger">{start.error.message}</Callout>}
       </DialogBody>
       <DialogFooter>
         <div className="grow" />
@@ -307,10 +284,6 @@ function CloseDone({ report, onDone }: { report: CloseReport; onDone: () => void
             Ouvrir le brouillon
           </Button>
         )}
-        <Button icon={start.isPending ? undefined : "rocket"} disabled={start.isPending} onClick={deploy}>
-          {start.isPending && <Spinner />}
-          Lancer l'agent déploiement
-        </Button>
         <Button variant="primary" onClick={onDone}>
           Terminer
         </Button>

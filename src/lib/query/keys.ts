@@ -1,10 +1,31 @@
-import type { IssueFilter, PrFilter, SyncResource } from "@/lib/types";
+import type { IssueFilter, PrFilter, SyncResource, ToolId } from "@/lib/types";
 
 /**
  * Clés de cache TanStack Query, regroupées par ressource. La première clé de chaque groupe
  * correspond à une `SyncResource` pour que `sync://updated` invalide le bon groupe.
  */
 export const keys = {
+  // Cadence 2 : app, préférences de la machine, plugins installés.
+  appStatus: () => ["app", "status"] as const,
+  appSettings: () => ["app", "settings"] as const,
+  plugins: ["plugins"] as const,
+  pluginsInstalled: () => ["plugins", "installed"] as const,
+  pluginSettings: (plugin: string) => ["plugins", "settings", plugin] as const,
+  pluginSecret: (plugin: string, secret: string) => ["plugins", "secret", plugin, secret] as const,
+  pluginStatus: () => ["plugins", "status"] as const,
+  catalog: () => ["plugins", "catalog"] as const,
+  /** Copies locales des dépôts suivis (service Dépôts). */
+  reposStatus: () => ["app", "repos"] as const,
+  tools: ["tools"] as const,
+  toolsReport: () => ["tools", "report"] as const,
+  /** Journal de la dernière installation ou connexion d'un outil (`tool://install`). */
+  toolRun: (tool: ToolId) => ["tools", "run", tool] as const,
+  chat: ["chat"] as const,
+  chatSessions: () => ["chat", "sessions"] as const,
+  chatSession: (id: string) => ["chat", "session", id] as const,
+  /** Textes en cours de diffusion d'une conversation (deltas), par message. */
+  chatDrafts: (id: string) => ["chat", "drafts", id] as const,
+
   auth: ["auth"] as const,
   project: ["project"] as const,
   projectCurrent: () => ["project", "current"] as const,
@@ -26,15 +47,6 @@ export const keys = {
   reviews: ["reviews"] as const,
   reviewsPending: () => ["reviews", "pending"] as const,
   prDetail: (number: number) => ["pull-requests", "detail", number] as const,
-
-  agents: ["agents"] as const,
-  agentsOverview: () => ["agents", "overview"] as const,
-  agentEngines: () => ["agents", "engines"] as const,
-  agentActions: (run: string) => ["agents", "actions", run] as const,
-  agentLatestRun: (kind: string) => ["agents", "run", kind] as const,
-  agentRunsList: (limit: number) => ["agents", "runs", limit] as const,
-
-  settings: ["settings"] as const,
 
   // Hors GitHub : version de l'app et mise à jour automatique.
   appVersion: () => ["app", "version"] as const,

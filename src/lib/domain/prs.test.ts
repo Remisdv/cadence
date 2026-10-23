@@ -8,11 +8,11 @@ const base = pullRequests[0]!;
 const pr = (p: Partial<PrRow>): PrRow => ({ ...base, ...p });
 
 describe("matchesPr", () => {
-  it("garde ouvertes et brouillons par défaut, filtre origine et version", () => {
+  it("garde ouvertes et brouillons par défaut, filtre auteur et version", () => {
     const open = pullRequests.filter((p) => matchesPr(p, defaultPrFilter));
     expect(open.every((p) => p.state === "open" || p.state === "draft")).toBe(true);
-    const agent = pullRequests.filter((p) => matchesPr(p, { ...defaultPrFilter, origin: "agent" }));
-    expect(agent.map((p) => p.number)).toEqual([88]);
+    const mine = pullRequests.filter((p) => matchesPr(p, { ...defaultPrFilter, author: "me" }));
+    expect(mine.every((p) => p.author.isSelf)).toBe(true);
     const v011 = pullRequests.filter((p) =>
       matchesPr(p, { ...defaultPrFilter, state: "all", versions: ["0.1.1"] }),
     );
