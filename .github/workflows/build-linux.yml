@@ -1,0 +1,62 @@
+# Build Linux à la demande (Actions › Build Linux › Run workflow) : paquets .deb, .rpm et
+# AppImage non signés, déposés en artefact du run (14 jours). Rien n'est publié : pour une
+# release signée avec mise à jour automatique, voir release.yml et docs/release.md.
+# Jamais lancé automatiquement, pour économiser les minutes GitHub Actions.
+name: Build Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Build Linux x64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Dépendances front
+        run: pnpm install --frozen-lockfile
+
+      # Sans clé privée de mise à jour : pas de paquets signés pour l'updater.
+      - name: Build
+        env:
+          CADENCE_GITHUB_CLIENT_ID: ${{ vars.CADENCE_GITHUB_CLIENT_ID }}
+          CADENCE_GITHUB_CLIENT_SECRET: ${{ secrets.CADENCE_GITHUB_CLIENT_SECRET }}
+        run: pnpm tauri:build:unsigned
+
+      - name: Version
+        id: version
+        run: echo "version=$(jq -r .version src-tauri/tauri.conf.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cadence-${{ steps.version.outputs.version }}-linux-x64
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 14
