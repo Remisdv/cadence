@@ -145,6 +145,14 @@ function inlineWith(text: string, onLink?: LinkHandler): ReactNode[] {
   return out;
 }
 
+/**
+ * Une ligne de Markdown en ligne (`code`, gras, italique, liens), sans paragraphe : messages
+ * de l'hôte qui citent un fichier entre accents graves (avertissements d'installation, R08).
+ */
+export function MarkdownInline({ text, onLink }: { text: string; onLink?: LinkHandler }) {
+  return <>{inlineWith(text, onLink)}</>;
+}
+
 export function Markdown({
   source,
   className,

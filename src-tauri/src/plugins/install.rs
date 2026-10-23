@@ -603,9 +603,13 @@ pub(crate) mod tests {
         let zip = root.join("journal-0.1.0.zip");
         write_zip(&zip, "", &files);
         let prepared = prepare_zip(&registry, &zip, None, &mut |_| {}).unwrap();
+        // Un seul avertissement, lisible (R08) : la machine nommée, les autres systèmes listés.
         let missing: Vec<&String> = prepared.warnings.iter().filter(|w| w.contains("Binaire du serveur absent")).collect();
-        assert_eq!(missing.len(), manifest::TARGETS.len() - 1, "{:?}", prepared.warnings);
-        assert!(missing.iter().all(|w| !w.contains(current)));
+        assert_eq!(missing.len(), 1, "{:?}", prepared.warnings);
+        let here = manifest::target_label(current);
+        assert!(missing[0].starts_with(&format!("Installé pour {here} (cette machine). ")), "{}", missing[0]);
+        assert!(!missing[0].contains('`') && !missing[0].contains("-apple-") && !missing[0].contains("cette plateforme"), "{}", missing[0]);
+        assert!(missing[0].ends_with("ne fonctionnera pas sur ces systèmes."), "{}", missing[0]);
         prepared.commit(&registry).unwrap();
         assert_eq!(registry.entry("journal").unwrap().version, "0.1.0");
         assert!(registry.root().join("journal/0.1.0/bin").join(current).is_dir());

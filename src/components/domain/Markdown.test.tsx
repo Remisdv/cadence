@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Markdown } from "./Markdown";
+import { Markdown, MarkdownInline } from "./Markdown";
 
 const html = (source: string) => renderToStaticMarkup(<Markdown source={source} breaks />);
 
@@ -39,5 +39,10 @@ describe("Markdown", () => {
     expect(cellsOf.filter((c) => c.includes("wrap-anywhere"))).toHaveLength(1);
     expect(cellsOf[2]).not.toContain("wrap-anywhere");
     expect(cellsOf[5]).toContain("wrap-anywhere");
+  });
+
+  it("rend le code en ligne d'un message de l'hôte sans accents graves (R08)", () => {
+    const out = renderToStaticMarkup(<MarkdownInline text="`ui/index.html` absent." />);
+    expect(out).toBe('<code class="mono text-small text-clay">ui/index.html</code> absent.');
   });
 });

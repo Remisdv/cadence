@@ -124,6 +124,54 @@ pub fn canonical_target(target: &str) -> Option<&'static str> {
     TARGETS.iter().zip(SHORT_TARGETS).find(|(long, short)| **long == target || *short == target).map(|(long, _)| *long)
 }
 
+/// Système et variante lisibles d'une cible (« macOS », « Apple Silicon »).
+fn target_parts(target: &str) -> (&'static str, &'static str) {
+    match canonical_target(target) {
+        Some("x86_64-pc-windows-msvc") => ("Windows", "x64"),
+        Some("aarch64-apple-darwin") => ("macOS", "Apple Silicon"),
+        Some("x86_64-apple-darwin") => ("macOS", "Intel"),
+        Some("x86_64-unknown-linux-gnu") => ("Linux", "x64"),
+        _ => ("", ""),
+    }
+}
+
+/// Nom lisible d'une cible (recette du 21/10, R08) : « Windows x64 », « macOS (Apple
+/// Silicon) », « Linux x64 » ; une cible inconnue garde son nom.
+pub fn target_label(target: &str) -> String {
+    match target_parts(target) {
+        ("", _) => target.to_string(),
+        ("macOS", variant) => format!("macOS ({variant})"),
+        (os, variant) => format!("{os} {variant}"),
+    }
+}
+
+/// Liste lisible de cibles, les variantes d'un même système réunies : « macOS (Apple
+/// Silicon, Intel) et Linux x64 ».
+pub fn targets_label(targets: &[&str]) -> String {
+    let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
+    for target in targets {
+        let (os, variant) = target_parts(target);
+        match groups.iter_mut().find(|(o, _)| !os.is_empty() && *o == os) {
+            Some((_, variants)) => variants.push(variant.to_string()),
+            None if os.is_empty() => groups.push(("", vec![target.to_string()])),
+            None => groups.push((os, vec![variant.to_string()])),
+        }
+    }
+    let names: Vec<String> = groups
+        .into_iter()
+        .map(|(os, variants)| match os {
+            "" => variants.join(", "),
+            "macOS" => format!("macOS ({})", variants.join(", ")),
+            _ => format!("{os} {}", variants.join(", ")),
+        })
+        .collect();
+    match names.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} et {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
 /// Cible de la machine courante, `None` hors des quatre cibles prises en charge.
 pub fn current_target() -> Option<&'static str> {
     if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
@@ -444,7 +492,11 @@ fn check_dir(dir: &Path, m: &mut Manifest) -> AppResult<()> {
                     return Err(invalid(format!("Binaire du serveur absent : `bin/{target}/{}`.", file_name(&bin))));
                 }
             }
-            _ => m.warnings.push("Aucun binaire du serveur pour cette machine.".into()),
+            Some(target) => m.warnings.push(format!(
+                "Aucun binaire du serveur pour cette machine ({}) : le plugin n'y fonctionnera pas.",
+                target_label(target)
+            )),
+            None => m.warnings.push("Aucun binaire du serveur pour cette machine : le plugin n'y fonctionnera pas.".into()),
         }
     }
     if let Some(entry) = &m.ui_entry
@@ -463,18 +515,32 @@ fn check_dir(dir: &Path, m: &mut Manifest) -> AppResult<()> {
 }
 
 /// Binaires des autres cibles annoncées (recette du 21/10, N02). Seul celui de la machine est
-/// exigé, par `load` : une archive locale ou du catalogue construite pour cette plateforme
-/// s'installe. Les cibles annoncées sans binaire reviennent en avertissements, un par cible
-/// (« Binaire absent pour `aarch64-apple-darwin` »), à montrer après l'installation.
+/// exigé, par `load` : une archive locale ou du catalogue construite pour cette machine
+/// s'installe. Les cibles annoncées sans binaire reviennent en un avertissement, à montrer
+/// après l'installation, avec des noms lisibles et la machine nommée (R08) : « Installé pour
+/// Windows x64 (cette machine). Binaire du serveur absent pour macOS (Apple Silicon, Intel) et
+/// Linux x64 : le plugin ne fonctionnera pas sur ces systèmes. »
 pub fn check_all_targets(dir: &Path, m: &Manifest) -> Vec<String> {
     let Some(server) = &m.server else { return Vec::new() };
     let current = current_target();
-    server
+    let missing: Vec<&str> = server
         .targets
         .iter()
-        .filter(|target| Some(target.as_str()) != current && !server.binary(dir, target).is_file())
-        .map(|target| format!("Binaire du serveur absent pour `{target}` : le plugin ne fonctionnera pas sur cette plateforme."))
-        .collect()
+        .map(String::as_str)
+        .filter(|target| canonical_target(target) != current && !server.binary(dir, target).is_file())
+        .collect();
+    if missing.is_empty() {
+        return Vec::new();
+    }
+    let here = current
+        .filter(|c| server.targets.iter().any(|t| canonical_target(t) == Some(*c)))
+        .map(|c| format!("Installé pour {} (cette machine). ", target_label(c)))
+        .unwrap_or_default();
+    let systems = if missing.len() > 1 { "ces systèmes" } else { "ce système" };
+    vec![format!(
+        "{here}Binaire du serveur absent pour {} : le plugin ne fonctionnera pas sur {systems}.",
+        targets_label(&missing)
+    )]
 }
 
 fn file_name(path: &Path) -> String {
@@ -964,17 +1030,45 @@ mode = "background"
         let m = load(&dir, "0.3.0").unwrap();
         assert_eq!(m.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["preparer-issue", "rapport-version"]);
         assert!(m.warnings.is_empty(), "{:?}", m.warnings);
-        // Les autres cibles manquent : un avertissement par cible, jamais la machine courante.
+        // Les autres cibles manquent : un avertissement lisible, la machine courante nommée à
+        // part (R08), sans nom technique de cible.
         let missing = check_all_targets(&dir, &m);
-        let declared = m.server.as_ref().unwrap().targets.len();
-        assert_eq!(missing.len(), declared - 1, "{missing:?}");
-        assert!(missing.iter().all(|w| !w.contains(target)), "{missing:?}");
+        assert_eq!(missing.len(), 1, "{missing:?}");
+        let others: Vec<&str> = TARGETS.into_iter().filter(|t| *t != target).collect();
+        assert_eq!(
+            missing[0],
+            format!(
+                "Installé pour {} (cette machine). Binaire du serveur absent pour {} : le plugin ne fonctionnera pas sur ces systèmes.",
+                target_label(target),
+                targets_label(&others)
+            )
+        );
+        assert!(!missing[0].contains(target) && !missing[0].contains('`'), "{missing:?}");
         for t in TARGETS {
             let bin = if t.contains("windows") { "cadence-gestion-projet.exe" } else { "cadence-gestion-projet" };
             write(&format!("bin/{t}/{bin}"), "");
         }
         assert!(check_all_targets(&dir, &m).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn names_targets_for_people() {
+        assert_eq!(target_label("x86_64-pc-windows-msvc"), "Windows x64");
+        assert_eq!(target_label("macos-aarch64"), "macOS (Apple Silicon)");
+        assert_eq!(target_label("x86_64-apple-darwin"), "macOS (Intel)");
+        assert_eq!(target_label("x86_64-unknown-linux-gnu"), "Linux x64");
+        assert_eq!(target_label("riscv64"), "riscv64");
+        assert_eq!(
+            targets_label(&["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]),
+            "macOS (Apple Silicon, Intel) et Linux x64"
+        );
+        assert_eq!(
+            targets_label(&["x86_64-pc-windows-msvc", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]),
+            "Windows x64, macOS (Intel) et Linux x64"
+        );
+        assert_eq!(targets_label(&["x86_64-unknown-linux-gnu"]), "Linux x64");
+        assert_eq!(targets_label(&[]), "");
     }
 
     #[test]

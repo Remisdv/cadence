@@ -468,10 +468,9 @@ const handlers: Handlers = {
     const plugin = addPlugin("plugin_install_zip", mockInstalledPlugin(id, version, "file"));
     // Archive construite pour cette machine seulement (`--allow-missing-targets`).
     const warnings = /windows/i.test(path)
-      ? ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"].map(
-          (t) =>
-            `Binaire du serveur absent pour \`${t}\` : le plugin ne fonctionnera pas sur cette plateforme.`,
-        )
+      ? [
+          "Installé pour Windows x64 (cette machine). Binaire du serveur absent pour macOS (Apple Silicon, Intel) et Linux x64 : le plugin ne fonctionnera pas sur ces systèmes.",
+        ]
       : [];
     mockBus.emit<PluginInstallEvent>("plugin://install", {
       id,

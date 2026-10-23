@@ -16,6 +16,7 @@ import {
 } from "@/components/layout/ContextBar";
 import { EmptyState, ErrorState, LoadingState } from "@/components/layout/EmptyState";
 import { Icon } from "@/components/icons/Icon";
+import { MarkdownInline } from "@/components/domain/Markdown";
 import { NeutralTile, PluginTile } from "@/components/domain/PluginTile";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -270,9 +271,7 @@ export default function CatalogView({ view }: ViewProps<"catalog">) {
               {installArchive.error.message}
             </Callout>
           )}
-          {fresh && (fresh.installWarnings?.length ?? 0) > 0 && (
-            <InstallWarnings plugin={fresh} />
-          )}
+          {fresh && (fresh.installWarnings?.length ?? 0) > 0 && <InstallWarnings plugin={fresh} />}
 
           {catalog.isPending || plugins.isPending ? (
             <LoadingState />
@@ -540,7 +539,9 @@ function PluginDetail({
             size="tall"
             icon="download"
             disabled={!entry.compatible || busy}
-            onClick={() => install.mutate({ id: card.id, update: false }, { onSuccess: onInstalled })}
+            onClick={() =>
+              install.mutate({ id: card.id, update: false }, { onSuccess: onInstalled })
+            }
           >
             {entry.compatible ? `Installer et activer${size ? ` · ${size}` : ""}` : "Incompatible"}
           </Button>
@@ -550,7 +551,9 @@ function PluginDetail({
             size="tall"
             icon="download"
             disabled={!entry.compatible || busy}
-            onClick={() => install.mutate({ id: card.id, update: true }, { onSuccess: onInstalled })}
+            onClick={() =>
+              install.mutate({ id: card.id, update: true }, { onSuccess: onInstalled })
+            }
           >
             Mettre à jour vers {entry.version}
             {size ? ` · ${size}` : ""}
@@ -746,7 +749,9 @@ function InstallWarnings({ plugin }: { plugin: InstalledPluginView }) {
       {plugin.name} {plugin.version} est installé, avec des avertissements :
       <ul className="mt-1 list-disc pl-4">
         {(plugin.installWarnings ?? []).map((w) => (
-          <li key={w}>{w}</li>
+          <li key={w}>
+            <MarkdownInline text={w} />
+          </li>
         ))}
       </ul>
     </Callout>
