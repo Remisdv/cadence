@@ -26,6 +26,9 @@ function cells(line: string): string[] {
     .map((c) => c.trim());
 }
 
+/** Mot assez long (chemin, URL) pour être coupé n'importe où dans une cellule de tableau. */
+const LONG_WORD = /\S{32,}/;
+
 const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
 /** `breaks` : un simple retour à la ligne reste une ligne (messages du chat). */
@@ -200,13 +203,20 @@ export function Markdown({
             );
           }
           case "table":
+            // Les cellules ne se coupent qu'entre les mots (`wrap-break-word`, même sous un
+            // parent en `wrap-anywhere`) et les en-têtes jamais : une colonne trop étroite
+            // élargit le tableau, qui défile alors dans son cadre (recette R03 : « SP » en
+            // « S / P »). Seule une cellule à très long mot (chemin, URL) se coupe n'importe où.
             return (
-              <div key={i} className="overflow-x-auto rounded-lg border border-line">
-                <table className="w-full border-collapse text-body-sm">
+              <div key={i} className="max-w-full overflow-x-auto rounded-lg border border-line">
+                <table className="w-full border-collapse text-body-sm wrap-break-word">
                   <thead className="bg-p2 text-left text-tx">
                     <tr>
                       {b.head.map((cell, j) => (
-                        <th key={j} className="border-b border-line px-3 py-1.5 font-semibold">
+                        <th
+                          key={j}
+                          className="border-b border-line px-3 py-1.5 font-semibold whitespace-nowrap"
+                        >
                           {inline(cell)}
                         </th>
                       ))}
@@ -216,7 +226,13 @@ export function Markdown({
                     {b.rows.map((row, r) => (
                       <tr key={r} className={cn(r < b.rows.length - 1 && "border-b border-line")}>
                         {b.head.map((_, j) => (
-                          <td key={j} className="px-3 py-1.5 align-top">
+                          <td
+                            key={j}
+                            className={cn(
+                              "px-3 py-1.5 align-top",
+                              LONG_WORD.test(row[j] ?? "") && "min-w-[14rem] wrap-anywhere",
+                            )}
+                          >
                             {inline(row[j] ?? "")}
                           </td>
                         ))}

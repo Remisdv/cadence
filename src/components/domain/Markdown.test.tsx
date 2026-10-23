@@ -17,4 +17,25 @@ describe("Markdown", () => {
     expect(html("**[Roadmap](cadence:gestion-projet/roadmap)**")).toMatch(/<strong[^>]*><a /);
     expect(html("`**pas du gras**`")).toMatch(/<code[^>]*>\*\*pas du gras\*\*<\/code>/);
   });
+
+  it("ne coupe ni les en-têtes ni les mots courts d'un tableau (recette R03)", () => {
+    const out = html(
+      [
+        "| Issue | SP | Base |",
+        "| --- | --- | --- |",
+        "| #26 — Option `--bis` | 1 | `release/0.3.0` |",
+        "| #27 | 1 | C:/Users/x/AppData/Roaming/app.cadence.desktop.qa/repos/linear-test |",
+      ].join("\n"),
+    );
+    expect(out).not.toContain("break-all");
+    // Défilement horizontal du tableau, cellules coupées entre les mots seulement.
+    expect(out).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table class="[^"]*wrap-break-word/);
+    const heads = [...out.matchAll(/<th class="([^"]*)">/g)].map((m) => m[1]);
+    expect(heads).toHaveLength(3);
+    for (const c of heads) expect(c).toContain("whitespace-nowrap");
+    const cellsOf = [...out.matchAll(/<td class="([^"]*)">/g)].map((m) => m[1]!);
+    expect(cellsOf.filter((c) => c.includes("wrap-anywhere"))).toHaveLength(1);
+    expect(cellsOf[2]).not.toContain("wrap-anywhere");
+    expect(cellsOf[5]).toContain("wrap-anywhere");
+  });
 });
