@@ -173,10 +173,35 @@ fn split_segments(command: &str) -> Vec<String> {
                     current.push(c);
                 }
                 ';' | '\n' | '|' => {
-                    if c == '|' && chars.peek() == Some(&'|') {
+                    // `||` et `|&` (tube de bash qui passe aussi la sortie d'erreur) séparent.
+                    if c == '|' && matches!(chars.peek(), Some('|' | '&')) {
                         chars.next();
                     }
                     segments.push(std::mem::take(&mut current));
+                }
+                '>' | '<' => {
+                    // Redirection : `>`, `>>`, `2>&1`, `*>&1`, `>&2`, `<&3`, `>&-` ; le `&` qui
+                    // suit appartient à la redirection, ce n'est pas un séparateur.
+                    current.push(c);
+                    if chars.peek() == Some(&c) {
+                        current.push(c);
+                        chars.next();
+                    }
+                    if chars.peek() == Some(&'&') {
+                        current.push('&');
+                        chars.next();
+                        while let Some(&d) = chars.peek() {
+                            if !(d.is_ascii_digit() || d == '-') {
+                                break;
+                            }
+                            current.push(d);
+                            chars.next();
+                        }
+                    }
+                }
+                '&' if chars.peek() == Some(&'>') => {
+                    // `&>` / `&>>` de bash : redirection des deux sorties.
+                    current.push('&');
                 }
                 '&' => {
                     // `&&` sépare ; `&` seul en tête est l'opérateur d'appel de PowerShell, en
@@ -205,6 +230,14 @@ fn segment_program(segment: &str) -> Option<String> {
     let mut called = false;
     loop {
         let word = words.next()?;
+        // Redirection placée avant la commande (`2>/dev/null git…`, `> out.txt echo`) : elle
+        // et sa cible éventuelle ne lancent rien.
+        if let Some(needs_target) = redirection(&word) {
+            if needs_target {
+                words.next();
+            }
+            continue;
+        }
         // Opérateur d'appel de PowerShell : le mot suivant (même entre guillemets) est lancé.
         if word == "&" {
             called = true;
@@ -228,6 +261,18 @@ fn segment_program(segment: &str) -> Option<String> {
         let name = name.strip_suffix(".exe").unwrap_or(&name).to_string();
         return (!name.is_empty()).then_some(name);
     }
+}
+
+/// Un mot est-il une redirection (`>`, `>>`, `2>`, `2>&1`, `*>`, `&>`, `<`, `3>$null`…) ?
+/// `Some(true)` quand sa cible est le mot suivant (`>` seul), `Some(false)` quand elle est
+/// collée (`>out.txt`) ou que c'est une copie de descripteur (`2>&1`).
+fn redirection(word: &str) -> Option<bool> {
+    let rest = word.trim_start_matches(|c: char| c.is_ascii_digit() || c == '*' || c == '&');
+    if !rest.starts_with(['>', '<']) {
+        return None;
+    }
+    let target = rest.trim_start_matches(['>', '<']);
+    Some(target.is_empty())
 }
 
 /// Mots d'un segment, les guillemets gardés (un mot entre guillemets peut contenir des espaces).
@@ -285,6 +330,34 @@ mod tests {
         assert_eq!(command_programs("/usr/bin/grep 'a;b|c' f.txt"), set(&["grep"]));
         assert_eq!(command_programs("sudo rm -rf /"), set(&["sudo"]), "sudo n'est jamais transparent");
         assert!(command_programs("cd x; echo ok").is_empty());
+    }
+
+    #[test]
+    fn redirections_are_neither_separators_nor_programs() {
+        // Commande relevée à la recette du 21/10 (R02) : « commandes 1, python, tail ».
+        let recette = r#"cd "C:/Users/x/repos/.worktrees/remisdv/linear-test/issue-26" && python -m unittest discover bonjour -v 2>&1 | tail -20 && echo "=== CLI ===" && python bonjour/bonjour.py --bis && python bonjour/bonjour.py --bis --nom Louis --majuscules && python bonjour/bonjour.py"#;
+        assert_eq!(command_programs(recette), set(&["python", "tail"]));
+        assert_eq!(command_programs("git log --oneline -5 2>&1 | tail -3"), set(&["git", "tail"]));
+        // Bash : toutes les formes de redirection.
+        assert_eq!(command_programs("cargo test >out.log 2>&1 && cat out.log"), set(&["cargo", "cat"]));
+        assert_eq!(command_programs("npm test &> /tmp/log; grep -c ok /tmp/log"), set(&["npm", "grep"]));
+        assert_eq!(command_programs("npm test &>>/tmp/log"), set(&["npm"]));
+        assert_eq!(command_programs("make 2>/dev/null >> build.log"), set(&["make"]));
+        assert_eq!(command_programs("make |& tee build.log"), set(&["make", "tee"]));
+        assert_eq!(command_programs("echo erreur >&2; exit 1"), set(&["exit"]));
+        assert_eq!(command_programs("exec 3>&-; sort < in.txt > out.txt"), set(&["exec", "sort"]));
+        assert_eq!(command_programs("2>/dev/null git status"), set(&["git"]));
+        assert_eq!(command_programs("> out.txt git status"), set(&["git"]));
+        assert_eq!(command_programs("python a.py 1>&2 &"), set(&["python"]));
+        // PowerShell : `2>&1`, `*>&1`, `2>$null`, `*> fichier`.
+        assert_eq!(
+            command_programs(r#"git -C "C:\a b\r" fetch 2>&1 | Out-String; Get-ChildItem -Recurse 2>$null | Measure-Object"#),
+            set(&["git", "out-string", "get-childitem", "measure-object"])
+        );
+        assert_eq!(command_programs("& pnpm test *>&1 | Select-Object -Last 20"), set(&["pnpm", "select-object"]));
+        assert_eq!(command_programs("cargo build *> build.log; Get-Content build.log -Tail 5"), set(&["cargo", "get-content"]));
+        // Hors guillemets seulement : `2>&1` dans une chaîne reste du texte.
+        assert_eq!(command_programs(r#"grep "2>&1" script.sh"#), set(&["grep"]));
     }
 
     #[test]
