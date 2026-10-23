@@ -756,6 +756,11 @@ export default function DesignSystemView() {
                 "",
                 "- [ ] Bandeau, jamais de toast rouge",
                 "- [x] Heure dans le fuseau local",
+                "",
+                "| Issue | SP | PR | Base |",
+                "| --- | --- | --- | --- |",
+                "| #26 — Option `--bis` | 1 | #28 (brouillon) | `release/0.3.0` |",
+                "| #2 — Modèle + API | 8 | — | — |",
               ].join("\n")}
             />
           </Card>

@@ -214,7 +214,8 @@ export function Markdown({
             // Les cellules ne se coupent qu'entre les mots (`wrap-break-word`, même sous un
             // parent en `wrap-anywhere`) et les en-têtes jamais : une colonne trop étroite
             // élargit le tableau, qui défile alors dans son cadre (recette R03 : « SP » en
-            // « S / P »). Seule une cellule à très long mot (chemin, URL) se coupe n'importe où.
+            // « S / P »), ni le code en ligne (`--bis`, `release/0.3.0`). Seule une cellule à
+            // très long mot (chemin, URL) se coupe n'importe où.
             return (
               <div key={i} className="max-w-full overflow-x-auto rounded-lg border border-line">
                 <table className="w-full border-collapse text-body-sm wrap-break-word">
@@ -238,7 +239,9 @@ export function Markdown({
                             key={j}
                             className={cn(
                               "px-3 py-1.5 align-top",
-                              LONG_WORD.test(row[j] ?? "") && "min-w-[14rem] wrap-anywhere",
+                              LONG_WORD.test(row[j] ?? "")
+                                ? "min-w-[14rem] wrap-anywhere"
+                                : "[&_code]:whitespace-nowrap",
                             )}
                           >
                             {inline(row[j] ?? "")}

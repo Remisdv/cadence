@@ -38,6 +38,7 @@ describe("Markdown", () => {
     const cellsOf = [...out.matchAll(/<td class="([^"]*)">/g)].map((m) => m[1]!);
     expect(cellsOf.filter((c) => c.includes("wrap-anywhere"))).toHaveLength(1);
     expect(cellsOf[2]).not.toContain("wrap-anywhere");
+    expect(cellsOf[2]).toContain("[&amp;_code]:whitespace-nowrap");
     expect(cellsOf[5]).toContain("wrap-anywhere");
   });
 
