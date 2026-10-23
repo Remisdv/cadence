@@ -52,6 +52,8 @@ export type ChatItem =
       /** Ce que couvre « Autoriser pour la session » (« commandes git, python »). */
       scope: string | null;
       decision: ApprovalDecision | null;
+      /** Restée sans réponse quand le tour s'est terminé (arrêt) : la carte est close. */
+      cancelled: boolean;
     }
   | { kind: "error"; key: string; error: AiErrorKind; message: string }
   | {
@@ -63,6 +65,8 @@ export type ChatItem =
       /** Réponse lisible, une fois répondu. */
       answer: string | null;
       answers: QuestionAnswer[];
+      /** Restée sans réponse quand le tour s'est terminé (arrêt) : la carte est close. */
+      cancelled: boolean;
     }
   | { kind: "report"; key: string; text: string; progress: number | null; final: boolean }
   | {
@@ -135,7 +139,9 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
       });
     case "tool-completed": {
       const next = replace(items, event.call, "tool", (i) =>
-        i.kind === "tool" ? { ...i, status: event.ok ? "ok" : "error", summary: event.summary } : i,
+        i.kind === "tool"
+          ? { ...i, status: event.ok ? "ok" : "error", summary: cliMessage(event.summary) }
+          : i,
       );
       return next ? { ...thread, items: next } : thread;
     }
@@ -165,6 +171,7 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
         tool: event.tool ?? null,
         scope: event.scope ?? null,
         decision: null,
+        cancelled: false,
       });
     case "approval-answered": {
       const next = replace(items, event.request, "approval", (i) =>
@@ -180,6 +187,7 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
         questions: questionsOf(event),
         answer: null,
         answers: [],
+        cancelled: false,
       });
     case "question-answered": {
       const next = replace(items, event.request, "question", (i) =>
@@ -198,9 +206,15 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
     case "usage":
       return { ...thread, pendingCost: event.costUsd };
     case "turn-completed": {
-      // Un message encore en cours à la fin du tour (interruption) ne bouge plus.
+      // Un message encore en cours à la fin du tour (interruption) ne bouge plus ; un accord
+      // ou une question restés sans réponse sont annulés (recette du 21/10, R05).
       const settled = items.map((i) =>
-        i.kind === "assistant" && i.streaming ? { ...i, streaming: false } : i,
+        i.kind === "assistant" && i.streaming
+          ? { ...i, streaming: false }
+          : (i.kind === "approval" && i.decision === null) ||
+              (i.kind === "question" && i.answer === null)
+            ? { ...i, cancelled: true }
+            : i,
       );
       return {
         items: [
@@ -210,7 +224,7 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
             key,
             ok: event.ok,
             interrupted: event.interrupted,
-            error: event.error,
+            error: event.error === null ? null : cliMessage(event.error),
             durationMs: event.durationMs,
             costUsd: thread.pendingCost,
           },
@@ -223,6 +237,31 @@ export function applyEvent(thread: ChatThread, event: AiEvent, key: string): Cha
     case "session-started":
       return thread;
   }
+}
+
+/**
+ * Messages techniques des CLI montrés en français (recette du 21/10, R05) : refus d'un outil
+ * dont l'accord attendait quand le tour a été arrêté, interruption, clé de fin de tour
+ * (`Tour en échec (error_during_execution).` des historiques d'avant la traduction côté hôte).
+ */
+export function cliMessage(text: string): string;
+export function cliMessage(text: string | null): string | null;
+export function cliMessage(text: string | null): string | null {
+  if (text === null) return null;
+  const t = text.trim();
+  if (/^The user doesn't want to (proceed|take this action)/i.test(t))
+    return "Annulé : le tour a été arrêté.";
+  if (/^\[?Request interrupted by user/i.test(t)) return "Interrompu par l'utilisateur.";
+  const failure = /^Tour en échec \(([a-z_]+)\)\.?$/.exec(t);
+  if (failure)
+    return (
+      {
+        error_max_turns: "Le tour s'est arrêté : nombre maximal d'étapes atteint.",
+        error_max_budget_usd: "Le tour s'est arrêté : budget maximal atteint.",
+        error_during_execution: "Le tour s'est arrêté sur une erreur de Claude Code.",
+      }[failure[1]!] ?? "Le tour a échoué."
+    );
+  return text;
 }
 
 /** Fil d'une conversation enregistrée, plus les textes en cours de diffusion. */

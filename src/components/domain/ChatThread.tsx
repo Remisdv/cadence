@@ -118,8 +118,8 @@ function TurnView({
     !turn.reply.some(
       (i) =>
         (i.kind === "assistant" && i.streaming) ||
-        (i.kind === "approval" && !i.decision) ||
-        (i.kind === "question" && i.answer === null),
+        (i.kind === "approval" && !i.decision && !i.cancelled) ||
+        (i.kind === "question" && i.answer === null && !i.cancelled),
     );
 
   return (
@@ -364,7 +364,7 @@ function TurnEnd({ item }: { item: Item<"turn"> }) {
     return (
       <span className="flex items-center gap-2 text-small text-tx3">
         <Icon name="stop" size={12} />
-        Tour interrompu
+        Tour arrêté
       </span>
     );
   return item.error ? <span className="text-small text-red">{item.error}</span> : null;
@@ -521,7 +521,8 @@ export function QuestionCard({
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   const [other, setOther] = useState<Record<string, string>>({});
   const [sent, setSent] = useState(false);
-  const answered = item.answer !== null;
+  // Close une fois répondue, ou annulée par la fin du tour (arrêt).
+  const answered = item.answer !== null || item.cancelled;
   const answers: QuestionAnswer[] = item.questions.map((q) => ({
     id: q.id,
     answers: composeAnswer(q, picked[q.id] ?? [], other[q.id] ?? ""),
@@ -563,7 +564,11 @@ export function QuestionCard({
             ? `${item.questions.length} questions de l'IA`
             : "Question de l'IA"}
         </span>
-        {answered && <Badge tone="green">Répondu</Badge>}
+        {item.answer !== null ? (
+          <Badge tone="green">Répondu</Badge>
+        ) : (
+          item.cancelled && <Badge tone="neutral">Annulée</Badge>
+        )}
       </div>
       {item.questions.map((question) => (
         <fieldset key={question.id} className="flex min-w-0 flex-col gap-1.5">
@@ -704,7 +709,8 @@ export function ApprovalCard({
     item.detail && typeof item.detail === "object" && "command" in item.detail
       ? String((item.detail as { command: unknown }).command)
       : null;
-  const answered = item.decision !== null;
+  // Close une fois décidée, ou annulée par la fin du tour (arrêt, recette du 21/10, R05).
+  const answered = item.decision !== null || item.cancelled;
   const pluginTool = item.approval === "tool" ? pluginToolOf(item.tool) : null;
   return (
     <div
@@ -738,11 +744,13 @@ export function ApprovalCard({
           ?
         </span>
         <div className="grow" />
-        {answered && (
+        {item.decision !== null ? (
           <Badge tone={item.decision === "deny" ? "red" : "green"}>
-            {decisionLabel[item.decision!]}
+            {decisionLabel[item.decision]}
             {item.decision === "allow-session" && item.scope ? ` · ${item.scope}` : ""}
           </Badge>
+        ) : (
+          item.cancelled && <Badge tone="neutral">Annulée</Badge>
         )}
       </div>
       <span className="mono text-small break-all text-tx2">{command ?? item.title}</span>

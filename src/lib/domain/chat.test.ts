@@ -5,6 +5,7 @@ import {
   awaitsUser,
   buildThread,
   chatBarSections,
+  cliMessage,
   contextPlugin,
   conversationOriginLabel,
   pluginConversations,
@@ -464,6 +465,53 @@ describe("attente de l'utilisateur (N10) et outils de plugin (N12)", () => {
       "2 conversations attendent votre accord",
     );
     expect(waitingSummary({ reply: 0, approval: 0 })).toBe("Chat global · tous les plugins");
+  });
+
+  it("la fin du tour annule les accords et questions restés sans réponse (R05)", () => {
+    const items = buildThread(
+      rows([
+        {
+          type: "approval-requested",
+          request: "r1",
+          kind: "command",
+          title: "Bash : git push",
+          detail: { command: "git push" },
+          tool: "Bash",
+          scope: "commande git",
+        },
+        {
+          type: "approval-requested",
+          request: "r2",
+          kind: "command",
+          title: "Bash : ls",
+          detail: { command: "ls" },
+          tool: "Bash",
+        },
+        { type: "approval-answered", request: "r2", decision: "allow" },
+        { type: "question", request: "q1", text: "Lequel ?", options: ["a", "b"], questions: [] },
+        { type: "turn-completed", ok: false, interrupted: true, error: null, durationMs: 0 },
+      ]),
+    );
+    expect(items.filter((i) => i.kind === "approval")).toMatchObject([
+      { key: "r1", decision: null, cancelled: true },
+      { key: "r2", decision: "allow", cancelled: false },
+    ]);
+    expect(items.find((i) => i.kind === "question")).toMatchObject({ cancelled: true });
+  });
+
+  it("traduit les messages techniques des CLI (R05)", () => {
+    expect(
+      cliMessage("The user doesn't want to proceed with this tool use. The tool use was rejected."),
+    ).toBe("Annulé : le tour a été arrêté.");
+    expect(cliMessage("[Request interrupted by user for tool use]")).toBe(
+      "Interrompu par l'utilisateur.",
+    );
+    expect(cliMessage("Tour en échec (error_during_execution).")).toBe(
+      "Le tour s'est arrêté sur une erreur de Claude Code.",
+    );
+    expect(cliMessage("Tour en échec (error_inconnue).")).toBe("Le tour a échoué.");
+    expect(cliMessage("3 issues trouvées")).toBe("3 issues trouvées");
+    expect(cliMessage(null)).toBeNull();
   });
 
   it("reconnaît les outils de plugin dans les demandes d'accord des trois IA", () => {

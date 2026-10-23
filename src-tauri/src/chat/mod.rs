@@ -30,7 +30,7 @@ pub mod conversations;
 pub mod store;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc, Weak,
@@ -289,6 +289,9 @@ pub struct ChatService {
     rules: StdMutex<HashMap<String, SessionRules>>,
     /// Demandes en attente de chaque conversation (tour en cours), dans l'ordre.
     waiting: StdMutex<HashMap<String, Vec<(String, Waiting)>>>,
+    /// Conversations dont l'utilisateur a arrêté le tour : sa fin, même en échec côté CLI
+    /// (`error_during_execution` quand un accord attendait), est un arrêt (recette du 21/10, R05).
+    stopping: StdMutex<HashSet<String>>,
 }
 
 /// Titre d'une conversation : la première ligne du premier message, 60 caractères au plus.
@@ -325,6 +328,7 @@ impl ChatService {
             background,
             rules: StdMutex::default(),
             waiting: StdMutex::default(),
+            stopping: StdMutex::default(),
         })
     }
 
@@ -536,6 +540,7 @@ impl ChatService {
             }
         };
         turn_slot.store(turn, Ordering::SeqCst);
+        self.stopping.lock().unwrap().remove(id);
         self.set_state(id, ChatState::Running).await?;
         if let Err(err) = session.send(text).await {
             self.record(id, turn, AiEvent::Error { kind: AiErrorKind::Crash, message: err.to_string() }).await?;
@@ -759,7 +764,11 @@ impl ChatService {
     pub async fn interrupt(&self, id: &str) -> AppResult<()> {
         let session = self.live_session(id).await.filter(|s| s.is_running());
         let Some(session) = session else { return Err(AppError::Validation("Aucun tour en cours dans cette conversation.".into())) };
-        session.interrupt().await?;
+        self.stopping.lock().unwrap().insert(id.to_string());
+        if let Err(err) = session.interrupt().await {
+            self.stopping.lock().unwrap().remove(id);
+            return Err(err);
+        }
         let grace = self.config.interrupt_grace;
         tokio::spawn(async move {
             tokio::time::sleep(grace).await;
@@ -961,6 +970,16 @@ pub fn state_after_turn(ok: bool, interrupted: bool, last_message: Option<&str>)
     }
 }
 
+/// Fin d'un tour que l'utilisateur a arrêté : un échec de la CLI (refus des accords en attente,
+/// `error_during_execution`) devient un arrêt, sans message d'erreur. Un tour qui a réussi
+/// malgré tout reste réussi.
+fn stopped_turn(stopped: bool, ok: &mut bool, interrupted: &mut bool, error: &mut Option<String>) {
+    if stopped && !*ok {
+        *interrupted = true;
+        *error = None;
+    }
+}
+
 /// Enregistre et diffuse les événements d'un processus, dans l'ordre.
 async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, mut events: mpsc::UnboundedReceiver<AiEvent>) {
     // Dernier message de l'IA du tour en cours : décide de « En attente de votre réponse ».
@@ -1000,8 +1019,10 @@ async fn consume(service: Weak<ChatService>, id: String, turn: Arc<AtomicU32>, m
                 service.wait_for(&id, request, Waiting::Approval(info));
             }
             AiEvent::Question { request, .. } => service.wait_for(&id, request, Waiting::Question),
-            AiEvent::TurnCompleted { .. } => {
+            AiEvent::TurnCompleted { ok, interrupted, error, .. } => {
                 service.waiting.lock().unwrap().remove(&id);
+                let stopped = service.stopping.lock().unwrap().remove(&id);
+                stopped_turn(stopped, ok, interrupted, error);
             }
             _ => {}
         }
@@ -1126,6 +1147,22 @@ mod tests {
         assert_eq!(state_after_turn(true, false, None), ChatState::Idle);
         assert_eq!(state_after_turn(false, false, Some("On fusionne ?")), ChatState::Failed);
         assert_eq!(state_after_turn(false, true, Some("On fusionne ?")), ChatState::Interrupted);
+    }
+
+    #[test]
+    fn a_turn_stopped_by_the_user_ends_as_stopped_not_failed() {
+        // Recette du 21/10 (R05) : arrêt pendant un accord → `error_during_execution`.
+        let (mut ok, mut interrupted, mut error) = (false, false, Some("Tour en échec (error_during_execution).".to_string()));
+        stopped_turn(true, &mut ok, &mut interrupted, &mut error);
+        assert_eq!((ok, interrupted, error.as_deref()), (false, true, None));
+        assert_eq!(state_after_turn(ok, interrupted, None), ChatState::Interrupted);
+        // Sans arrêt demandé, l'échec reste un échec ; un tour réussi reste réussi.
+        let (mut ok, mut interrupted, mut error) = (false, false, Some("panne".to_string()));
+        stopped_turn(false, &mut ok, &mut interrupted, &mut error);
+        assert_eq!((ok, interrupted, error.as_deref()), (false, false, Some("panne")));
+        let (mut ok, mut interrupted, mut error) = (true, false, None);
+        stopped_turn(true, &mut ok, &mut interrupted, &mut error);
+        assert_eq!((ok, interrupted, error), (true, false, None));
     }
 
     #[test]

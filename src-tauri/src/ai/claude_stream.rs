@@ -419,7 +419,7 @@ impl ClaudeStream {
                 self.turn_error
                     .clone()
                     .or_else(|| str_at(line, "result").filter(|r| !r.is_empty()).map(str::to_string))
-                    .unwrap_or_else(|| format!("Tour en échec ({}).", str_at(line, "subtype").unwrap_or("erreur"))),
+                    .unwrap_or_else(|| turn_failure(str_at(line, "subtype")).to_string()),
             ),
             _ => None,
         };
@@ -431,6 +431,17 @@ impl ClaudeStream {
         }));
         self.turn_error = None;
         self.tools.clear();
+    }
+}
+
+/// Message en français d'un tour en échec sans texte d'erreur, d'après le `subtype` du
+/// résultat de Claude Code ; la clé technique n'est jamais montrée (recette du 21/10, R05).
+pub fn turn_failure(subtype: Option<&str>) -> &'static str {
+    match subtype {
+        Some("error_max_turns") => "Le tour s'est arrêté : nombre maximal d'étapes atteint.",
+        Some("error_max_budget_usd") => "Le tour s'est arrêté : budget maximal atteint.",
+        Some("error_during_execution") => "Le tour s'est arrêté sur une erreur de Claude Code.",
+        _ => "Le tour a échoué.",
     }
 }
 
@@ -530,6 +541,22 @@ mod tests {
         let turns: Vec<_> = events.iter().filter(|e| matches!(e, AiEvent::TurnCompleted { ok: true, interrupted: false, .. })).collect();
         assert_eq!(turns.len(), 2);
         assert!(events.iter().any(|e| matches!(e, AiEvent::Usage { output_tokens, cost_usd: Some(_), .. } if *output_tokens > 0)));
+    }
+
+    #[test]
+    fn a_failed_turn_never_shows_the_technical_subtype() {
+        let mut stream = ClaudeStream::default();
+        let line = json!({ "type": "result", "subtype": "error_during_execution", "is_error": true, "duration_ms": 10 });
+        let mut out = Vec::new();
+        stream.push_result(&line, &mut out);
+        let error = out.iter().find_map(|i| match i {
+            StreamItem::Event(AiEvent::TurnCompleted { error, .. }) => error.clone(),
+            _ => None,
+        });
+        assert_eq!(error.as_deref(), Some("Le tour s'est arrêté sur une erreur de Claude Code."));
+        assert_eq!(turn_failure(Some("error_max_turns")), "Le tour s'est arrêté : nombre maximal d'étapes atteint.");
+        assert_eq!(turn_failure(Some("autre_chose")), "Le tour a échoué.");
+        assert!(!turn_failure(None).contains('_'));
     }
 
     #[test]

@@ -170,3 +170,66 @@ describe("carte d'accord d'un outil de plugin (N12)", () => {
     expect(html).toContain("Autoriser pour la session");
   });
 });
+
+describe("ChatThread : tour arrêté pendant un accord (recette du 21/10, R05)", () => {
+  const stopped = thread([
+    { type: "user-message", text: "Développe le sprint" },
+    {
+      type: "tool-started",
+      call: "t1",
+      source: { kind: "cadence", plugin: "gestion-projet", tool: "get_repository" },
+      name: "mcp__cadence__gestion-projet__get_repository",
+      input: { repo: "o/n" },
+    },
+    {
+      type: "approval-requested",
+      request: "r1",
+      kind: "tool",
+      title: "Gestion de projet › get_repository",
+      detail: {},
+      tool: "mcp__cadence__gestion-projet__get_repository",
+      scope: "outil gestion-projet__get_repository",
+    },
+    {
+      type: "tool-completed",
+      call: "t1",
+      ok: false,
+      summary:
+        "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).",
+      output: null,
+    },
+    { type: "turn-completed", ok: false, interrupted: true, error: null, durationMs: 48000 },
+  ]);
+  const html = renderToStaticMarkup(
+    <ChatThread items={stopped} ai="Claude Code" showCommands onApprove={() => {}} />,
+  );
+
+  it("ferme la carte d'accord restée en attente (« Annulée », sans boutons)", () => {
+    expect(html).toContain("Annulée");
+    expect(html).not.toContain("Autoriser pour la session");
+    expect(html).not.toContain("Refuser");
+  });
+
+  it("dit « Tour arrêté » en français, sans le message de la CLI", () => {
+    expect(html).toContain("Tour arrêté");
+    expect(html).not.toContain("doesn&#x27;t want to proceed");
+    expect(html).not.toContain("error_during_execution");
+    expect(html).toContain("Annulé : le tour a été arrêté.");
+  });
+
+  it("un ancien tour en échec montre la clé traduite", () => {
+    const old = thread([
+      { type: "user-message", text: "x" },
+      {
+        type: "turn-completed",
+        ok: false,
+        interrupted: false,
+        error: "Tour en échec (error_during_execution).",
+        durationMs: 0,
+      },
+    ]);
+    const out = renderToStaticMarkup(<ChatThread items={old} ai="Claude Code" showCommands />);
+    expect(out).toContain("Le tour s&#x27;est arrêté sur une erreur de Claude Code.");
+    expect(out).not.toContain("error_during_execution");
+  });
+});
