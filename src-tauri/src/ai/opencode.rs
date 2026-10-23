@@ -5,7 +5,8 @@
 //! ```text
 //! opencode serve --port 0 --hostname 127.0.0.1     cwd = <données>/sessions/<id>/
 //!   env : OPENCODE_SERVER_PASSWORD (aléatoire, authentification Basic `opencode:<mot de passe>`),
-//!         OPENCODE_CONFIG_CONTENT (passerelle, permissions, consignes, skills), CADENCE_MCP_TOKEN
+//!         OPENCODE_CONFIG_CONTENT (passerelle, permissions, consignes, skills), CADENCE_MCP_TOKEN,
+//!         OPENCODE_ENABLE_QUESTION_TOOL (chat : outil `question`)
 //! POST /session { title } | GET /session/:id (reprise)
 //! POST /session/:id/prompt_async { parts } ; POST /session/:id/abort
 //! POST /permission/:id/reply { reply: once | always | reject }
@@ -100,6 +101,11 @@ impl OpencodeSession {
             .stderr(Stdio::piped());
         if let Some(token) = &launch.token {
             command.env("CADENCE_MCP_TOKEN", token.expose_secret());
+        }
+        // Outil `question` (cartes de question du chat) : OpenCode ne l'expose qu'à certains
+        // clients ; en fond, personne ne répondrait.
+        if launch.mode == SessionMode::Chat {
+            command.env("OPENCODE_ENABLE_QUESTION_TOOL", "1");
         }
         let mut child = TreeChild::spawn(command).map_err(|e| AppError::Internal(format!("OpenCode ne démarre pas : {e}")))?;
         let stdout = child.stdout().ok_or_else(|| AppError::Internal("sortie d'OpenCode absente".into()))?;

@@ -38,6 +38,12 @@ Tu travailles dans Cadence, une application de bureau qui relie l'utilisateur à
   passe par les outils des plugins pour lire ou modifier ses données.
 - Pour montrer une vue d'un plugin, écris un lien `cadence:<plugin>/<vue>?<paramètres>`
   (`cadence__plugins_info` liste les vues) ou appelle `cadence__open_view`.
+- Quand tu as besoin d'une décision ou d'une précision de l'utilisateur (choix entre des
+  options, confirmation avant une écriture), pose-la avec ton outil de questions à choix
+  (`AskUserQuestion`, `request_user_input` ou `question` selon ta CLI) : 1 à 4 questions,
+  2 à 4 choix courts chacune, une réponse libre reste possible. Cadence l'affiche comme une
+  carte de réponse ; une question écrite dans ton message n'en a pas. Garde le texte libre pour
+  une question ouverte sans choix à proposer.
 ";
 
 /// Skill d'un plugin activé, à copier dans la session.
@@ -158,7 +164,10 @@ impl SessionFiles {
 /// En « Demander », Codex décide d'après les annotations (`auto` : il demande pour un outil sans
 /// `readOnlyHint` ou `destructiveHint`, par `mcpServer/elicitation/request`) ; les outils du
 /// cœur restent pré-approuvés un par un.
-pub fn codex_config(gateway_url: Option<&str>, add_dirs: &[PathBuf], ask_tools: bool) -> serde_json::Value {
+/// `ask_tools` : mode « Demander » (outils de plugin qui écrivent demandés) ; `questions` :
+/// conversation de chat, où `request_user_input` est permis hors du mode Plan (sinon Codex ne
+/// l'expose pas et pose ses questions en texte, sans carte).
+pub fn codex_config(gateway_url: Option<&str>, add_dirs: &[PathBuf], ask_tools: bool, questions: bool) -> serde_json::Value {
     let mut config = match gateway_url {
         Some(url) => {
             let mut server = json!({
@@ -191,6 +200,9 @@ pub fn codex_config(gateway_url: Option<&str>, add_dirs: &[PathBuf], ask_tools: 
             }
         }
         config["sandbox_workspace_write"] = json!({ "writable_roots": roots });
+    }
+    if questions {
+        config["features"] = json!({ "default_mode_request_user_input": true });
     }
     config
 }
@@ -318,14 +330,17 @@ mod tests {
         assert!(!files.plugin_dir.join("skills").join("documents-absent").exists(), "skill illisible écarté");
         assert!(crate::plugins::skills::load_all(&files.plugin_dir.join("skills")).is_ok(), "skills valides pour Claude Code");
         assert!(fs::read_to_string(&files.settings).unwrap().contains("disableAllHooks"));
+        assert!(fs::read_to_string(&files.instructions).unwrap().contains("AskUserQuestion"), "consigne des questions à choix");
 
-        let codex = codex_config(Some("http://127.0.0.1:5000/mcp"), &[], false);
+        let codex = codex_config(Some("http://127.0.0.1:5000/mcp"), &[], false, false);
         assert_eq!(codex["mcp_servers"]["cadence"]["bearer_token_env_var"], "CADENCE_MCP_TOKEN");
         assert_eq!(codex["mcp_servers"]["cadence"]["default_tools_approval_mode"], "approve");
         assert!(codex["mcp_servers"]["cadence"].get("tools").is_none());
         assert!(codex.get("sandbox_workspace_write").is_none(), "aucun dossier ouvert d'office");
+        assert!(codex.get("features").is_none(), "fond : pas de question");
         // « Demander » (N12) : Codex demande pour les outils qui écrivent, pas pour ceux du cœur.
-        let asking = codex_config(Some("http://127.0.0.1:5000/mcp"), &[], true);
+        let asking = codex_config(Some("http://127.0.0.1:5000/mcp"), &[], true, true);
+        assert_eq!(asking["features"]["default_mode_request_user_input"], true, "questions à choix hors du mode Plan");
         assert_eq!(asking["mcp_servers"]["cadence"]["default_tools_approval_mode"], "auto");
         assert_eq!(asking["mcp_servers"]["cadence"]["tools"]["cadence__run_report"]["approval_mode"], "approve");
         let ask = OpencodePermissions { edit: "ask", bash: "ask", mcp: "ask" };
@@ -341,7 +356,7 @@ mod tests {
 
         // Worktree ouvert à la session : racine inscriptible (Codex), chemin autorisé (OpenCode).
         let wt = PathBuf::from("/repos/.worktrees/me/app/issue-42");
-        let codex = codex_config(None, std::slice::from_ref(&wt), false);
+        let codex = codex_config(None, std::slice::from_ref(&wt), false, false);
         assert_eq!(codex["sandbox_workspace_write"]["writable_roots"], json!([wt.display().to_string()]));
         let opencode = opencode_config(None, &files, ask, std::slice::from_ref(&wt));
         let rules = &opencode["permission"]["external_directory"];

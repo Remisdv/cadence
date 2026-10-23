@@ -281,7 +281,12 @@ impl CodexSession {
             "cwd": cwd.display().to_string(),
             "approvalPolicy": approval,
             "sandbox": sandbox,
-            "config": staging::codex_config(gateway_url, add_dirs, (permissions, mode) == (Permissions::Ask, SessionMode::Chat)),
+            "config": staging::codex_config(
+                gateway_url,
+                add_dirs,
+                (permissions, mode) == (Permissions::Ask, SessionMode::Chat),
+                mode == SessionMode::Chat,
+            ),
             "developerInstructions": staging::INSTRUCTIONS,
         });
         if let Some(model) = model {
