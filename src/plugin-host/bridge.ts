@@ -85,9 +85,19 @@ export interface HostApi {
   ): Promise<{ installed: boolean; version: string | null; authenticated: boolean | null }>;
   /**
    * Conversations ouvertes par les actions du plugin ; avec `group` (id vu par lui), celles du
-   * groupe, cachées comprises.
+   * groupe, cachées comprises ; avec `involved`, aussi celles qui ont appelé ses outils (chat
+   * global compris, cachées comprises).
    */
-  conversationsList(group: string | null): Promise<ConversationInfo[]>;
+  conversationsList(group: string | null, involved?: boolean): Promise<ConversationInfo[]>;
+  /**
+   * Boîte « Enregistrer sous » de l'OS puis écriture du texte par Cadence ; chemin choisi, ou
+   * `null` si l'utilisateur annule. Le plugin ne choisit jamais le chemin lui-même.
+   */
+  saveFile(options: {
+    name: string;
+    content: string;
+    filters: { name: string; extensions: string[] }[];
+  }): Promise<string | null>;
   /** Une conversation du plugin, sans sorties d'outils ; celle d'un autre plugin est introuvable. */
   conversationGet(id: string): Promise<ConversationDetail>;
   /** Ouvre la vue Chat sur une conversation du plugin (refusée si elle n'est pas à lui). */
@@ -132,6 +142,37 @@ export function toolValue(result: PluginToolResult): unknown {
 }
 
 type Handler = (params: Record<string, unknown>) => unknown;
+
+/** Taille maximale d'un fichier enregistré par un plugin (`saveFile`). */
+export const SAVE_MAX_CHARS = 32 * 1024 * 1024;
+
+/** `saveFile` / `files.save` : `{ name, content, filters? }` → `{ path }` (`null` si annulé). */
+export async function saveFileOf(
+  api: HostApi,
+  params: Record<string, unknown>,
+): Promise<{ path: string | null }> {
+  const name = text(params, "name");
+  const content = params.content;
+  if (typeof content !== "string")
+    throw new BridgeError("invalid_params", "« content » doit être du texte.");
+  if (content.length > SAVE_MAX_CHARS)
+    throw new BridgeError(
+      "invalid_params",
+      "Fichier trop volumineux (32 millions de caractères au plus).",
+    );
+  const filters = Array.isArray(params.filters)
+    ? (params.filters as unknown[])
+        .map(object)
+        .filter((f) => typeof f.name === "string" && Array.isArray(f.extensions))
+        .map((f) => ({
+          name: f.name as string,
+          extensions: (f.extensions as unknown[]).filter(
+            (e): e is string => typeof e === "string" && /^[A-Za-z0-9]{1,10}$/.test(e),
+          ),
+        }))
+    : [];
+  return { path: await api.saveFile({ name, content, filters }) };
+}
 
 export function createBridge({ frame, api, hello }: BridgeOptions) {
   const handlers: Record<string, Handler> = {
@@ -192,6 +233,7 @@ export function createBridge({ frame, api, hello }: BridgeOptions) {
         params.context === undefined || params.context === null ? null : object(params.context);
       return api.runAction(text(params, "id"), context, ai);
     },
+    "files.save": (params) => saveFileOf(api, params),
     "storage.get": (params) => api.storageGet(text(params, "key")) ?? null,
     "storage.set": (params) => {
       api.storageSet(text(params, "key"), params.value ?? null);

@@ -7,12 +7,13 @@
  * - événements `{ topic, data }` : `event` (backend), `run`, `route`, `theme`, `repos`,
  *   `conversations` ;
  * - méthodes `tool.call` (résultat MCP brut), `action.run`, `repos.*`, `tools.*`, `navigate`,
- *   `notify`, `openExternal`, `pickFiles`, `settings.*`, `secrets.*`, `conversations.*`.
+ *   `notify`, `openExternal`, `pickFiles`, `saveFile`, `settings.*`, `secrets.*`,
+ *   `conversations.*`.
  *
  * Le pont (`bridge.ts`) répond dans la variante de la requête reçue ; ce module ne fait que
  * traduire, sans DOM ni IPC (tout passe par `HostApi`).
  */
-import type { HostApi, NotifyKind } from "./bridge";
+import { saveFileOf, type HostApi, type NotifyKind } from "./bridge";
 import { conversationHandlers } from "./conversations";
 import { BridgeError, type HelloResult, type SdkError } from "./protocol";
 
@@ -188,6 +189,7 @@ export function publishedHandlers(
       api.openExternal(url);
       return null;
     },
+    saveFile: (params) => saveFileOf(api, params),
     pickFiles: (params) =>
       api.pickFiles({
         title: typeof params.title === "string" ? params.title : undefined,

@@ -142,7 +142,10 @@ export function hostApi(plugin: Pick<InstalledPluginView, "id" | "name">): HostA
         mode: result.mode,
       };
     },
-    conversationsList: (group) => call("plugin_conversations", { plugin: id, group }),
+    conversationsList: (group, involved) =>
+      call("plugin_conversations", { plugin: id, group, involved: involved ?? false }),
+    saveFile: ({ name, content, filters }) =>
+      call("plugin_file_save", { plugin: id, name, content, filters }),
     conversationGet: (conversation) => conversationOf(id, conversation),
     conversationOpen: async (conversation) => {
       // Vérifiée d'abord : un plugin n'ouvre que ses propres conversations.

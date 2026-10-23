@@ -24,6 +24,7 @@ import type {
   CloseReport,
   ConversationDetail,
   ConversationInfo,
+  FileFilter,
   DeviceFlowStart,
   GithubAuth,
   InstalledPluginView,
@@ -131,10 +132,18 @@ export interface Commands {
     result: ChatSessionRow[];
   };
   chat_session_get: { args: { id: string }; result: ChatSessionDetail };
-  /** Pont de l'iframe (`conversations.list`) : conversations des actions du plugin ; `group` = id vu par lui. */
+  /**
+   * Pont de l'iframe (`conversations.list`) : conversations des actions du plugin ; `group` = id
+   * vu par lui ; `involved` : aussi celles qui ont appelé ses outils (chat global, cachées).
+   */
   plugin_conversations: {
-    args: { plugin: string; group: string | null };
+    args: { plugin: string; group: string | null; involved?: boolean };
     result: ConversationInfo[];
+  };
+  /** Pont de l'iframe (`saveFile`) : boîte « Enregistrer sous », puis écriture ; `null` si annulé. */
+  plugin_file_save: {
+    args: { plugin: string; name: string; content: string; filters: FileFilter[] };
+    result: string | null;
   };
   /** Pont de l'iframe (`conversations.get`, `.open`) : sans sorties d'outils ; un autre plugin : introuvable. */
   plugin_conversation_get: { args: { plugin: string; id: string }; result: ConversationDetail };

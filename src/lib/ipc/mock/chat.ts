@@ -98,6 +98,28 @@ export function listMockChats(
 const ofPlugin = (plugin: string, row: ChatSessionRow) =>
   row.origin.startsWith(`action:${plugin}/`);
 
+/** La conversation a appelé un outil du plugin (chat global compris). */
+const usesPlugin = (plugin: string, chat: ChatSessionDetail) =>
+  chat.events.some(
+    ({ event }) =>
+      event.type === "tool-started" &&
+      event.source.kind === "cadence" &&
+      event.source.plugin === plugin,
+  );
+
+/** Entrée d'outil abrégée, comme `compact_input` côté Rust. */
+function compactInput(value: unknown): unknown {
+  if (typeof value === "string")
+    return [...value].length > 300 ? `${[...value].slice(0, 300).join("")}…` : value;
+  if (Array.isArray(value)) {
+    const out = value.slice(0, 20).map(compactInput);
+    return value.length > 20 ? [...out, `… ${value.length - 20} de plus`] : out;
+  }
+  if (value && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, compactInput(v)]));
+  return value;
+}
+
 function conversationInfo(plugin: string, chat: ChatSessionDetail): ConversationInfo {
   const row = chat.session;
   const group = localGroup(plugin, row.group);
@@ -110,7 +132,7 @@ function conversationInfo(plugin: string, chat: ChatSessionDetail): Conversation
     // Même règle que `sdk_state` côté Rust : `waiting-reply` reste invisible du SDK (API 1).
     ...sdkState(row.state),
     mode: row.mode,
-    action: row.origin.slice(`action:${plugin}/`.length),
+    ...(ofPlugin(plugin, row) ? { action: row.origin.slice(`action:${plugin}/`.length) } : {}),
     ...(context ? { context } : {}),
     ...(group ? { group } : {}),
     createdAt: row.createdAt,
@@ -124,12 +146,13 @@ export function mockConversations(
   chats: Chats,
   plugin: string,
   group: string | null,
+  involved = false,
 ): ConversationInfo[] {
   const rows = group
     ? listMockChats(chats, `${plugin}:${group}`)
-    : listMockChats(chats).filter((row) => !row.hidden);
+    : listMockChats(chats, null, involved).filter((row) => involved || !row.hidden);
   return rows
-    .filter((row) => ofPlugin(plugin, row))
+    .filter((row) => ofPlugin(plugin, row) || (involved && usesPlugin(plugin, chats.get(row.id)!)))
     .map((row) => conversationInfo(plugin, chats.get(row.id)!));
 }
 
@@ -140,22 +163,100 @@ export function mockConversation(
   id: string,
 ): ConversationDetail | null {
   const chat = chats.get(id);
-  if (!chat || !ofPlugin(plugin, chat.session)) return null;
+  if (!chat || !(ofPlugin(plugin, chat.session) || usesPlugin(plugin, chat))) return null;
   const names = new Map<string, string>();
   const detail: ConversationDetail = {
     info: conversationInfo(plugin, chat),
     messages: [],
     tools: [],
+    timeline: [],
   };
+  const timeline = detail.timeline;
+  const open = new Map<string, number>();
   for (const { event, at } of chat.events) {
-    if (event.type === "user-message") detail.messages.push({ role: "user", text: event.text, at });
-    else if (event.type === "message-completed" && event.text.trim())
+    if (event.type === "user-message") {
+      detail.messages.push({ role: "user", text: event.text, at });
+      timeline.push({ kind: "message", role: "user", text: event.text, at });
+    } else if (event.type === "message-completed" && event.text.trim()) {
       detail.messages.push({ role: "assistant", text: event.text, at });
-    else if (event.type === "tool-started") names.set(event.call, event.name);
-    else if (event.type === "tool-completed")
+      timeline.push({ kind: "message", role: "assistant", text: event.text, at });
+    } else if (event.type === "tool-started") {
+      names.set(event.call, event.name);
+      const owner = event.source.kind === "cadence" ? event.source.plugin : undefined;
+      const shown =
+        event.source.kind === "builtin" || owner === plugin || owner === "cadence"
+          ? { input: compactInput(event.input) }
+          : {};
+      open.set(event.call, timeline.length);
+      timeline.push({
+        kind: "tool",
+        name: event.name,
+        ...(owner ? { plugin: owner } : {}),
+        ...shown,
+        at,
+      });
+    } else if (event.type === "tool-completed") {
       detail.tools.push({ name: names.get(event.call) ?? "outil", ok: event.ok, at });
-    else if (event.type === "command" && event.exitCode !== null)
-      detail.tools.push({ name: "shell", ok: event.exitCode === 0, at });
+      const entry = timeline[open.get(event.call) ?? -1];
+      if (entry?.kind === "tool") entry.ok = event.ok;
+    } else if (event.type === "command") {
+      if (event.exitCode !== null)
+        detail.tools.push({ name: "shell", ok: event.exitCode === 0, at });
+      const entry = timeline[open.get(event.call) ?? -1];
+      if (entry?.kind === "command") {
+        if (event.exitCode !== null) entry.exitCode = event.exitCode;
+      } else {
+        open.set(event.call, timeline.length);
+        timeline.push({
+          kind: "command",
+          command: event.command,
+          ...(event.exitCode !== null ? { exitCode: event.exitCode } : {}),
+          at,
+        });
+      }
+    } else if (event.type === "question") {
+      open.set(event.request, timeline.length);
+      timeline.push({
+        kind: "question",
+        questions: (event.questions.length
+          ? event.questions
+          : [
+              {
+                question: event.text,
+                header: null,
+                options: event.options.map((label) => ({ label })),
+              },
+            ]
+        ).map((q) => ({
+          ...(q.header ? { header: q.header } : {}),
+          question: q.question,
+          options: q.options.map((o) => o.label),
+        })),
+        at,
+      });
+    } else if (event.type === "question-answered") {
+      const entry = timeline[open.get(event.request) ?? -1];
+      if (entry?.kind === "question") entry.answer = event.answer;
+    } else if (event.type === "approval-requested") {
+      open.set(event.request, timeline.length);
+      timeline.push({ kind: "approval", title: event.title, at });
+    } else if (event.type === "approval-answered") {
+      const entry = timeline[open.get(event.request) ?? -1];
+      if (entry?.kind === "approval") entry.decision = event.decision;
+    } else if (event.type === "file-changed")
+      timeline.push({ kind: "file", path: event.path, change: event.change, at });
+    else if (event.type === "report")
+      timeline.push({ kind: "report", text: event.text, isFinal: event.isFinal, at });
+    else if (event.type === "error") timeline.push({ kind: "error", message: event.message, at });
+    else if (event.type === "turn-completed")
+      timeline.push({
+        kind: "turn",
+        ok: event.ok,
+        interrupted: event.interrupted,
+        ...(event.error ? { error: event.error } : {}),
+        durationMs: event.durationMs,
+        at,
+      });
     else if (event.type === "usage") {
       const usage = (detail.usage ??= { inputTokens: 0, outputTokens: 0 });
       usage.inputTokens += event.inputTokens;

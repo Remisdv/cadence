@@ -32,14 +32,16 @@ pub async fn chat_sessions(state: State<'_, AppState>, group: Option<String>, al
 }
 
 /// Pont de l'iframe (`conversations.list`) : conversations ouvertes par les actions du plugin,
-/// celles d'un de ses groupes avec `group` (id vu par le plugin).
+/// celles d'un de ses groupes avec `group` (id vu par le plugin) ; avec `involved`, aussi celles
+/// qui ont appelé un de ses outils (chat global compris, cachées comprises).
 #[tauri::command]
 pub async fn plugin_conversations(
     state: State<'_, AppState>,
     plugin: String,
     group: Option<String>,
+    involved: Option<bool>,
 ) -> AppResult<Vec<ConversationInfo>> {
-    chat(&state)?.conversations(&plugin, group.as_deref()).await
+    chat(&state)?.conversations(&plugin, group.as_deref(), involved.unwrap_or(false)).await
 }
 
 /// Pont de l'iframe (`conversations.get`, `conversations.open`) : une conversation du plugin,

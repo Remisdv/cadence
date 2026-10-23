@@ -114,6 +114,9 @@ pub struct SessionFilter<'a> {
     pub group: Option<&'a str>,
     /// Sans `group` : les conversations cachées aussi (recherche du chat, demandes en attente).
     pub hidden: bool,
+    /// Avec `plugin` : aussi les conversations (du chat global compris) qui ont appelé un outil
+    /// de ce plugin.
+    pub involved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -283,17 +286,35 @@ impl ChatStore {
             "SELECT s.*, (SELECT COALESCE(MAX(e.turn), 0) FROM events e WHERE e.session_id = s.id) AS turns
              FROM sessions s
              WHERE (CASE WHEN ?1 IS NULL THEN (?3 = 1 OR s.hidden = 0) ELSE s.group_id = ?1 END)
-               AND (?2 IS NULL OR substr(s.origin, 1, length(?2)) = ?2)
+               AND (?2 IS NULL OR substr(s.origin, 1, length(?2)) = ?2
+                    OR (?4 = 1 AND EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id
+                        AND json_extract(e.event, '$.type') = 'tool-started'
+                        AND json_extract(e.event, '$.source.plugin') = ?5)))
              ORDER BY s.updated_at DESC, s.created_at DESC",
         )
         .bind(filter.group)
         .bind(prefix)
         .bind(filter.hidden)
+        .bind(filter.involved)
+        .bind(filter.plugin)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
             .map(|row| Ok((Self::row(row)?, u32::try_from(row.try_get::<i64, _>("turns")?).unwrap_or(u32::MAX))))
             .collect()
+    }
+
+    /// La conversation a appelé au moins un outil de ce plugin.
+    pub async fn uses_plugin(&self, id: &str, plugin: &str) -> AppResult<bool> {
+        let found: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM events WHERE session_id = ? AND json_extract(event, '$.type') = 'tool-started'
+               AND json_extract(event, '$.source.plugin') = ? LIMIT 1",
+        )
+        .bind(id)
+        .bind(plugin)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(found.is_some())
     }
 
     /// Nombre de tours d'une conversation.
@@ -469,10 +490,28 @@ mod tests {
         let plugin = SessionFilter { plugin: Some("gestion-projet"), ..SessionFilter::default() };
         assert_eq!(ids(store.list(plugin).await.unwrap()), ["sans-groupe", "visible"]);
         // Isolation : le groupe d'un autre plugin, même demandé, reste vide pour ce plugin.
-        let foreign = SessionFilter { plugin: Some("gestion-projet"), group: Some("documents:sprint:o/n:3"), hidden: false };
+        let foreign = SessionFilter { plugin: Some("gestion-projet"), group: Some("documents:sprint:o/n:3"), ..SessionFilter::default() };
         assert!(store.list(foreign).await.unwrap().is_empty());
-        let documents = SessionFilter { plugin: Some("documents"), group: Some("gestion-projet:sprint:o/n:3"), hidden: false };
+        let documents = SessionFilter { plugin: Some("documents"), group: Some("gestion-projet:sprint:o/n:3"), ..SessionFilter::default() };
         assert!(store.list(documents).await.unwrap().is_empty());
+
+        // Conversation du chat global qui a appelé un outil du plugin : seulement avec `involved`.
+        store
+            .append("libre", 1, &AiEvent::ToolStarted {
+                call: "t".into(),
+                source: crate::ai::events::ToolSource::Cadence { plugin: "gestion-projet".into(), tool: "list_issues".into() },
+                name: "mcp__cadence__gestion-projet__list_issues".into(),
+                input: serde_json::json!({ "repo": "o/n" }),
+            })
+            .await
+            .unwrap();
+        assert_eq!(ids(store.list(plugin).await.unwrap()), ["sans-groupe", "visible"], "sans `involved`, inchangé");
+        let involved = SessionFilter { plugin: Some("gestion-projet"), hidden: true, involved: true, ..SessionFilter::default() };
+        assert_eq!(ids(store.list(involved).await.unwrap()), ["cachee", "libre", "sans-groupe", "visible"]);
+        assert!(store.uses_plugin("libre", "gestion-projet").await.unwrap());
+        assert!(!store.uses_plugin("libre", "documents").await.unwrap() && !store.uses_plugin("visible", "gestion-projet").await.unwrap());
+        let docs = SessionFilter { plugin: Some("documents"), hidden: true, involved: true, ..SessionFilter::default() };
+        assert_eq!(ids(store.list(docs).await.unwrap()), ["autre"]);
 
         let with_turns = store.list_with_turns(group).await.unwrap();
         let cachee = with_turns.iter().find(|(r, _)| r.id == "cachee").unwrap();

@@ -80,6 +80,8 @@ export type { ChatSessionRow } from "./bindings/ChatSessionRow";
 export type { ChatGroup } from "./bindings/ChatGroup";
 export type { ConversationInfo } from "./bindings/ConversationInfo";
 export type { ConversationDetail } from "./bindings/ConversationDetail";
+export type { ConversationEntry } from "./bindings/ConversationEntry";
+export type { FileFilter } from "./bindings/FileFilter";
 export type { ConversationMessage } from "./bindings/ConversationMessage";
 export type { ConversationRole } from "./bindings/ConversationRole";
 export type { ConversationTool } from "./bindings/ConversationTool";

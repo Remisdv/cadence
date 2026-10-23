@@ -36,6 +36,7 @@ function setup(overrides: Partial<HostApi> = {}) {
     ),
     toolStatus: vi.fn(async () => ({ installed: true, version: "2.47.1", authenticated: null })),
     conversationsList: vi.fn(async () => []),
+    saveFile: vi.fn(async ({ name }: { name: string }) => `C:/Users/moi/${name}`),
     conversationGet: vi.fn(async () => {
       throw new Error("absente");
     }),
@@ -258,6 +259,37 @@ describe("pont de l'iframe", () => {
       selection: { kind: "one", repo: "RemiSDV/cadence" },
     });
     expect((await reposChange(api, [], null)).selection).toEqual({ kind: "all" });
+  });
+
+  it("enregistre un fichier par la boîte de l'OS (saveFile) et liste les conversations impliquées", async () => {
+    const { bridge, sent, frame, api } = setup();
+    const ask = async (id: string, method: string, params: unknown) => {
+      await bridge.handle({
+        source: frame,
+        data: { channel: "cadence", api: 1, kind: "request", id, method, params },
+      });
+      return sent.find((m) => (m as unknown as { id?: string }).id === id) as unknown;
+    };
+    expect(
+      await ask("f", "saveFile", {
+        name: "rapport.html",
+        content: "<html></html>",
+        filters: [{ name: "Page HTML", extensions: ["html", "../x"] }, { nom: "bad" }],
+      }),
+    ).toMatchObject({ ok: true, result: { path: "C:/Users/moi/rapport.html" } });
+    expect(api.saveFile).toHaveBeenCalledWith({
+      name: "rapport.html",
+      content: "<html></html>",
+      filters: [{ name: "Page HTML", extensions: ["html"] }],
+    });
+    expect(await ask("g", "saveFile", { name: "x.json", content: 3 })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+    await ask("l", "conversations.list", { involved: true });
+    expect(api.conversationsList).toHaveBeenLastCalledWith(null, true);
+    await ask("m", "conversations.list", {});
+    expect(api.conversationsList).toHaveBeenLastCalledWith(null, false);
   });
 
   it("fusionne les réglages et pousse les événements", async () => {

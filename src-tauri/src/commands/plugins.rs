@@ -351,3 +351,68 @@ pub async fn plugin_restart(state: State<'_, AppState>, plugin: String) -> AppRe
     }
     state.plugin_host.restart(&plugin).await
 }
+
+/// Filtre de la boîte d'enregistrement (`saveFile` du SDK).
+#[derive(Debug, Clone, serde::Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FileFilter {
+    pub name: String,
+    pub extensions: Vec<String>,
+}
+
+/// Taille maximale d'un fichier enregistré par un plugin (texte : rapport HTML, JSON).
+const SAVE_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// Nom de fichier proposé, sans dossier ni caractère interdit sous Windows.
+pub fn safe_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    let cleaned: String = base
+        .chars()
+        .map(|c| if c.is_control() || "<>:\"|?*".contains(c) { '_' } else { c })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.');
+    if trimmed.is_empty() { "export.txt".into() } else { trimmed.chars().take(120).collect() }
+}
+
+/// Pont de l'iframe (`saveFile`) : boîte « Enregistrer sous » de l'OS, puis écriture du texte
+/// par Cadence. Le plugin ne choisit jamais le chemin lui-même ; `None` si l'utilisateur annule.
+#[tauri::command]
+pub async fn plugin_file_save(
+    app: AppHandle,
+    plugin: String,
+    name: String,
+    content: String,
+    filters: Vec<FileFilter>,
+) -> AppResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    if content.len() > SAVE_MAX_BYTES {
+        return Err(AppError::Validation("Fichier trop volumineux (64 Mo au plus).".into()));
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().file().set_title(format!("Enregistrer · {plugin}")).set_file_name(safe_file_name(&name));
+    for filter in &filters {
+        let extensions: Vec<&str> = filter.extensions.iter().map(String::as_str).collect();
+        dialog = dialog.add_filter(&filter.name, &extensions);
+    }
+    dialog.save_file(move |path| {
+        let _ = tx.send(path);
+    });
+    let Some(path) = rx.await.ok().flatten() else { return Ok(None) };
+    let path = path.into_path().map_err(|e| AppError::Internal(format!("Chemin d'enregistrement illisible : {e}")))?;
+    tokio::fs::write(&path, content.as_bytes()).await?;
+    Ok(Some(path.display().to_string()))
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::safe_file_name;
+
+    #[test]
+    fn proposes_a_safe_file_name() {
+        assert_eq!(safe_file_name("rapport 2026-10.html"), "rapport 2026-10.html");
+        assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(safe_file_name("C:\\Windows\\a:b?.html"), "a_b_.html");
+        assert_eq!(safe_file_name(" .. "), "export.txt");
+    }
+}

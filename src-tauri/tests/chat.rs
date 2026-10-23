@@ -526,17 +526,19 @@ async fn keeps_group_conversations_out_of_the_global_chat_and_inside_their_plugi
     assert!(all.contains(&sprint) && all.contains(&free), "toutes sur demande (recherche du chat)");
     assert!(f.chat.detail(&sprint).await.is_ok(), "elle s'ouvre quand même dans le chat");
 
-    let listed = f.chat.conversations("gestion-projet", Some("sprint:o/n:3")).await.unwrap();
+    let listed = f.chat.conversations("gestion-projet", Some("sprint:o/n:3"), false).await.unwrap();
     assert_eq!(listed.len(), 1);
     let info = &listed[0];
     assert_eq!((info.id.as_str(), info.turns, info.state), (sprint.as_str(), 1, ChatState::Idle));
     assert_eq!(info.action.as_deref(), Some("developper-issue"));
     assert_eq!(info.group.as_ref().map(|g| (g.id.as_str(), g.label.as_str())), Some(("sprint:o/n:3", "Sprint 3 · o/n")));
     assert_eq!(info.context.as_ref().and_then(|c| c.get("issue")), Some(&serde_json::json!(42)));
-    assert!(f.chat.conversations("gestion-projet", None).await.unwrap().is_empty(), "sans groupe : pas les cachées");
+    assert!(f.chat.conversations("gestion-projet", None, false).await.unwrap().is_empty(), "sans groupe : pas les cachées");
+    let involved: Vec<String> = f.chat.conversations("gestion-projet", None, true).await.unwrap().into_iter().map(|c| c.id).collect();
+    assert_eq!(involved, std::slice::from_ref(&sprint), "`involved` : cachées comprises, pas le chat libre sans outil du plugin");
 
     // Isolation : un autre plugin ne voit ni le groupe ni la conversation.
-    assert!(f.chat.conversations("documents", Some("sprint:o/n:3")).await.unwrap().is_empty());
+    assert!(f.chat.conversations("documents", Some("sprint:o/n:3"), false).await.unwrap().is_empty());
     assert!(f.chat.conversation("documents", &sprint).await.is_err());
     assert!(f.chat.conversation("gestion-projet", &free).await.is_err(), "conversation libre : pas au plugin");
 

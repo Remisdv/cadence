@@ -12,7 +12,7 @@ use ts_rs::TS;
 
 use super::store::{ChatEventRow, ChatGroup, ChatMode, ChatSessionRow, ChatState, origin_action};
 use crate::{
-    ai::events::AiEvent,
+    ai::events::{AiEvent, ApprovalDecision, FileChange, ToolSource},
     app_settings::AiId,
     error::{AppError, AppResult},
 };
@@ -134,6 +134,81 @@ pub struct ConversationUsage {
     pub output_tokens: u32,
 }
 
+/// Question posée par l'IA dans la chronologie (sans les descriptions des choix).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConversationQuestion {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub header: Option<String>,
+    pub question: String,
+    pub options: Vec<String>,
+}
+
+/// Élément de la chronologie d'une conversation (`conversations.get`, champ `timeline`) : ce
+/// qui s'est passé, dans l'ordre, pour un compte rendu exact. Les sorties d'outils et de
+/// commandes n'y sont jamais ; les entrées d'outils sont abrégées (`compact_input`).
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum ConversationEntry {
+    Message { role: ConversationRole, text: String, at: String },
+    /// Outil appelé : `plugin` pour un outil servi par Cadence (`cadence` pour ceux du cœur),
+    /// `ok` absent tant qu'il n'a pas rendu son résultat.
+    Tool {
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        plugin: Option<String>,
+        /// Entrée abrégée ; absente pour l'outil d'un autre plugin.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional, type = "unknown")]
+        input: Option<Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        ok: Option<bool>,
+        at: String,
+    },
+    Command {
+        command: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        exit_code: Option<i32>,
+        at: String,
+    },
+    File { path: String, change: FileChange, at: String },
+    /// Questions à choix de l'IA et la réponse donnée (absente sans réponse).
+    Question {
+        questions: Vec<ConversationQuestion>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        answer: Option<String>,
+        at: String,
+    },
+    /// Demande d'accord de la CLI et la décision (absente sans réponse).
+    Approval {
+        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        decision: Option<ApprovalDecision>,
+        at: String,
+    },
+    /// Rapport d'une exécution de fond.
+    Report { text: String, is_final: bool, at: String },
+    Error { message: String, at: String },
+    /// Fin d'un tour.
+    Turn {
+        ok: bool,
+        interrupted: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        error: Option<String>,
+        duration_ms: u32,
+        at: String,
+    },
+}
+
 /// Réponse de `conversations.get` : de quoi exporter la conversation plus tard.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -145,40 +220,141 @@ pub struct ConversationDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub usage: Option<ConversationUsage>,
+    /// Chronologie complète (messages, questions et réponses, accords, outils et leurs entrées
+    /// abrégées, commandes, fichiers, rapports, tours), sans aucune sortie.
+    pub timeline: Vec<ConversationEntry>,
+}
+
+/// Longueur gardée d'un texte dans l'entrée abrégée d'un outil.
+const INPUT_TEXT_MAX: usize = 300;
+/// Éléments gardés d'une liste dans l'entrée abrégée d'un outil.
+const INPUT_LIST_MAX: usize = 20;
+
+/// Entrée d'outil abrégée pour la chronologie : textes de plus de 300 caractères coupés,
+/// listes de plus de 20 éléments tronquées (le contenu d'un fichier écrit ne sort pas entier).
+pub fn compact_input(value: &Value) -> Value {
+    match value {
+        Value::String(text) if text.chars().count() > INPUT_TEXT_MAX => {
+            Value::String(format!("{}…", text.chars().take(INPUT_TEXT_MAX).collect::<String>()))
+        }
+        Value::Array(items) => {
+            let mut out: Vec<Value> = items.iter().take(INPUT_LIST_MAX).map(compact_input).collect();
+            if items.len() > INPUT_LIST_MAX {
+                out.push(Value::String(format!("… {} de plus", items.len() - INPUT_LIST_MAX)));
+            }
+            Value::Array(out)
+        }
+        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), compact_input(v))).collect()),
+        other => other.clone(),
+    }
 }
 
 /// Nom donné aux commandes shell de la CLI dans la liste des outils.
 pub const SHELL_TOOL: &str = "shell";
 
 impl ConversationDetail {
-    /// Messages complets et outils (nom, issue) ; jamais les entrées ni les sorties d'outils.
-    pub fn of(info: ConversationInfo, events: &[ChatEventRow]) -> Self {
+    /// Messages complets, outils (nom, issue) et chronologie vue par `plugin` : les entrées des
+    /// outils d'un autre plugin n'y sont pas ; jamais aucune sortie d'outil ni de commande.
+    pub fn of(plugin: &str, info: ConversationInfo, events: &[ChatEventRow]) -> Self {
         let mut messages = Vec::new();
         let mut tools = Vec::new();
+        let mut timeline: Vec<ConversationEntry> = Vec::new();
         let mut names: HashMap<&str, &str> = HashMap::new();
+        // Position dans la chronologie des entrées complétées plus tard (outil, commande,
+        // question, accord).
+        let mut open: HashMap<&str, usize> = HashMap::new();
         let mut usage: Option<ConversationUsage> = None;
         for row in events {
+            let at = || row.at.clone();
             match &row.event {
                 AiEvent::UserMessage { text } => {
-                    messages.push(ConversationMessage { role: ConversationRole::User, text: text.clone(), at: row.at.clone() })
+                    messages.push(ConversationMessage { role: ConversationRole::User, text: text.clone(), at: at() });
+                    timeline.push(ConversationEntry::Message { role: ConversationRole::User, text: text.clone(), at: at() });
                 }
-                AiEvent::MessageCompleted { text, .. } if !text.trim().is_empty() => messages.push(ConversationMessage {
-                    role: ConversationRole::Assistant,
-                    text: text.clone(),
-                    at: row.at.clone(),
-                }),
-                AiEvent::ToolStarted { call, name, .. } => {
+                AiEvent::MessageCompleted { text, .. } if !text.trim().is_empty() => {
+                    messages.push(ConversationMessage { role: ConversationRole::Assistant, text: text.clone(), at: at() });
+                    timeline.push(ConversationEntry::Message { role: ConversationRole::Assistant, text: text.clone(), at: at() });
+                }
+                AiEvent::ToolStarted { call, name, source, input } => {
                     names.insert(call, name);
+                    let (owner, shown) = match source {
+                        ToolSource::Cadence { plugin: owner, .. } => {
+                            let mine = owner == plugin || owner == "cadence";
+                            (Some(owner.clone()), mine.then(|| compact_input(input)))
+                        }
+                        ToolSource::OtherMcp { .. } => (None, None),
+                        ToolSource::Builtin => (None, Some(compact_input(input))),
+                    };
+                    open.insert(call, timeline.len());
+                    timeline.push(ConversationEntry::Tool { name: name.clone(), plugin: owner, input: shown, ok: None, at: at() });
                 }
-                AiEvent::ToolCompleted { call, ok, .. } => tools.push(ConversationTool {
-                    name: names.get(call.as_str()).map(|n| n.to_string()).unwrap_or_else(|| "outil".into()),
-                    ok: *ok,
-                    at: row.at.clone(),
-                }),
+                AiEvent::ToolCompleted { call, ok, .. } => {
+                    tools.push(ConversationTool {
+                        name: names.get(call.as_str()).map(|n| n.to_string()).unwrap_or_else(|| "outil".into()),
+                        ok: *ok,
+                        at: at(),
+                    });
+                    if let Some(ConversationEntry::Tool { ok: done, .. }) = open.get(call.as_str()).and_then(|i| timeline.get_mut(*i)) {
+                        *done = Some(*ok);
+                    }
+                }
                 // Une commande est réémise à sa fin, avec son code de sortie.
-                AiEvent::Command { exit_code: Some(code), .. } => {
-                    tools.push(ConversationTool { name: SHELL_TOOL.into(), ok: *code == 0, at: row.at.clone() })
+                AiEvent::Command { call, command, exit_code, .. } => {
+                    if let Some(code) = exit_code {
+                        tools.push(ConversationTool { name: SHELL_TOOL.into(), ok: *code == 0, at: at() });
+                    }
+                    match open.get(call.as_str()).and_then(|i| timeline.get_mut(*i)) {
+                        Some(ConversationEntry::Command { exit_code: done, .. }) => *done = *exit_code,
+                        _ => {
+                            open.insert(call, timeline.len());
+                            timeline.push(ConversationEntry::Command { command: command.clone(), exit_code: *exit_code, at: at() });
+                        }
+                    }
                 }
+                AiEvent::FileChanged { path, change } => {
+                    timeline.push(ConversationEntry::File { path: path.clone(), change: *change, at: at() })
+                }
+                AiEvent::Question { request, text, options, questions } => {
+                    let questions = if questions.is_empty() {
+                        vec![ConversationQuestion { header: None, question: text.clone(), options: options.clone() }]
+                    } else {
+                        questions
+                            .iter()
+                            .map(|q| ConversationQuestion {
+                                header: q.header.clone(),
+                                question: q.question.clone(),
+                                options: q.options.iter().map(|o| o.label.clone()).collect(),
+                            })
+                            .collect()
+                    };
+                    open.insert(request, timeline.len());
+                    timeline.push(ConversationEntry::Question { questions, answer: None, at: at() });
+                }
+                AiEvent::QuestionAnswered { request, answer, .. } => {
+                    if let Some(ConversationEntry::Question { answer: given, .. }) = open.get(request.as_str()).and_then(|i| timeline.get_mut(*i)) {
+                        *given = Some(answer.clone());
+                    }
+                }
+                AiEvent::ApprovalRequested { request, title, .. } => {
+                    open.insert(request, timeline.len());
+                    timeline.push(ConversationEntry::Approval { title: title.clone(), decision: None, at: at() });
+                }
+                AiEvent::ApprovalAnswered { request, decision } => {
+                    if let Some(ConversationEntry::Approval { decision: given, .. }) = open.get(request.as_str()).and_then(|i| timeline.get_mut(*i)) {
+                        *given = Some(*decision);
+                    }
+                }
+                AiEvent::Report { text, is_final, .. } => {
+                    timeline.push(ConversationEntry::Report { text: text.clone(), is_final: *is_final, at: at() })
+                }
+                AiEvent::Error { message, .. } => timeline.push(ConversationEntry::Error { message: message.clone(), at: at() }),
+                AiEvent::TurnCompleted { ok, interrupted, error, duration_ms } => timeline.push(ConversationEntry::Turn {
+                    ok: *ok,
+                    interrupted: *interrupted,
+                    error: error.clone(),
+                    duration_ms: *duration_ms,
+                    at: at(),
+                }),
                 AiEvent::Usage { input_tokens, output_tokens, .. } => {
                     let total = usage.get_or_insert(ConversationUsage { input_tokens: 0, output_tokens: 0 });
                     total.input_tokens = total.input_tokens.saturating_add(*input_tokens).min(SDK_MAX);
@@ -187,7 +363,7 @@ impl ConversationDetail {
                 _ => {}
             }
         }
-        Self { info, messages, tools, usage }
+        Self { info, messages, tools, usage, timeline }
     }
 }
 
@@ -305,7 +481,7 @@ mod tests {
             row("t8", AiEvent::Usage { input_tokens: u32::MAX, output_tokens: 10, cost_usd: None }),
             row("t9", AiEvent::Usage { input_tokens: 5, output_tokens: 20, cost_usd: Some(0.1) }),
         ];
-        let detail = ConversationDetail::of(info, &events);
+        let detail = ConversationDetail::of("gestion-projet", info, &events);
         assert_eq!(detail.messages.len(), 2);
         assert_eq!(detail.messages[1].text, long, "texte complet");
         assert_eq!(detail.messages[1].role, ConversationRole::Assistant);
@@ -318,8 +494,80 @@ mod tests {
         );
         assert_eq!(detail.usage, Some(ConversationUsage { input_tokens: i32::MAX as u32, output_tokens: 30 }));
         let json = serde_json::to_string(&detail).unwrap();
-        assert!(!json.contains("sortie privée") && !json.contains("secret.rs") && !json.contains("FAIL"), "pas de sortie d'outil");
+        assert!(!json.contains("sortie privée") && !json.contains("résumé") && !json.contains("FAIL"), "pas de sortie d'outil");
+        // Chronologie : l'entrée des outils (abrégée), la commande et son code, sans sortie.
+        assert_eq!(detail.timeline.len(), 4, "{:#?}", detail.timeline);
+        assert!(matches!(&detail.timeline[1], ConversationEntry::Tool { name, input: Some(input), ok: Some(true), .. }
+            if name == "Read" && input["file_path"] == "secret.rs"));
+        assert!(matches!(&detail.timeline[2], ConversationEntry::Command { command, exit_code: Some(1), at } if command == "cargo test" && at == "t4"));
+        assert!(matches!(&detail.timeline[3], ConversationEntry::Message { role: ConversationRole::Assistant, .. }));
         assert!(json.contains("\"inputTokens\"") && json.contains("\"createdAt\"") && json.contains("\"role\":\"user\""));
         assert!(!json.contains("gestion-projet:sprint"), "le préfixe de l'hôte ne sort pas");
+    }
+
+    #[test]
+    fn timeline_tells_what_happened_without_outputs() {
+        let session = ChatSessionRow {
+            id: "c2".into(),
+            title: "Bilan du sprint".into(),
+            ai: AiId::Codex,
+            model: None,
+            origin: "user".into(),
+            mode: ChatMode::Chat,
+            permissions: Permissions::Ask,
+            state: ChatState::Idle,
+            created_at: "t0".into(),
+            updated_at: "t9".into(),
+            group: None,
+            hidden: false,
+            context: None,
+        };
+        let info = ConversationInfo::of("gestion-projet", &session, 1);
+        assert_eq!(info.action, None, "conversation du chat global");
+        let plugin_tool = |call: &str, plugin: &str, input: Value| AiEvent::ToolStarted {
+            call: call.into(),
+            source: ToolSource::Cadence { plugin: plugin.into(), tool: "x".into() },
+            name: format!("{plugin}__x"),
+            input,
+        };
+        let question = crate::ai::events::AiQuestion {
+            id: "Fusionner ?".into(),
+            header: Some("Fusion".into()),
+            question: "Fusionner ?".into(),
+            options: vec![crate::ai::events::QuestionOption { label: "Oui".into(), description: Some("détail".into()) }],
+            multi_select: false,
+            other: true,
+        };
+        let events = vec![
+            row("t1", plugin_tool("a", "gestion-projet", json!({ "repo": "o/n", "body": "y".repeat(1000), "labels": (0..30).collect::<Vec<_>>() }))),
+            row("t2", plugin_tool("b", "documents", json!({ "note": "privée" }))),
+            row("t3", AiEvent::question("q1".into(), vec![question])),
+            row("t4", AiEvent::QuestionAnswered { request: "q1".into(), answer: "Oui".into(), answers: vec![] }),
+            row("t5", AiEvent::ApprovalRequested {
+                request: "r1".into(),
+                kind: crate::ai::events::ApprovalKind::Command,
+                title: "Bash : git push".into(),
+                detail: json!({}),
+                tool: None,
+                scope: None,
+            }),
+            row("t6", AiEvent::ApprovalAnswered { request: "r1".into(), decision: ApprovalDecision::Deny }),
+            row("t7", AiEvent::FileChanged { path: "src/a.rs".into(), change: FileChange::Modified }),
+            row("t8", AiEvent::Error { kind: crate::ai::events::AiErrorKind::Quota, message: "Limite atteinte".into() }),
+            row("t9", AiEvent::TurnCompleted { ok: false, interrupted: false, error: Some("Limite".into()), duration_ms: 1200 }),
+        ];
+        let detail = ConversationDetail::of("gestion-projet", info, &events);
+        let ConversationEntry::Tool { input: Some(input), plugin, ok: None, .. } = &detail.timeline[0] else { panic!("{:?}", detail.timeline[0]) };
+        assert_eq!(plugin.as_deref(), Some("gestion-projet"));
+        assert_eq!(input["body"].as_str().unwrap().chars().count(), 301, "texte abrégé");
+        assert_eq!(input["labels"].as_array().unwrap().len(), 21, "liste abrégée");
+        assert!(matches!(&detail.timeline[1], ConversationEntry::Tool { input: None, plugin: Some(p), .. } if p == "documents"), "entrée d'un autre plugin cachée");
+        assert!(matches!(&detail.timeline[2], ConversationEntry::Question { questions, answer: Some(a), at }
+            if questions[0].options == ["Oui"] && questions[0].header.as_deref() == Some("Fusion") && a == "Oui" && at == "t3"));
+        assert!(matches!(&detail.timeline[3], ConversationEntry::Approval { decision: Some(ApprovalDecision::Deny), .. }));
+        assert!(matches!(&detail.timeline[6], ConversationEntry::Turn { ok: false, duration_ms: 1200, .. }));
+        let json = serde_json::to_string(&detail).unwrap();
+        assert!(!json.contains("privée") && !json.contains("détail"), "{json}");
+        assert!(json.contains("\"kind\":\"question\"") && json.contains("\"durationMs\":1200"), "{json}");
     }
 }

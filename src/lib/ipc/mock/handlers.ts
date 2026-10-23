@@ -500,7 +500,9 @@ const handlers: Handlers = {
     return null;
   },
   chat_sessions: ({ group, all }) => listMockChats(state.chats, group ?? null, all ?? false),
-  plugin_conversations: ({ plugin, group }) => mockConversations(state.chats, plugin, group),
+  plugin_conversations: ({ plugin, group, involved }) =>
+    mockConversations(state.chats, plugin, group, involved ?? false),
+  plugin_file_save: ({ name }) => `C:/Users/moi/Documents/${name}`,
   plugin_conversation_get: ({ plugin, id }) =>
     mockConversation(state.chats, plugin, id) ??
     fail("plugin_conversation_get", `Conversation « ${id} » introuvable.`),

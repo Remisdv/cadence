@@ -335,14 +335,16 @@ impl ChatService {
     /// Conversations du chat global ; avec `group` (id préfixé), celles du groupe, cachées
     /// comprises ; avec `hidden`, toutes (recherche du chat, demandes en attente).
     pub async fn sessions(&self, group: Option<&str>, hidden: bool) -> AppResult<Vec<ChatSessionRow>> {
-        self.store.list(SessionFilter { plugin: None, group, hidden }).await
+        self.store.list(SessionFilter { plugin: None, group, hidden, involved: false }).await
     }
 
     /// Conversations ouvertes par les actions d'un plugin (`conversations.list` du SDK) ; `group`
-    /// est l'id vu par le plugin.
-    pub async fn conversations(&self, plugin: &str, group: Option<&str>) -> AppResult<Vec<ConversationInfo>> {
+    /// est l'id vu par le plugin. `involved` : aussi celles, du chat global ou d'un groupe caché,
+    /// qui ont appelé un outil du plugin (export d'un compte rendu complet).
+    pub async fn conversations(&self, plugin: &str, group: Option<&str>, involved: bool) -> AppResult<Vec<ConversationInfo>> {
         let scoped = group.map(|g| ChatGroup::scoped_id(plugin, g));
-        let rows = self.store.list_with_turns(SessionFilter { plugin: Some(plugin), group: scoped.as_deref(), hidden: false }).await?;
+        let filter = SessionFilter { plugin: Some(plugin), group: scoped.as_deref(), hidden: involved, involved };
+        let rows = self.store.list_with_turns(filter).await?;
         Ok(rows.into_iter().map(|(row, turns)| ConversationInfo::of(plugin, &row, turns)).collect())
     }
 
@@ -351,13 +353,19 @@ impl ChatService {
     pub async fn conversation(&self, plugin: &str, id: &str) -> AppResult<ConversationDetail> {
         let row = self.plugin_session(plugin, id).await?;
         let turns = self.store.turns(id).await?;
-        Ok(ConversationDetail::of(ConversationInfo::of(plugin, &row, turns), &self.store.events(id).await?))
+        Ok(ConversationDetail::of(plugin, ConversationInfo::of(plugin, &row, turns), &self.store.events(id).await?))
     }
 
-    /// Conversation ouverte par une action de ce plugin, sinon « introuvable ».
+    /// Conversation ouverte par une action de ce plugin, ou qui a appelé un de ses outils ;
+    /// sinon « introuvable ».
     pub async fn plugin_session(&self, plugin: &str, id: &str) -> AppResult<ChatSessionRow> {
-        let row = self.store.get(id).await.ok().filter(|row| origin_action(&row.origin).is_some_and(|(p, _)| p == plugin));
-        row.ok_or_else(|| AppError::Validation(format!("Conversation « {id} » introuvable.")))
+        let missing = || AppError::Validation(format!("Conversation « {id} » introuvable."));
+        let row = self.store.get(id).await.map_err(|_| missing())?;
+        if origin_action(&row.origin).is_some_and(|(p, _)| p == plugin) || self.store.uses_plugin(id, plugin).await? {
+            Ok(row)
+        } else {
+            Err(missing())
+        }
     }
 
     pub async fn detail(&self, id: &str) -> AppResult<ChatSessionDetail> {

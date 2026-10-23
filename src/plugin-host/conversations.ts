@@ -1,7 +1,8 @@
 /**
  * Méthodes `conversations.*` du SDK (les deux variantes du protocole) : un plugin lit les
  * conversations que ses actions ont ouvertes, regroupées au besoin (un sprint), et en ouvre une
- * dans la vue Chat. L'`HostApi` est liée au plugin : il ne voit que ses conversations et ses
+ * dans la vue Chat. Avec `involved`, la liste comprend aussi les conversations du chat global
+ * qui ont appelé ses outils ; `conversations.get` en rend la chronologie (`timeline`). L'`HostApi` est liée au plugin : il ne voit que ses conversations et ses
  * groupes (l'hôte préfixe les ids de groupe par l'id du plugin).
  *
  * L'événement `conversations` `{ id, group?, state, waiting? }` part à chaque création ou
@@ -33,10 +34,12 @@ export function conversationHandlers(api: HostApi): Record<string, Handler> {
   return {
     "conversations.list": (params) => {
       const group = params.group;
-      if (group === undefined || group === null) return api.conversationsList(null);
+      // `involved` : aussi les conversations qui ont appelé les outils du plugin (export).
+      const involved = params.involved === true;
+      if (group === undefined || group === null) return api.conversationsList(null, involved);
       if (typeof group !== "string" || !GROUP_ID.test(group))
         throw new BridgeError("invalid_params", "« group » n'est pas un id de groupe valide.");
-      return api.conversationsList(group);
+      return api.conversationsList(group, involved);
     },
     "conversations.get": (params) => api.conversationGet(id(params)),
     "conversations.open": async (params) => {

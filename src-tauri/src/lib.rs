@@ -217,6 +217,7 @@ pub fn run() {
             commands::plugins::plugin_status,
             commands::plugins::plugin_restart,
             commands::plugins::plugin_call,
+            commands::plugins::plugin_file_save,
             commands::plugins::catalog_get,
             commands::plugins::plugin_install,
             commands::plugins::plugin_update,
