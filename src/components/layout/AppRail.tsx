@@ -8,7 +8,7 @@ import { PluginTile } from "@/components/domain/PluginTile";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/cn";
 import { aiLabels, aiRailState } from "@/lib/domain/ai";
-import { awaitsUser } from "@/lib/domain/chat";
+import { pluginApprovals, railWaiting, waitingSummary } from "@/lib/domain/chat";
 import { toolOfAi } from "@/lib/domain/tools";
 import { homeView, pluginCategories, railGroups } from "@/lib/domain/plugins";
 import { useAppSettings, useChatSessions, usePlugins, useTools } from "@/lib/query/queries";
@@ -36,8 +36,10 @@ export function AppRail() {
   const navigate = useNavigation((s) => s.navigate);
   const plugins = usePlugins().data ?? [];
   const active = railKey(view);
-  // Une conversation (même rangée dans un sprint) attend un accord ou une réponse.
-  const waiting = (useChatSessions().data ?? []).filter((s) => awaitsUser(s.state));
+  // Conversations du chat global qui attendent une réponse ou un accord ; celles d'un groupe
+  // (un sprint) n'y comptent jamais : un accord en attente s'y signale sur la tuile du plugin.
+  const sessions = useChatSessions().data ?? [];
+  const waiting = railWaiting(sessions);
 
   const openPlugin = (p: InstalledPluginView) => {
     const home = homeView(p);
@@ -62,18 +64,16 @@ export function AppRail() {
       <div className="flex min-h-0 w-14 grow [scrollbar-width:none] flex-col items-center gap-1 overflow-y-auto">
         <RailButton
           label="Chat"
-          detail={
-            waiting.length > 0
-              ? `${waiting.length} conversation${waiting.length > 1 ? "s attendent" : " attend"} votre réponse`
-              : "Chat global · tous les plugins"
-          }
+          detail={waitingSummary(waiting)}
           active={active === "chat"}
           onClick={() =>
             navigate(
-              waiting.length === 1 ? { id: "chat", session: waiting[0]!.id } : { id: "chat" },
+              waiting.sessions.length === 1
+                ? { id: "chat", session: waiting.sessions[0]!.id }
+                : { id: "chat" },
             )
           }
-          dot={waiting.length > 0 ? "amber" : undefined}
+          dot={waiting.sessions.length > 0 ? "amber" : undefined}
         >
           <Icon name="chat" size={19} />
         </RailButton>
@@ -81,18 +81,21 @@ export function AppRail() {
         {railGroups(plugins).map((group) => (
           <div key={group.category} className="flex flex-col items-center gap-1">
             <RailCategory label={group.label} />
-            {group.plugins.map((p) => (
-              <RailButton
-                key={p.id}
-                label={p.name}
-                detail={pluginDetail(p)}
-                active={active === `plugin:${p.id}`}
-                onClick={() => openPlugin(p)}
-                dot={p.status === "needs-setup" ? "amber" : undefined}
-              >
-                <PluginTile color={p.color} icon={p.railIcon} />
-              </RailButton>
-            ))}
+            {group.plugins.map((p) => {
+              const approvals = pluginApprovals(sessions, p.id).length;
+              return (
+                <RailButton
+                  key={p.id}
+                  label={p.name}
+                  detail={pluginDetail(p, approvals)}
+                  active={active === `plugin:${p.id}`}
+                  onClick={() => openPlugin(p)}
+                  dot={p.status === "needs-setup" || approvals > 0 ? "amber" : undefined}
+                >
+                  <PluginTile color={p.color} icon={p.railIcon} />
+                </RailButton>
+              );
+            })}
           </div>
         ))}
       </div>
@@ -121,9 +124,11 @@ export function AppRail() {
   );
 }
 
-function pluginDetail(p: InstalledPluginView): string {
+function pluginDetail(p: InstalledPluginView, approvals = 0): string {
   const category = pluginCategories[p.category].label;
   if (p.status === "needs-setup") return `${category} · à configurer`;
+  if (approvals > 0)
+    return `${category} · ${approvals > 1 ? `${approvals} conversations attendent` : "1 conversation attend"} votre accord`;
   if (p.source === "dev") return `${category} · mode développement`;
   return category;
 }

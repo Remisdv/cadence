@@ -3,9 +3,9 @@
  * jour avec leur puce de contexte (« Global · tous les plugins », ou le plugin d'où une action
  * l'a ouverte), nouvelle conversation.
  *
- * Les conversations rattachées à un groupe (un sprint) restent dans la vue de leur plugin ; la
- * colonne ne les montre (section « Rattachées ») que si elles sont ouvertes, attendent votre
- * réponse ou répondent à la recherche.
+ * Les conversations rattachées à un groupe (un sprint) restent dans la vue de leur plugin, même
+ * en attente ; la colonne ne les montre (section « Rattachées ») que si elles sont ouvertes ou
+ * répondent à la recherche.
  */
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/icons/Icon";

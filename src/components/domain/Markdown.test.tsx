@@ -29,7 +29,9 @@ describe("Markdown", () => {
     );
     expect(out).not.toContain("break-all");
     // Défilement horizontal du tableau, cellules coupées entre les mots seulement.
-    expect(out).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table class="[^"]*wrap-break-word/);
+    expect(out).toMatch(
+      /<div class="[^"]*overflow-x-auto[^"]*"><table class="[^"]*wrap-break-word/,
+    );
     const heads = [...out.matchAll(/<th class="([^"]*)">/g)].map((m) => m[1]);
     expect(heads).toHaveLength(3);
     for (const c of heads) expect(c).toContain("whitespace-nowrap");

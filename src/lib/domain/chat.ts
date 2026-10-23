@@ -392,8 +392,9 @@ type BarRow = Pick<
 
 /**
  * Sections de la colonne du chat. Les conversations rattachées à un groupe (un sprint) restent
- * hors de la liste, sauf celle ouverte, celles qui attendent votre réponse et, pendant une
- * recherche, celles qui correspondent (titre ou nom du groupe) : section « Rattachées », en tête.
+ * hors de la liste, même en attente (recette du 21/10, R06 : celle d'un sprint clos y restait
+ * indéfiniment), sauf celle ouverte et, pendant une recherche, celles qui correspondent (titre
+ * ou nom du groupe) : section « Rattachées », en tête.
  */
 export function chatBarSections<T extends BarRow>(
   rows: T[],
@@ -404,9 +405,7 @@ export function chatBarSections<T extends BarRow>(
   const q = query.trim().toLowerCase();
   const matches = (s: T) =>
     !q || s.title.toLowerCase().includes(q) || !!s.group?.label.toLowerCase().includes(q);
-  const attached = rows.filter(
-    (s) => s.hidden && (q ? matches(s) : s.id === active || awaitsUser(s.state)),
-  );
+  const attached = rows.filter((s) => s.hidden && (q ? matches(s) : s.id === active));
   const listed = globalConversations(rows).filter(matches);
   const chats = listed.filter((s) => s.mode !== "background");
   return [
@@ -467,6 +466,55 @@ export function composeAnswer(question: AiQuestion, picked: string[], other: str
  */
 export function awaitsUser(state: ChatState): boolean {
   return state === "waiting-approval" || state === "waiting-reply";
+}
+
+/** Conversations du chat global qui attendent l'utilisateur, par type d'attente. */
+export interface WaitingCount<T> {
+  reply: number;
+  approval: number;
+  sessions: T[];
+}
+
+/**
+ * Attentes que signale l'entrée Chat du rail : seulement les conversations du chat global. Une
+ * conversation de groupe (un sprint) ne compte jamais, même après la clôture du sprint
+ * (recette du 21/10, R06) : sa vue la montre, et un accord en attente s'y signale sur la tuile
+ * du plugin (`pluginApprovals`).
+ */
+export function railWaiting<T extends Pick<ChatSessionRow, "hidden" | "state">>(
+  rows: T[],
+): WaitingCount<T> {
+  const sessions = globalConversations(rows).filter((s) => awaitsUser(s.state));
+  const reply = sessions.filter((s) => s.state === "waiting-reply").length;
+  return { reply, approval: sessions.length - reply, sessions };
+}
+
+/**
+ * Infobulle de l'entrée Chat : réponses et accords comptés à part (recette du 21/10, R04 :
+ * « 2 conversations attendent votre réponse » alors que l'une attendait un accord).
+ */
+export function waitingSummary({ reply, approval }: { reply: number; approval: number }): string {
+  const total = reply + approval;
+  if (total === 0) return "Chat global · tous les plugins";
+  const verb = total > 1 ? `${total} conversations attendent` : "1 conversation attend";
+  if (approval === 0) return `${verb} votre réponse`;
+  if (reply === 0) return `${verb} votre accord`;
+  const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? "s" : ""}`;
+  return `${verb} votre action · ${plural(reply, "réponse")}, ${plural(approval, "accord")}`;
+}
+
+/**
+ * Conversations de groupe d'un plugin bloquées sur un accord (un tour en cours attend) : la
+ * tuile du plugin le signale. Une réponse attendue (tour fini sur une question) n'y maintient
+ * aucune alerte : la vue du plugin la montre, et le groupe peut être clos (sprint terminé).
+ */
+export function pluginApprovals<T extends Pick<ChatSessionRow, "hidden" | "group" | "state">>(
+  rows: T[],
+  plugin: string,
+): T[] {
+  return rows.filter(
+    (s) => s.hidden && s.state === "waiting-approval" && !!s.group?.id.startsWith(`${plugin}:`),
+  );
 }
 
 /** Libellé court d'un état qui attend l'utilisateur (infobulles, pastilles). */

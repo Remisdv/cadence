@@ -19,9 +19,12 @@ import {
   localGroup,
   originPlugin,
   parseCadenceLink,
+  pluginApprovals,
   pluginToolOf,
+  railWaiting,
   toolLabel,
   waitingLabel,
+  waitingSummary,
 } from "./chat";
 
 const rows = (events: AiEvent[]): ChatEventRow[] =>
@@ -338,15 +341,14 @@ describe("colonne du chat et barre du plugin (recette du 21/10)", () => {
   const titles = (sections: ReturnType<typeof chatBarSections<ChatSessionRow>>) =>
     sections.map((s) => `${s.title}: ${s.rows.map((r) => r.id).join(", ")}`);
 
-  it("garde les conversations de sprint hors de la liste, sauf ouverte ou en attente", () => {
+  it("garde les conversations de sprint hors de la liste, même en attente, sauf ouverte (R06)", () => {
     expect(titles(chatBarSections(all, "", null, now))).toEqual([
-      "Rattachées: Développer le sprint",
       "En fond: fond",
       "Aujourd'hui: libre",
     ]);
     const opened = chatBarSections(all, "", "Relire et valider", now);
     expect(opened[0]!.attached).toBe(true);
-    expect(opened[0]!.rows.map((r) => r.id)).toEqual(["Relire et valider", "Développer le sprint"]);
+    expect(opened[0]!.rows.map((r) => r.id)).toEqual(["Relire et valider"]);
   });
 
   it("la recherche trouve les conversations de sprint par titre ou nom du sprint (P18)", () => {
@@ -405,25 +407,63 @@ describe("attente de l'utilisateur (N10) et outils de plugin (N12)", () => {
     expect(waitingLabel("running")).toBeNull();
   });
 
-  it("une conversation de sprint qui attend une réponse remonte dans « Rattachées »", () => {
-    const base = {
-      ai: "claude-code" as const,
-      model: null,
-      mode: "chat" as const,
-      permissions: "ask" as const,
-      createdAt: "2026-10-21T09:00:00",
-      updatedAt: "2026-10-21T09:00:00",
-      group: { id: "gestion-projet:sprint:1", label: "Sprint 1" },
+  const base = {
+    ai: "claude-code" as const,
+    model: null,
+    mode: "chat" as const,
+    permissions: "ask" as const,
+    createdAt: "2026-10-21T09:00:00",
+    updatedAt: "2026-10-21T09:00:00",
+    group: null,
+    hidden: false,
+    origin: "user",
+    title: "",
+    state: "idle" as ChatSessionRow["state"],
+  };
+  const sprintGroup = { id: "gestion-projet:sprint:1", label: "Sprint 1" };
+
+  it("une conversation de sprint en attente ne remonte ni dans la liste ni au rail (R06)", () => {
+    const relire = {
+      ...base,
+      id: "relire",
+      title: "Relire et valider",
+      group: sprintGroup,
       hidden: true,
       origin: "action:gestion-projet/relire-valider",
+      state: "waiting-reply" as const,
     };
-    const sections = chatBarSections(
-      [{ ...base, id: "relire", title: "Relire et valider", state: "waiting-reply" }],
-      "",
-      null,
-      new Date("2026-10-21T12:00:00"),
+    expect(chatBarSections([relire], "", null, new Date("2026-10-21T12:00:00"))).toEqual([]);
+    expect(railWaiting([relire])).toEqual({ reply: 0, approval: 0, sessions: [] });
+    // Une réponse attendue (sprint clos ou non) n'allume pas non plus la tuile du plugin.
+    expect(pluginApprovals([relire], "gestion-projet")).toEqual([]);
+    // Un accord en attente (tour bloqué) s'y signale, pour son plugin seulement.
+    const developper = { ...relire, id: "dev", state: "waiting-approval" as const };
+    expect(railWaiting([developper]).sessions).toEqual([]);
+    expect(pluginApprovals([developper], "gestion-projet").map((s) => s.id)).toEqual(["dev"]);
+    expect(pluginApprovals([developper], "documents")).toEqual([]);
+    expect(pluginApprovals([{ ...developper, hidden: false }], "gestion-projet")).toEqual([]);
+  });
+
+  it("le rail compte à part les réponses et les accords attendus (R04)", () => {
+    const rows = [
+      { ...base, id: "a", state: "waiting-reply" as const },
+      { ...base, id: "b", state: "waiting-approval" as const },
+      { ...base, id: "c", state: "running" as const },
+    ];
+    const waiting = railWaiting(rows);
+    expect(waiting).toMatchObject({ reply: 1, approval: 1 });
+    expect(waiting.sessions.map((s) => s.id)).toEqual(["a", "b"]);
+    expect(waitingSummary(waiting)).toBe(
+      "2 conversations attendent votre action · 1 réponse, 1 accord",
     );
-    expect(sections[0]!.rows.map((r) => r.id)).toEqual(["relire"]);
+    expect(waitingSummary({ reply: 2, approval: 3 })).toBe(
+      "5 conversations attendent votre action · 2 réponses, 3 accords",
+    );
+    expect(waitingSummary({ reply: 1, approval: 0 })).toBe("1 conversation attend votre réponse");
+    expect(waitingSummary({ reply: 0, approval: 2 })).toBe(
+      "2 conversations attendent votre accord",
+    );
+    expect(waitingSummary({ reply: 0, approval: 0 })).toBe("Chat global · tous les plugins");
   });
 
   it("reconnaît les outils de plugin dans les demandes d'accord des trois IA", () => {
