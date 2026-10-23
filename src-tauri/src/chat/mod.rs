@@ -927,14 +927,34 @@ pub fn plugin_tool_title(plugin: &str, tool: &str, detail: &serde_json::Value) -
     if args.is_empty() { format!("{plugin} › {tool}") } else { format!("{plugin} › {tool} · {}", args.join(", ")) }
 }
 
-/// Formules qui invitent l'utilisateur à répondre, cherchées dans le dernier paragraphe.
-const REPLY_CUES: &[&str] = &[
+/// Débuts de phrase qui invitent l'utilisateur à répondre (impératifs).
+const REPLY_OPENERS: &[&str] = &[
     "réponds",
     "répondez",
+    "confirme",
+    "confirmez",
+    "dis-moi",
+    "dites-moi",
+    "indique-moi",
+    "indiquez-moi",
+    "précise-moi",
+    "précisez-moi",
+    "choisis",
+    "choisissez",
+    "reply",
+    "confirm",
+    "tell me",
+    "let me know",
+];
+
+/// Formules qui invitent l'utilisateur à répondre, où qu'elles soient dans la phrase.
+const REPLY_CUES: &[&str] = &[
     "dis-moi",
     "dites-moi",
     "confirme-moi",
-    "confirmez",
+    "confirmez-moi",
+    "réponds-moi",
+    "répondez-moi",
     "j'attends ta",
     "j'attends votre",
     "veux-tu",
@@ -942,21 +962,119 @@ const REPLY_CUES: &[&str] = &[
     "souhaites-tu",
     "souhaitez-vous",
     "let me know",
-    "reply",
     "please confirm",
+    "please reply",
 ];
 
-/// Le dernier message de l'IA attend une réponse (recette du 21/10, N10) : son dernier
-/// paragraphe se termine par une question, ou demande explicitement une réponse
-/// (« Réponds **oui** pour que je fusionne. »). Mise en forme Markdown ignorée.
+/// Phrases d'attente qui suivent souvent la question (« Je reste en attente. ») : elles ne
+/// comptent pas comme la fin du message.
+const WAITING_FILLERS: &[&str] = &[
+    "en attente",
+    "j'attends",
+    "je t'attends",
+    "je vous attends",
+    "à toi de voir",
+    "à toi de jouer",
+    "à vous de voir",
+    "je m'arrête là",
+    "je n'avance pas",
+    "je ne touche à rien",
+    "waiting for",
+    "i'll wait",
+];
+
+/// Débuts d'une phrase qui répond à la question précédente : celle-ci était rhétorique
+/// (« Pourquoi squash ? Parce que c'est le réglage du plugin. »).
+const ANSWER_OPENERS: &[&str] =
+    &["parce que", "parce qu'", "car ", "c'est", "oui", "non", "simplement", "réponse", "because", "it's", "yes", "no "];
+
+/// Ponctuation et mise en forme qui peuvent suivre la fin d'une phrase.
+fn is_closer(c: char) -> bool {
+    matches!(c, '*' | '_' | '`' | ')' | ']' | '»' | '"' | '\'' | '”' | '’')
+}
+
+/// Phrases d'un paragraphe, coupées après `.`, `!`, `?` ou `…` suivis d'un blanc (ou de la
+/// fin), ponctuation fermante comprise ; les retours à la ligne comptent comme des blancs.
+fn sentences(paragraph: &str) -> Vec<String> {
+    let chars: Vec<char> = paragraph.chars().collect();
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        current.push(if c == '\n' { ' ' } else { c });
+        i += 1;
+        if matches!(c, '.' | '!' | '?' | '…') {
+            while i < chars.len() && is_closer(chars[i]) {
+                current.push(chars[i]);
+                i += 1;
+            }
+            if i >= chars.len() || chars[i].is_whitespace() {
+                out.push(std::mem::take(&mut current));
+            }
+        }
+    }
+    out.push(current);
+    out.into_iter().map(|s| s.trim().to_string()).filter(|s| s.chars().any(char::is_alphanumeric)).collect()
+}
+
+/// Phrase en minuscules, sans mise en forme ni ponctuation de tête (puces, émojis).
+fn plain(sentence: &str) -> String {
+    let lower = sentence.to_lowercase().replace(['*', '`'], "").replace('’', "'");
+    lower.trim_start_matches(|c: char| !c.is_alphanumeric()).to_string()
+}
+
+fn is_question(sentence: &str) -> bool {
+    sentence.trim_end_matches(|c: char| c.is_whitespace() || is_closer(c) || c == '…').ends_with('?')
+}
+
+fn invites_reply(sentence: &str) -> bool {
+    let s = plain(sentence);
+    REPLY_OPENERS.iter().any(|o| s.starts_with(o)) || REPLY_CUES.iter().any(|cue| s.contains(cue))
+}
+
+fn is_filler(sentence: &str) -> bool {
+    let s = plain(sentence);
+    !is_question(sentence) && WAITING_FILLERS.iter().any(|f| s.contains(f))
+}
+
+/// Phrases de fin d'un paragraphe, phrases d'attente finales mises à part.
+fn without_fillers(paragraph: &[String]) -> Vec<&String> {
+    let mut tail: Vec<&String> = paragraph.iter().collect();
+    while tail.last().is_some_and(|s| is_filler(s)) {
+        tail.pop();
+    }
+    tail
+}
+
+/// Le dernier message de l'IA attend une réponse (recette du 21/10, N10). On lit les
+/// dernières phrases du dernier paragraphe :
+/// - l'une des trois dernières invite à répondre (« Réponds **oui** pour que je fusionne. »,
+///   « Dis-moi si… », « Confirme… ») ;
+/// - ou, phrases d'attente finales mises à part (« Je reste en attente. »), la dernière est
+///   une question, ou l'avant-dernière si la dernière n'y répond pas (« … comme décrit ?
+///   Aucune des deux n'est refusée. »). Un paragraphe fait seulement de phrases d'attente
+///   renvoie au précédent.
+///
+/// Une question plus haut dans un long compte rendu final ne compte pas.
 pub fn awaits_reply(text: &str) -> bool {
-    let last = text.rsplit("\n\n").map(str::trim).find(|p| !p.is_empty()).unwrap_or_default();
-    let ending = last.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '*' | '_' | '`' | ')' | '»' | '"' | '\'' | '…'));
-    if ending.ends_with('?') {
+    let paragraphs: Vec<Vec<String>> = text.split("\n\n").map(sentences).filter(|p| !p.is_empty()).collect();
+    let Some(last) = paragraphs.last() else { return false };
+    if last.iter().rev().take(3).any(|s| invites_reply(s)) {
         return true;
     }
-    let lower = last.to_lowercase().replace(['*', '_', '`'], "");
-    REPLY_CUES.iter().any(|cue| lower.contains(cue))
+    let mut tail = without_fillers(last);
+    if tail.is_empty() && paragraphs.len() > 1 {
+        tail = without_fillers(&paragraphs[paragraphs.len() - 2]);
+    }
+    match tail.as_slice() {
+        [.., last] if is_question(last) => true,
+        [.., question, after] => {
+            let after = plain(after);
+            is_question(question) && !ANSWER_OPENERS.iter().any(|o| after.starts_with(o))
+        }
+        _ => false,
+    }
 }
 
 /// État d'une conversation à la fin d'un tour : `WaitingReply` quand le tour réussi finit
@@ -1147,6 +1265,35 @@ mod tests {
         assert_eq!(state_after_turn(true, false, None), ChatState::Idle);
         assert_eq!(state_after_turn(false, false, Some("On fusionne ?")), ChatState::Failed);
         assert_eq!(state_after_turn(false, true, Some("On fusionne ?")), ChatState::Interrupted);
+    }
+
+    #[test]
+    fn a_question_followed_by_a_sentence_still_waits_for_a_reply() {
+        // Recette du 21/10 (N10, partiel) : la question n'est pas la dernière phrase.
+        for text in [
+            "Les deux PR sont prêtes, veux-tu que je fusionne ? Je reste en attente.",
+            "Revue faite.\n\nJe valide et fusionne les deux tâches ✅ (squash — réglage par défaut du plugin —, branche supprimée, issue fermée), en commençant par #28, puis en résolvant le conflit de #29 comme décrit ? Aucune des deux n'est refusée, donc pas de demande de changements à envoyer.",
+            "Tout est prêt. On fusionne #28 maintenant ?\n\nJ'attends ton feu vert.",
+            "Les tests passent. Dis-moi si je peux fusionner, ou s'il faut reprendre #29.",
+            "PR ouvertes.\n\nConfirme le périmètre et je lance le développement.",
+            "Je m'arrête ici. Quelle option préfères-tu (A ou B) ? Je n'avance pas sans ta réponse.",
+            "Deux pistes possibles. Laquelle ?\n\n*Je reste en attente.*",
+            "Done. Should I merge both? I'll wait for your answer.",
+        ] {
+            assert!(awaits_reply(text), "{text}");
+        }
+        for text in [
+            // Question rhétorique au milieu d'un long compte rendu final.
+            "Sprint livré.\n\nJ'ai fusionné #28 puis #29. Pourquoi en squash ? Le plugin le règle ainsi. Le conflit sur saluer() est réglé. Les branches sont supprimées et les issues fermées. Tout est dans release/0.3.0.",
+            "Pourquoi squash ? Parce que c'est le réglage du plugin.",
+            "Fusion faite. Qui l'eût cru ? C'est passé du premier coup.",
+            "Je confirme que les 14 tests passent. Les deux PR sont fusionnées.",
+            "Le serveur répond bien. Rien d'autre à signaler.",
+            "Les deux PR sont fusionnées.\n\nJe reste disponible.",
+        ] {
+            assert!(!awaits_reply(text), "{text}");
+        }
+        assert_eq!(sentences("A ou B ?) Fin. release/0.3.0 ok"), ["A ou B ?)", "Fin.", "release/0.3.0 ok"]);
     }
 
     #[test]
