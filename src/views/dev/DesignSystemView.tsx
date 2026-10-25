@@ -39,6 +39,7 @@ import { MOCK_QUESTIONS } from "@/lib/ipc/mock/chat";
 import { AiCard } from "@/components/domain/AiCard";
 import { CommandBox } from "@/components/domain/CommandBox";
 import { ToolsTable } from "@/components/domain/ToolsTable";
+import { RepoPicker } from "@/components/domain/RepoPicker";
 import { TypeBadge, VersionBadge } from "@/components/domain/Badges";
 import { Burndown } from "@/components/domain/Burndown";
 import { DiffViewer, TextDiff } from "@/components/domain/Diff";
@@ -478,6 +479,17 @@ export default function DesignSystemView() {
             <Avatar initials="RL" size={24} />
             <Avatar initials="MB" size={21} tone="neutral" />
             <Avatar initials="CD" size={26} tone="neutral" />
+          </Row>
+        </Section>
+
+        <Section title="Dépôt d'un plugin (recherche, récents, création)">
+          <Row className="items-start">
+            <div className="w-[360px] overflow-hidden rounded-card border border-line2 bg-panel">
+              <RepoPicker
+                plugin="gestion-projet"
+                footer="Le plugin affiche le dépôt choisi ; les récents restent suivis en fond."
+              />
+            </div>
           </Row>
         </Section>
 

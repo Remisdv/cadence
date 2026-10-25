@@ -109,24 +109,28 @@ function text(params: Record<string, unknown>, key: string): string {
 const TOOL_NAME = /^[a-z0-9_]{1,40}$/;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 
-/** Dépôt suivi tel que le SDK publié le décrit. */
+/** Dépôt (récent ou courant) tel que le SDK publié le décrit. */
 export function repoInfo(fullName: string, localPath: string | null = null) {
   const [owner, name] = fullName.split("/") as [string, string];
   return { fullName, owner, name, url: `https://github.com/${fullName}`, localPath };
 }
 
-/** Dépôts suivis avec leur clone local (`localPath`), s'il existe déjà. */
+/** Dépôts récents avec leur clone local (`localPath`), s'il existe déjà. */
 async function repoInfos(api: HostApi, repos: string[]) {
   const paths = await api.reposLocalPaths().catch(() => ({}) as Record<string, string>);
   return repos.map((repo) => repoInfo(repo, paths[repo.toLowerCase()] ?? null));
 }
 
-/** Sélecteur de la barre du plugin, tel que le SDK publié le décrit. */
+/**
+ * Dépôt courant du plugin, tel que le SDK publié le décrit. Il n'y a plus de vue « tous les
+ * dépôts » : `all` ne reste que pour « aucun dépôt ouvert » (pas encore de récent), forme que
+ * les SDK d'avant `repos.select` comprennent.
+ */
 function selectionOf(repo: string | null) {
   return repo ? { kind: "one" as const, repo } : { kind: "all" as const };
 }
 
-/** Charge de l'événement `repos` du SDK publié : dépôts suivis et sélection de la barre. */
+/** Charge de l'événement `repos` du SDK publié : dépôts récents et dépôt courant. */
 export async function reposChange(api: HostApi, repos: string[], selection: string | null) {
   return { repos: await repoInfos(api, repos), selection: selectionOf(selection) };
 }
@@ -214,6 +218,14 @@ export function publishedHandlers(
     "secrets.has": (params) => api.secretHas(text(params, "id")),
     "repos.list": async () => repoInfos(api, await api.reposList()),
     "repos.selection": async () => selectionOf(await api.reposSelection()),
+    "repos.select": async (params) => {
+      const repo = text(params, "repo")
+        .trim()
+        .replace(/\.git$/, "");
+      if (!REPO.test(repo))
+        throw new BridgeError("invalid_params", `Dépôt invalide : « ${repo} ».`);
+      return selectionOf(await api.reposSelect(repo));
+    },
     "repos.follow": async (params) => {
       const repo = text(params, "repo");
       if (!REPO.test(repo))

@@ -112,7 +112,10 @@ impl AppState {
         };
         let tracked: env::TrackedRepos = {
             let settings = settings.clone();
-            Arc::new(move |plugin: &str| settings.get().tracked_repos.get(plugin).cloned().unwrap_or_default())
+            Arc::new(move |plugin: &str| {
+                let s = settings.get();
+                (s.tracked_repos.get(plugin).cloned().unwrap_or_default(), s.repo_selection.get(plugin).cloned())
+            })
         };
         let host_paths = HostPaths {
             data_root: data_dir.join("plugins-data"),

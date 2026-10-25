@@ -247,6 +247,7 @@ pub fn run() {
             commands::project::project_open,
             commands::project::project_owners,
             commands::project::project_create,
+            commands::project::repo_create,
             commands::versions::versions_list,
             commands::versions::version_current,
             commands::versions::version_detail,

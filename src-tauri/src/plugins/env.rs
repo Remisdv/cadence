@@ -11,7 +11,8 @@
 //! | `CADENCE_LOG` | `info` |
 //! | `CADENCE_TOOLS` | outils détectés : `{ "git": "<chemin>", … }` (JSON, chemins personnalisés compris) |
 //! | `CADENCE_GITHUB_TOKEN` | service `repos` : jeton GitHub du service, s'il est connecté |
-//! | `CADENCE_REPOS` | service `repos` : dépôts suivis par le plugin (`["owner/nom", …]`) |
+//! | `CADENCE_REPOS` | service `repos` : dépôts récents du plugin (`["owner/nom", …]`, le plus récent d'abord) |
+//! | `CADENCE_REPO` | service `repos` : dépôt courant du plugin (`owner/nom`), absent si aucun |
 //!
 //! L'environnement hérité est filtré : seules passent les variables système utiles (chemins,
 //! dossiers de l'utilisateur, langue, proxys). Les jetons des IA (`ANTHROPIC_API_KEY`…) et
@@ -104,8 +105,9 @@ pub struct LaunchSpec {
 /// Outils détectés sur la machine (`CADENCE_TOOLS`), relus à chaque lancement de serveur.
 pub type ToolPaths = Arc<dyn Fn() -> BTreeMap<String, String> + Send + Sync>;
 
-/// Dépôts suivis par un plugin (`CADENCE_REPOS`), relus à chaque lancement de serveur.
-pub type TrackedRepos = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+/// Dépôts récents et dépôt courant d'un plugin (`CADENCE_REPOS`, `CADENCE_REPO`), relus à chaque
+/// lancement de serveur.
+pub type TrackedRepos = Arc<dyn Fn(&str) -> (Vec<String>, Option<String>) + Send + Sync>;
 
 /// Entrée du trousseau qui garde le jeton GitHub du service `repos`.
 pub const GITHUB_ACCOUNT: &str = "github";
@@ -215,8 +217,11 @@ pub fn launch_spec(
         env.push(("CADENCE_TOOLS".to_string(), serde_json::to_string(&tools()).unwrap_or_default()));
     }
     if m.services.contains(&manifest::PluginService::Repos) {
-        let repos = paths.repos.as_ref().map(|r| r(plugin)).unwrap_or_default();
+        let (repos, current) = paths.repos.as_ref().map(|r| r(plugin)).unwrap_or_default();
         env.push(("CADENCE_REPOS".to_string(), serde_json::to_string(&repos).unwrap_or_default()));
+        if let Some(current) = current {
+            env.push(("CADENCE_REPO".to_string(), current));
+        }
         if let Some(token) = secret_store.get(GITHUB_ACCOUNT)? {
             secrets.push(("CADENCE_GITHUB_TOKEN".to_string(), token));
         }

@@ -300,7 +300,7 @@ export function pendingSetupLabel(item: PendingSetup): string {
     case "github":
       return "Connecter le compte GitHub";
     case "repos":
-      return "Choisir les dépôts suivis";
+      return "Choisir le dépôt";
     case "secrets":
       return "Renseigner les secrets requis";
     case "view":

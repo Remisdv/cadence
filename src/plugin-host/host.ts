@@ -105,6 +105,10 @@ export function hostApi(plugin: Pick<InstalledPluginView, "id" | "name">): HostA
       return saved.trackedRepos[id] ?? [];
     },
     reposSelection: async () => (await call("app_settings_get")).repoSelection[id] ?? null,
+    reposSelect: async (repo) => {
+      const saved = await call("app_settings_set", { patch: { repoSelection: { [id]: repo } } });
+      return saved.repoSelection[id] ?? null;
+    },
     reposLocalPaths: async () =>
       Object.fromEntries(
         (await call("repos_status"))

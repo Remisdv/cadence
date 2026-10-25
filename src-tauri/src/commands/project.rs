@@ -55,16 +55,28 @@ pub async fn project_create(
     state: State<'_, AppState>,
     input: RepoCreateInput,
 ) -> AppResult<ProjectState> {
+    let repo = create(&state, &input).await?;
+    project_open(state, repo.full_name).await
+}
+
+/// Crée un dépôt sur GitHub, sans rien ouvrir : le sélecteur de dépôt d'un plugin le choisit
+/// ensuite (`app_settings_set`, `repoSelection`).
+#[tauri::command]
+pub async fn repo_create(state: State<'_, AppState>, input: RepoCreateInput) -> AppResult<Repo> {
+    create(&state, &input).await
+}
+
+async fn create(state: &AppState, input: &RepoCreateInput) -> AppResult<Repo> {
     input.validate()?;
     let token = state.github_token()?;
     let me = crate::api::github::fetch_user(&state.http, &token).await?;
     let kind = if input.owner == me.login { OwnerKind::User } else { OwnerKind::Organization };
-    let repo = repos::create_repo(&state.http, &token, &input, kind).await?;
+    let repo = repos::create_repo(&state.http, &token, input, kind).await?;
     // Le nouveau dépôt rejoint la liste en cache, en tête (le plus récent).
     if let Some(list) = state.repos.write().await.as_mut() {
         list.insert(0, repo.clone());
     }
-    project_open(state, repo.full_name).await
+    Ok(repo)
 }
 
 /// Ouvre un dépôt : synchronise ses milestones dans son cache et mémorise le choix pour le

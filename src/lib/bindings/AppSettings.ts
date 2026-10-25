@@ -41,12 +41,13 @@ toolPaths: { [key in ToolId]?: string },
  */
 ignoredTools: Array<ToolId>, 
 /**
- * Service `repos` : dépôts GitHub suivis (`owner/name`) par plugin.
+ * Service `repos` : dépôts récents (`owner/name`) par plugin, le plus récent d'abord —
+ * ceux qu'on y a ouverts. Cadence continue de s'en occuper en fond (sprints, journal).
  */
 trackedRepos: { [key in string]: Array<string> }, 
 /**
- * Service `repos` : dépôt choisi dans le sélecteur de la barre du plugin (absent = « Tous
- * les dépôts »). Toujours un des dépôts suivis par le plugin.
+ * Service `repos` : dépôt courant du plugin, choisi dans son sélecteur ; tout l'affichage en
+ * dépend. Toujours un des récents ; absent seulement tant qu'aucun dépôt n'a été ouvert.
  */
 repoSelection: { [key in string]: string }, 
 /**

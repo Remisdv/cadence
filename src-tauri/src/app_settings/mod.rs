@@ -131,10 +131,11 @@ pub struct AppSettings {
     pub tool_paths: BTreeMap<ToolId, String>,
     /// Outils optionnels écartés (« Ignorer ») ; les IA, elles, passent par `ai.<id>.enabled`.
     pub ignored_tools: Vec<ToolId>,
-    /// Service `repos` : dépôts GitHub suivis (`owner/name`) par plugin.
+    /// Service `repos` : dépôts récents (`owner/name`) par plugin, le plus récent d'abord —
+    /// ceux qu'on y a ouverts. Cadence continue de s'en occuper en fond (sprints, journal).
     pub tracked_repos: BTreeMap<String, Vec<String>>,
-    /// Service `repos` : dépôt choisi dans le sélecteur de la barre du plugin (absent = « Tous
-    /// les dépôts »). Toujours un des dépôts suivis par le plugin.
+    /// Service `repos` : dépôt courant du plugin, choisi dans son sélecteur ; tout l'affichage en
+    /// dépend. Toujours un des récents ; absent seulement tant qu'aucun dépôt n'a été ouvert.
     pub repo_selection: BTreeMap<String, String>,
     /// Service `repos` : clone local désigné par l'utilisateur, par dépôt (`owner/name` en
     /// minuscules → dossier). Écrit seulement par `repos_link`, après vérification du clone.
@@ -245,28 +246,46 @@ impl AppSettings {
             }
         }
         for (plugin, repo) in patch.repo_selection.into_iter().flatten() {
-            match repo.map(|r| r.trim().to_string()) {
+            if !is_plugin_id(&plugin) {
+                return Err(AppError::Validation(format!("« {plugin} » n'est pas un identifiant de plugin.")));
+            }
+            match repo.map(|r| r.trim().trim_end_matches(".git").to_string()) {
                 None => {
                     self.repo_selection.remove(&plugin);
                 }
                 Some(repo) => {
-                    let tracked = self.tracked_repos.get(&plugin).into_iter().flatten().find(|r| r.eq_ignore_ascii_case(&repo));
-                    let Some(tracked) = tracked.cloned() else {
-                        return Err(AppError::Validation(format!("Le plugin « {plugin} » ne suit pas le dépôt {repo}.")));
-                    };
-                    self.repo_selection.insert(plugin, tracked);
+                    if !is_repo_name(&repo) {
+                        return Err(AppError::Validation(format!("« {repo} » n'est pas un dépôt owner/nom.")));
+                    }
+                    // Ouvrir un dépôt le met en tête des récents (nom déjà connu gardé tel quel).
+                    let list = self.tracked_repos.entry(plugin.clone()).or_default();
+                    let known = list.iter().position(|r| r.eq_ignore_ascii_case(&repo));
+                    let name = known.map(|i| list.remove(i)).unwrap_or(repo);
+                    list.insert(0, name.clone());
+                    self.repo_selection.insert(plugin, name);
                 }
             }
         }
-        // Un dépôt qui n'est plus suivi ne peut pas rester sélectionné : retour à « Tous ».
-        let tracked = self.tracked_repos.clone();
-        self.repo_selection.retain(|plugin, repo| tracked.get(plugin).is_some_and(|list| list.contains(repo)));
+        self.settle_repo_selection();
         if let Some(mut ignored) = patch.ignored_tools {
             ignored.sort();
             ignored.dedup();
             self.ignored_tools = ignored;
         }
         Ok(())
+    }
+
+    /// Le dépôt courant est toujours un récent ; sans lui (oublié, ou réglages d'avant les
+    /// récents), le plus récent le remplace. Jamais de vue « tous les dépôts » : l'affichage d'un
+    /// plugin dépend d'un dépôt.
+    fn settle_repo_selection(&mut self) {
+        let tracked = &self.tracked_repos;
+        self.repo_selection.retain(|plugin, repo| tracked.get(plugin).is_some_and(|list| list.contains(repo)));
+        for (plugin, list) in tracked {
+            if let Some(first) = list.first() {
+                self.repo_selection.entry(plugin.clone()).or_insert_with(|| first.clone());
+            }
+        }
     }
 }
 
@@ -319,10 +338,11 @@ pub struct AppSettingsPatch {
     pub plugin_auto_update: Option<bool>,
     pub dev_plugins: Option<Vec<String>>,
     pub ignored_tools: Option<Vec<ToolId>>,
-    /// Liste complète des dépôts suivis d'un plugin ; liste vide = n'en suivre aucun.
+    /// Liste complète des dépôts récents d'un plugin ; liste vide = les oublier tous.
     #[ts(optional, type = "Record<string, string[]>")]
     pub tracked_repos: Option<BTreeMap<String, Vec<String>>>,
-    /// Dépôt choisi dans la barre d'un plugin ; `null` = « Tous les dépôts ».
+    /// Ouvre un dépôt dans un plugin (dépôt courant, en tête des récents) ; `null` = revenir au
+    /// plus récent.
     #[ts(optional, type = "Record<string, string | null>")]
     pub repo_selection: Option<BTreeMap<String, Option<String>>>,
 }
@@ -385,6 +405,8 @@ impl AppSettingsStore {
             },
             Err(_) => AppSettings::default(),
         };
+        let mut settings = settings;
+        settings.settle_repo_selection();
         Self { path, inner: Mutex::new(settings) }
     }
 
@@ -515,16 +537,20 @@ mod tests {
             repo_selection: Some(BTreeMap::from([("gestion-projet".to_string(), repo.map(str::to_string))])),
             ..Default::default()
         };
-        s.apply(select(Some("remisdv/CADENCE"))).unwrap();
-        assert_eq!(s.repo_selection["gestion-projet"], "RemiSDV/cadence", "écriture du dépôt suivi");
-        assert!(s.apply(select(Some("autre/depot"))).is_err(), "seulement un dépôt suivi");
+        assert_eq!(s.repo_selection["gestion-projet"], "RemiSDV/cadence", "le plus récent est courant");
+        s.apply(select(Some("remisdv/CADENCE-plugins"))).unwrap();
+        assert_eq!(s.repo_selection["gestion-projet"], "RemiSDV/cadence-plugins", "nom connu gardé");
+        assert_eq!(s.tracked_repos["gestion-projet"], ["RemiSDV/cadence-plugins", "RemiSDV/cadence"], "ouvert : en tête");
+        // Ouvrir un dépôt jamais vu (recherche, création) l'ajoute aux récents.
+        s.apply(select(Some("me/nouveau"))).unwrap();
+        assert_eq!(s.tracked_repos["gestion-projet"], ["me/nouveau", "RemiSDV/cadence-plugins", "RemiSDV/cadence"]);
+        assert!(s.apply(select(Some("pas un dépôt"))).is_err());
         s.apply(select(None)).unwrap();
-        assert!(s.repo_selection.is_empty(), "retour à « Tous les dépôts »");
-        s.apply(select(Some("RemiSDV/cadence"))).unwrap();
-        s.apply(track(&["RemiSDV/cadence-plugins"])).unwrap();
-        assert!(s.repo_selection.is_empty(), "dépôt retiré : sélection oubliée");
+        assert_eq!(s.repo_selection["gestion-projet"], "me/nouveau", "jamais « tous les dépôts »");
+        s.apply(track(&["RemiSDV/cadence"])).unwrap();
+        assert_eq!(s.repo_selection["gestion-projet"], "RemiSDV/cadence", "courant oublié : le plus récent le remplace");
         s.apply(track(&[])).unwrap();
-        assert!(s.tracked_repos.is_empty());
+        assert!(s.tracked_repos.is_empty() && s.repo_selection.is_empty());
     }
 
     #[test]

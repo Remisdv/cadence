@@ -68,12 +68,14 @@ export interface HostApi {
     directory: boolean;
     filters: { name: string; extensions: string[] }[];
   }): Promise<string[]>;
-  /** Dépôts suivis par le plugin (service `repos`). */
+  /** Dépôts récents du plugin (service `repos`), le plus récent d'abord. */
   reposList(): Promise<string[]>;
-  /** Modifie la liste des dépôts suivis ; renvoie la nouvelle liste. */
+  /** Modifie la liste des récents ; renvoie la nouvelle liste. */
   reposSet(update: (repos: string[]) => string[]): Promise<string[]>;
-  /** Dépôt choisi dans la barre du plugin ; `null` = « Tous les dépôts ». */
+  /** Dépôt courant du plugin (tout son affichage en dépend) ; `null` = aucun dépôt ouvert. */
   reposSelection(): Promise<string | null>;
+  /** Ouvre un dépôt : il devient le dépôt courant et passe en tête des récents. */
+  reposSelect(repo: string): Promise<string | null>;
   /** Clone local de chaque dépôt suivi (`owner/nom` en minuscules → dossier), s'il existe. */
   reposLocalPaths(): Promise<Record<string, string>>;
   /** Clone au besoin et prépare le worktree de la tâche ; renvoie son chemin. */

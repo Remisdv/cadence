@@ -66,16 +66,6 @@ export function taskTitle(task: SetupTask): string {
 export const taskKey = (task: SetupTask) =>
   `${task.plugin.id}:${task.kind}:${task.kind === "secret" ? task.secret.id : task.kind === "view" ? task.step.id : ""}`;
 
-/** « https://github.com/owner/nom(.git) », « git@github.com:owner/nom » ou « owner/nom ». */
-export function parseRepoInput(input: string): string | null {
-  const text = input.trim();
-  const match =
-    /^(?:https?:\/\/github\.com\/|git@github\.com:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(
-      text,
-    );
-  return match ? `${match[1]}/${match[2]}` : null;
-}
-
 /** Taille lisible d'un ensemble d'archives (« 31,2 Mo »). */
 export function formatSize(bytes: number): string {
   if (bytes < 1_000_000) return `${Math.max(1, Math.round(bytes / 1000))} ko`;

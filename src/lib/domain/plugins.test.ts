@@ -176,7 +176,7 @@ describe("pendingSetup (N03)", () => {
     expect(pending.map((p) => p.kind)).toEqual(["github", "repos", "secrets", "view"]);
     expect(pending.map(pendingSetupLabel)).toEqual([
       "Connecter le compte GitHub",
-      "Choisir les dépôts suivis",
+      "Choisir le dépôt",
       "Renseigner les secrets requis",
       "Dépôts du plugin",
     ]);

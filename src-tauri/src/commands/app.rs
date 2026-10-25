@@ -66,8 +66,9 @@ pub fn app_export_config(app: tauri::AppHandle, state: State<'_, AppState>, path
 
 /// Modification partielle ; une valeur refusée ne change rien.
 ///
-/// Dépôts suivis changés : événement `repos://changed` (iframes du plugin) et notification
-/// `notifications/cadence/repos` à son serveur s'il tourne (sinon `CADENCE_REPOS` au lancement).
+/// Dépôts récents ou dépôt courant changés : événement `repos://changed` (iframes du plugin) et
+/// notification `notifications/cadence/repos` `{repos, current}` à son serveur s'il tourne (sinon
+/// `CADENCE_REPOS` / `CADENCE_REPO` au lancement).
 #[tauri::command]
 pub async fn app_settings_set(
     app: tauri::AppHandle,
@@ -79,7 +80,6 @@ pub async fn app_settings_set(
     repos_of.extend(patch.repo_selection.iter().flat_map(|m| m.keys().cloned()));
     repos_of.sort();
     repos_of.dedup();
-    let tracked_changed: Vec<String> = patch.tracked_repos.iter().flat_map(|m| m.keys().cloned()).collect();
     let settings = state.settings.try_update(|s| s.apply(patch))?;
     if changes_cli {
         // Chemins ou activation changés : la détection des CLI est refaite au prochain appel.
@@ -88,11 +88,12 @@ pub async fn app_settings_set(
     for plugin in repos_of {
         let repos = settings.tracked_repos.get(&plugin).cloned().unwrap_or_default();
         let selection = settings.repo_selection.get(&plugin).cloned();
-        events::emit(&app, events::REPOS_CHANGED, ReposChanged { plugin: plugin.clone(), repos: repos.clone(), selection });
+        let notification = json!({ "repos": repos, "current": selection });
+        events::emit(&app, events::REPOS_CHANGED, ReposChanged { plugin: plugin.clone(), repos, selection });
         let uses_repos = state.plugins.manifest(&plugin).is_ok_and(|m| m.services.contains(&PluginService::Repos));
-        // Le serveur ne connaît que la liste ; la sélection ne concerne que l'interface.
-        if uses_repos && tracked_changed.contains(&plugin) {
-            state.plugin_host.notify(&plugin, REPOS_NOTIFICATION, json!({ "repos": repos })).await;
+        // Le serveur suit le dépôt courant : les outils sans `repo` s'y appliquent.
+        if uses_repos {
+            state.plugin_host.notify(&plugin, REPOS_NOTIFICATION, notification).await;
         }
     }
     Ok(settings)

@@ -30,6 +30,7 @@ function setup(overrides: Partial<HostApi> = {}) {
     reposList: vi.fn(async () => ["RemiSDV/cadence"]),
     reposSet: vi.fn(async (update: (r: string[]) => string[]) => update(["RemiSDV/cadence"])),
     reposSelection: vi.fn(async () => "RemiSDV/cadence"),
+    reposSelect: vi.fn(async (repo: string) => repo),
     reposLocalPaths: vi.fn(async () => ({ "remisdv/cadence": "C:/repos/remisdv/cadence" })),
     reposCheckout: vi.fn(
       async (repo: string, task: string | null) => `C:/repos/.worktrees/${repo}/${task}`,
@@ -197,6 +198,13 @@ describe("pont de l'iframe", () => {
     });
     expect(await ask("s", "repos.selection", {})).toMatchObject({
       result: { kind: "one", repo: "RemiSDV/cadence" },
+    });
+    expect(await ask("o", "repos.select", { repo: "RemiSDV/linear-test.git" })).toMatchObject({
+      result: { kind: "one", repo: "RemiSDV/linear-test" },
+    });
+    expect(await ask("o2", "repos.select", { repo: "pas un dépôt" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
     });
     expect(await ask("x", "inconnue", {})).toMatchObject({
       ok: false,

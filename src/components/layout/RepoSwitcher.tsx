@@ -8,7 +8,7 @@ import type { Repo } from "@/lib/types";
 import { Icon } from "@/components/icons/Icon";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
-import { CreateRepoForm } from "./CreateRepoForm";
+import { CreateRepoForm } from "@/components/domain/CreateRepoForm";
 import { cn } from "@/lib/cn";
 import { formatDaysLeft } from "@/lib/domain/format";
 import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
@@ -36,6 +36,8 @@ export function RepoSwitcher() {
     if (!next) setMode({ kind: "list" });
   };
   const project = useCurrentProject().data;
+  const openProject = useOpenProject();
+  const navigate = useNavigation((s) => s.navigate);
   const current = useCurrentVersion();
   const version = project ? current.data : undefined;
 
@@ -84,7 +86,15 @@ export function RepoSwitcher() {
             <CreateRepoForm
               initialName={mode.name}
               onBack={() => setMode({ kind: "list" })}
-              onDone={() => setOpen(false)}
+              opening={openProject.isPending}
+              onCreated={(repo) =>
+                openProject.mutate(repo.fullName, {
+                  onSuccess: () => {
+                    setOpen(false);
+                    navigate({ id: "sprint" });
+                  },
+                })
+              }
             />
           ) : (
             <RepoList

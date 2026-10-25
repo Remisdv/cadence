@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledPluginView } from "@/lib/types";
-import {
-  formatSize,
-  nextStep,
-  parseRepoInput,
-  previousStep,
-  setupTasks,
-  taskTitle,
-} from "./onboarding";
+import { formatSize, nextStep, previousStep, setupTasks, taskTitle } from "./onboarding";
 
 function plugin(patch: Partial<InstalledPluginView>): InstalledPluginView {
   return {
@@ -63,15 +56,6 @@ describe("onboarding", () => {
     ]);
     expect(taskTitle(tasks[0]!)).toBe("Compte GitHub");
     expect(taskTitle(tasks[3]!)).toBe("Dépôt par défaut");
-  });
-
-  it("lit un dépôt saisi par URL", () => {
-    expect(parseRepoInput("https://github.com/RemiSDV/cadence.git")).toBe("RemiSDV/cadence");
-    expect(parseRepoInput("git@github.com:RemiSDV/cadence-plugins")).toBe(
-      "RemiSDV/cadence-plugins",
-    );
-    expect(parseRepoInput("RemiSDV/cadence")).toBe("RemiSDV/cadence");
-    expect(parseRepoInput("pas un dépôt")).toBeNull();
   });
 
   it("formate la taille des archives", () => {

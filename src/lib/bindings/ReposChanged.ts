@@ -2,10 +2,10 @@
 
 export type ReposChanged = { plugin: string, 
 /**
- * Liste complète des dépôts suivis (`owner/name`).
+ * Dépôts récents (`owner/name`), le plus récent d'abord.
  */
 repos: Array<string>, 
 /**
- * Dépôt choisi dans la barre du plugin ; `null` = « Tous les dépôts ».
+ * Dépôt courant du plugin : tout son affichage en dépend ; `null` = aucun dépôt ouvert.
  */
 selection: string | null, };

@@ -1,6 +1,6 @@
 /**
- * Création d'un dépôt GitHub depuis le sélecteur de la barre latérale.
- * Le dépôt est créé sous le compte ou l'organisation choisi, puis ouvert dans Cadence.
+ * Création d'un dépôt GitHub depuis un sélecteur de dépôt (`RepoPicker`, `RepoSwitcher`).
+ * Le dépôt est créé sous le compte ou l'organisation choisi ; l'appelant l'ouvre ensuite.
  */
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Icon } from "@/components/icons/Icon";
@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/Button";
 import { Input, Label, Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { SwitchField } from "@/components/ui/Switch";
+import type { Repo } from "@/lib/types";
 import { useCreateRepo, useRepoOwners } from "@/lib/query/queries";
-import { useNavigation } from "@/stores/navigation";
 
 const VALID_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 
@@ -17,14 +17,16 @@ export interface CreateRepoFormProps {
   /** Nom pré-rempli (ce qui était tapé dans la recherche). */
   initialName: string;
   onBack: () => void;
-  onDone: () => void;
+  /** Dépôt créé : l'appelant l'ouvre. */
+  onCreated: (repo: Repo) => void;
+  /** Ouverture en cours après la création (bouton désactivé). */
+  opening?: boolean;
 }
 
-export function CreateRepoForm({ initialName, onBack, onDone }: CreateRepoFormProps) {
+export function CreateRepoForm({ initialName, onBack, onCreated, opening }: CreateRepoFormProps) {
   const ids = { owner: useId(), name: useId(), description: useId() };
   const owners = useRepoOwners(true);
   const create = useCreateRepo();
-  const navigate = useNavigation((s) => s.navigate);
 
   const [owner, setOwner] = useState("");
   // GitHub remplace les espaces par des tirets : on le fait dès la saisie.
@@ -39,19 +41,15 @@ export function CreateRepoForm({ initialName, onBack, onDone }: CreateRepoFormPr
   }, [owner, owners.data]);
 
   const nameValid = VALID_NAME.test(name) && name !== "." && name !== "..";
-  const canSubmit = nameValid && owner !== "" && !create.isPending;
+  const busy = create.isPending || opening === true;
+  const canSubmit = nameValid && owner !== "" && !busy;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     create.mutate(
       { owner, name, description: description.trim() || undefined, private: isPrivate, autoInit },
-      {
-        onSuccess: () => {
-          onDone();
-          navigate({ id: "sprint" });
-        },
-      },
+      { onSuccess: onCreated },
     );
   };
 
@@ -162,10 +160,10 @@ export function CreateRepoForm({ initialName, onBack, onDone }: CreateRepoFormPr
           type="submit"
           variant="primary"
           size="sm"
-          icon={create.isPending ? undefined : "plus"}
+          icon={busy ? undefined : "plus"}
           disabled={!canSubmit}
         >
-          {create.isPending && <Spinner size={12} className="text-clay-ink" />}
+          {busy && <Spinner size={12} className="text-clay-ink" />}
           Créer et ouvrir
         </Button>
       </div>

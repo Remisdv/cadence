@@ -186,6 +186,8 @@ export interface Commands {
   project_open: { args: { repo: string }; result: ProjectState };
   project_owners: { args: NoArgs; result: RepoOwner[] };
   project_create: { args: { input: RepoCreateInput }; result: ProjectState };
+  /** Crée un dépôt sans rien ouvrir (sélecteur de dépôt des plugins). */
+  repo_create: { args: { input: RepoCreateInput }; result: Repo };
   // Versions
   versions_list: { args: NoArgs; result: Version[] };
   version_current: { args: NoArgs; result: VersionDetail };

@@ -555,15 +555,15 @@ export function useOpenProject() {
 export const useRepoOwners = (enabled: boolean) =>
   useQuery({ queryKey: keys.projectOwners(), queryFn: () => call("project_owners"), enabled });
 
-/** Crée un dépôt sur GitHub puis l'ouvre ; la liste des dépôts est rafraîchie. */
+/**
+ * Crée un dépôt sur GitHub sans rien ouvrir (`repo_create`) : l'appelant le choisit ensuite
+ * (dépôt courant d'un plugin). La recherche de dépôts le trouve aussitôt.
+ */
 export function useCreateRepo() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: RepoCreateInput) => call("project_create", { input }),
-    onSuccess: (project) => {
-      qc.setQueryData(keys.projectCurrent(), project);
-      void qc.invalidateQueries();
-    },
+    mutationFn: (input: RepoCreateInput) => call("repo_create", { input }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["project", "repos"] }),
   });
 }
 

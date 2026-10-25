@@ -22,7 +22,9 @@ import type {
   PluginProcessView,
   PluginStateEvent,
   ProjectState,
+  Repo,
   RepoCloneView,
+  RepoCreateInput,
   ReposChanged,
 } from "@/lib/types";
 import type { CommandArgs, CommandName, CommandResult } from "../commands";
@@ -177,6 +179,32 @@ function addPlugin(command: string, plugin: InstalledPluginView) {
   return plugin;
 }
 
+/** Création simulée d'un dépôt : il rejoint la liste du compte, en tête. */
+async function createMockRepo(command: string, input: RepoCreateInput): Promise<Repo> {
+  await delay(700);
+  const name = input.name.trim();
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(name) || name === "." || name === "..") {
+    fail(command, "Nom de dépôt invalide : lettres, chiffres, « - », « _ » et « . » uniquement.");
+  }
+  const fullName = `${input.owner}/${name}`;
+  if (data.repos.some((r) => r.fullName.toLowerCase() === fullName.toLowerCase())) {
+    fail(command, "Un dépôt porte déjà ce nom sur ce compte.");
+  }
+  const repo: Repo = {
+    fullName,
+    owner: input.owner,
+    name,
+    description: input.description?.trim() || null,
+    private: input.private ?? false,
+    defaultBranch: "main",
+    openIssues: 0,
+    milestones: 0,
+    pushedAt: new Date().toISOString(),
+  };
+  data.repos.unshift(repo);
+  return repo;
+}
+
 /** Téléchargement et installation simulés d'un plugin du catalogue. */
 async function installFromMockCatalog(command: string, id: string) {
   const entry = mockCatalogEntries.find((e) => e.id === id);
@@ -279,20 +307,25 @@ const handlers: Handlers = {
       if (list.length) next.trackedRepos[plugin] = list;
       else delete next.trackedRepos[plugin];
     }
+    // Choisir un dépôt l'ouvre : il passe en tête des récents (ajouté s'il n'y était pas).
     for (const [plugin, repo] of Object.entries(patch.repoSelection ?? {})) {
       if (repo === null) {
         delete next.repoSelection[plugin];
         continue;
       }
-      const tracked = (next.trackedRepos[plugin] ?? []).find(
-        (r) => r.toLowerCase() === repo.trim().toLowerCase(),
-      );
-      if (!tracked)
-        fail("app_settings_set", `Le plugin « ${plugin} » ne suit pas le dépôt ${repo}.`);
-      next.repoSelection[plugin] = tracked;
+      const wanted = repo.trim().replace(/\.git$/, "");
+      if (!/^[\w.-]+\/[\w.-]+$/.test(wanted))
+        fail("app_settings_set", `« ${wanted} » n'est pas un dépôt owner/nom.`);
+      const list = next.trackedRepos[plugin] ?? [];
+      const name = list.find((r) => r.toLowerCase() === wanted.toLowerCase()) ?? wanted;
+      next.trackedRepos[plugin] = [name, ...list.filter((r) => r !== name)];
+      next.repoSelection[plugin] = name;
     }
+    // Toujours un dépôt courant parmi les récents : le plus récent par défaut.
     for (const [plugin, repo] of Object.entries(next.repoSelection))
       if (!(next.trackedRepos[plugin] ?? []).includes(repo)) delete next.repoSelection[plugin];
+    for (const [plugin, list] of Object.entries(next.trackedRepos))
+      if (list[0] && !next.repoSelection[plugin]) next.repoSelection[plugin] = list[0];
     if (patch.ignoredTools !== undefined)
       next.ignoredTools = [...new Set(patch.ignoredTools)].sort();
     state.settings = next;
@@ -810,32 +843,11 @@ const handlers: Handlers = {
   },
   project_owners: () => data.repoOwners,
   project_create: async ({ input }) => {
-    await delay(700);
-    const name = input.name.trim();
-    if (!/^[A-Za-z0-9._-]{1,100}$/.test(name) || name === "." || name === "..") {
-      fail(
-        "project_create",
-        "Nom de dépôt invalide : lettres, chiffres, « - », « _ » et « . » uniquement.",
-      );
-    }
-    const fullName = `${input.owner}/${name}`;
-    if (data.repos.some((r) => r.fullName.toLowerCase() === fullName.toLowerCase())) {
-      fail("project_create", "Un dépôt porte déjà ce nom sur ce compte.");
-    }
-    data.repos.unshift({
-      fullName,
-      owner: input.owner,
-      name,
-      description: input.description?.trim() || null,
-      private: input.private ?? false,
-      defaultBranch: "main",
-      openIssues: 0,
-      milestones: 0,
-      pushedAt: new Date().toISOString(),
-    });
-    state.project = data.projectFor(fullName);
+    const repo = await createMockRepo("project_create", input);
+    state.project = data.projectFor(repo.fullName);
     return state.project;
   },
+  repo_create: ({ input }) => createMockRepo("repo_create", input),
   project_open: async ({ repo }) => {
     await delay(400);
     state.project = data.projectFor(repo);

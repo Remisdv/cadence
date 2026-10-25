@@ -16,10 +16,11 @@ actionAi?: Record<string, AiId | null>,
  */
 catalogUrl?: string, pluginAutoUpdate?: boolean, devPlugins?: Array<string>, ignoredTools?: Array<ToolId>, 
 /**
- * Liste complète des dépôts suivis d'un plugin ; liste vide = n'en suivre aucun.
+ * Liste complète des dépôts récents d'un plugin ; liste vide = les oublier tous.
  */
 trackedRepos?: Record<string, string[]>, 
 /**
- * Dépôt choisi dans la barre d'un plugin ; `null` = « Tous les dépôts ».
+ * Ouvre un dépôt dans un plugin (dépôt courant, en tête des récents) ; `null` = revenir au
+ * plus récent.
  */
 repoSelection?: Record<string, string | null>, };
