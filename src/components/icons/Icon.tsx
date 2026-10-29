@@ -7,6 +7,16 @@ import type { ReactNode, SVGProps } from "react";
 const dot = { fill: "currentColor", stroke: "none" } as const;
 
 const paths = {
+  /** Marque Cadence : un « C » en trois segments (les sprints) autour de la version visée. */
+  cadence: (
+    <>
+      <path
+        d="M17.279 17.467A7.6 7.6 0 0 1 9.071 19.013M5.65 16.176A7.6 7.6 0 0 1 5.65 7.824M9.071 4.987A7.6 7.6 0 0 1 17.279 6.533"
+        strokeWidth={2.9}
+      />
+      <circle cx="12" cy="12" r="2.5" {...dot} />
+    </>
+  ),
   sprint: (
     <>
       <circle cx="12" cy="12" r="8.5" />
