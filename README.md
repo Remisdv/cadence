@@ -14,6 +14,158 @@ Socle en place : coque à trois colonnes (rail 56px groupé par catégorie, barr
 plugins installés (activation globale, ordre du rail, réglages et secrets globaux), trousseau
 générique. Les écrans GitHub de Cadence 1 restent compilés jusqu'au plugin `gestion-projet`.
 
+## Présentation
+
+![Écran d'accueil de Cadence](docs/captures/accueil.png)
+
+Cadence relie les **IA de code déjà installées sur votre machine** (Claude Code, Codex CLI,
+OpenCode) à des **plugins** qui apportent les fonctionnalités : gestion de projet GitHub, cours et
+révisions, etc. Sans plugin, vous avez un chat ; avec eux, des écrans, des boutons d'action et des
+outils que l'IA sait utiliser.
+
+- **Vos abonnements, pas de clé** : Cadence lance la CLI déjà connectée à votre compte. Aucune clé
+  d'API à saisir, aucun compte Cadence.
+- **Des plugins relus** : le catalogue est le dépôt public
+  [`RemiSDV/cadence-plugins`](https://github.com/RemiSDV/cadence-plugins) ; chaque plugin y entre
+  par une pull request relue et chaque archive est vérifiée par son empreinte SHA-256.
+- **Un dossier de travail neutre** : l'IA est toujours lancée dans un dossier de session de Cadence,
+  jamais dans un de vos dépôts. Elle accède aux données par les outils des plugins.
+
+## Télécharger
+
+Les installeurs sont sur la page des
+[releases](https://github.com/RemiSDV/cadence/releases/latest) :
+
+| Système | Fichier | Remarque |
+| --- | --- | --- |
+| Windows 10/11 x64 | `Cadence_<version>_x64-setup.exe` | mises à jour automatiques |
+| Linux x64 (Debian, Ubuntu) | `Cadence_<version>_amd64.deb` | `sudo apt install ./Cadence_<version>_amd64.deb` |
+| Linux x64 (Fedora, openSUSE) | `Cadence-<version>-1.x86_64.rpm` | `sudo dnf install ./Cadence-<version>-1.x86_64.rpm` |
+| Linux x64 (autres) | `Cadence_<version>_amd64.AppImage` | `chmod +x` puis lancer le fichier |
+
+Les paquets Linux demandent glibc 2.39 ou plus (Ubuntu 24.04, Debian 13, Fedora 40 et suivantes)
+et WebKitGTK 4.1. Ils ne sont pas signés pour l'updater : une nouvelle version s'installe à la main.
+Pour construire l'app vous-même, voir [Installer Cadence depuis les sources](#installer-cadence-depuis-les-sources).
+
+## Utiliser Cadence
+
+### 1. Premier lancement
+
+Au premier lancement, un parcours en cinq étapes (environ 4 minutes) prépare l'app. Tout reste
+modifiable ensuite dans les réglages.
+
+1. **IA de code** : Cadence cherche Claude Code, Codex CLI et OpenCode, vérifie qu'ils sont
+   connectés à votre compte et propose d'installer ceux qui manquent (la commande exacte est
+   affichée avant d'être lancée). Choisissez l'**IA par défaut** : elle répond dans le chat et
+   exécute les boutons d'action. « Lancer le test » ouvre une courte session pour vérifier que tout
+   répond.
+2. **Plugins** : cochez les plugins du catalogue à installer. Aucun n'est obligatoire : le chat
+   fonctionne sans.
+3. **Outils nécessaires** : Cadence vérifie les programmes dont dépendent vos IA et vos plugins
+   (Git, CLI GitHub…). « Continuer » reste grisé tant qu'un outil requis manque.
+4. **Configuration** : chaque plugin affiche ses propres étapes (connexion GitHub et choix des
+   dépôts suivis pour Gestion de projet, prénom pour Exemple…). « Configurer plus tard » les
+   reporte.
+5. **Terminé** : un récapitulatif, puis « Ouvrir Cadence ».
+
+| IA de code | Outils nécessaires | Configuration d'un plugin |
+| --- | --- | --- |
+| ![Étape IA de code](docs/captures/onboarding-ia.png) | ![Étape Outils nécessaires](docs/captures/onboarding-outils.png) | ![Étape Configuration](docs/captures/onboarding-configuration.png) |
+
+### 2. Se repérer
+
+![Chat global de Cadence](docs/captures/chat.png)
+
+- **Le rail** (colonne de gauche) : le chat en haut, puis un bouton par plugin activé, rangé dans
+  le groupe de sa catégorie (Projet, Études, Code, Données, Outils). En bas : le catalogue, les
+  réglages et l'IA par défaut (la pastille verte indique qu'elle est connectée).
+- **La barre contextuelle** (deuxième colonne) : les vues et les conversations de l'écran courant.
+- **Le contenu** au centre, et pour le chat un panneau de session à droite (IA, passerelle MCP,
+  outils visibles, accès aux dépôts).
+- **`Ctrl+K`** ouvre la palette : aller à un écran, ouvrir un plugin, lancer une action.
+
+![Palette de commandes](docs/captures/palette.png)
+
+### 3. Discuter avec l'IA
+
+Le **chat** voit les outils de tous les plugins activés. Une conversation ouverte depuis un plugin
+(le `+` de « Conversations » dans sa barre) lui est rattachée et apparaît aussi dans sa barre ;
+celles d'un sprint restent dans la vue du sprint. Sous la zone de saisie :
+
+- le choix de l'**IA** pour cette conversation ;
+- le **mode** : *Demander* (chaque commande, modification ou outil attend votre accord),
+  *Édition auto* (modifie les fichiers sans demander, demande avant une commande shell) ou *Auto*
+  (tout est autorisé, à réserver aux tâches sûres) ; « Autoriser pour la session » évite de
+  redemander pour une même famille de commandes ;
+- **Skills** pour déclencher un skill d'un plugin, et le trombone pour joindre un fichier.
+
+Quand l'IA attend une réponse de votre part, la conversation l'indique (« En attente de votre
+réponse »). Les conversations se retrouvent dans la barre de gauche et par la recherche.
+
+### 4. Installer et gérer des plugins
+
+![Catalogue de plugins](docs/captures/catalogue.png)
+
+Le **catalogue** (icône en grille en bas du rail) liste les plugins publiés, filtrables par
+catégorie. La fiche d'un plugin montre ses vues, ses actions (*chat* : ouvre une conversation ;
+*en fond* : s'exécute sans vous) et ses outils MCP. Depuis la fiche : **Installer**, **Ouvrir**,
+**Désactiver**, **Réglages**, **Désinstaller** (les données du plugin sont conservées).
+
+En haut du catalogue :
+
+- **Installer une archive…** : un `.zip` de plugin (lien partagé ou archive construite soi-même) ;
+- **Dossier de développement…** : un dossier de plugin non zippé, pour les auteurs (il n'est jamais
+  copié ni modifié par Cadence) ;
+- **Actualiser** : relit le catalogue. Les mises à jour peuvent aussi s'installer seules (Réglages ›
+  Général › « Mettre à jour les plugins automatiquement »).
+
+> **Linux** : les plugins publiés au catalogue n'embarquent pour l'instant qu'un serveur Windows ;
+> le catalogue les marque alors « Incompatible ». En attendant, construisez-les depuis
+> `cadence-plugins` (`pnpm install && pnpm build && cargo build --release`, copiez les serveurs de
+> `target/release/` dans `<dossier>/linux-x86_64/`, puis
+> `pnpm package <id> --bins <dossier> --allow-missing-targets`) et installez l'archive de `out/`
+> avec « Installer une archive… ».
+
+### 5. Les plugins officiels
+
+**Gestion de projet** pilote un ou plusieurs dépôts GitHub : sprint en cours, issues, roadmap,
+planning, versions, architecture, designs et pull requests. Il a besoin du service **Dépôts
+GitHub** : connectez votre compte (Réglages › Dépôts GitHub, voir [Connexion GitHub](#connexion-github)),
+puis « Choisir des dépôts » pour suivre des dépôts. Le sélecteur en haut de sa barre passe d'un
+dépôt à l'autre ou les montre tous. Les actions (« Compléter l'issue », « Développer le sprint »,
+« Relire et valider », « Préparer la release »…) lancent l'IA sur la tâche, dans un worktree dédié.
+
+| Issues | Dépôts suivis |
+| --- | --- |
+| ![Gestion de projet, issues](docs/captures/gestion-projet-issues.png) | ![Gestion de projet, dépôts suivis](docs/captures/gestion-projet-depots.png) |
+
+**Documents** range vos cours (PDF, Word, PowerPoint, Markdown) par matière et chapitre, et vos
+notes en Markdown (éditeur par blocs : tapez `/` pour insérer un titre, une liste, un tableau, un
+lien vers un cours). Ses actions : poser une question (réponse citée avec document et page),
+générer un QCM, des questions ouvertes corrigées, des flashcards, résumer un chapitre en note.
+L'onglet Entraînement garde l'historique des scores.
+
+| Bibliothèque | Note |
+| --- | --- |
+| ![Documents, bibliothèque](docs/captures/documents-bibliotheque.png) | ![Documents, note ouverte](docs/captures/documents-note.png) |
+
+**Exemple** est le plugin de référence pour les auteurs : un compteur qui utilise chaque brique de
+l'API (outil MCP, événement, réglages, étape de configuration, skill, outil externe).
+
+![Plugin Exemple](docs/captures/exemple.png)
+
+### 6. Réglages
+
+![Réglages](docs/captures/reglages.png)
+
+- **Général** : mises à jour de Cadence (À propos), export de la configuration en JSON (les secrets
+  restent au trousseau), URL du catalogue, mise à jour automatique des plugins, dossiers des
+  plugins, de leurs données et des sessions d'IA.
+- **IA de code** : détection, IA par défaut, IA utilisée par chaque action.
+- **Outils externes** : état des programmes requis, installation en un clic.
+- **Dépôts GitHub** : compte connecté, emplacement des clones, dépôts suivis par plugin.
+- **Plugins activés** : ordre du rail, réglages et secrets de chaque plugin.
+
 ## Démarrer
 
 Prérequis : Node 20+, pnpm, Rust stable (MSVC sous Windows), WebView2.
@@ -36,8 +188,8 @@ pnpm tauri:mock   # app de bureau, back mocké (tant que les commandes Rust ne s
 
 ### Installer Cadence depuis les sources
 
-Pas encore d'installeur publié : chacun construit l'app sur sa machine (les releases signées
-viendront avec la version finale, voir `docs/release.md`).
+Pour une autre plateforme que celles des [releases](#télécharger), ou pour tester une branche,
+chacun construit l'app sur sa machine (procédure de release : `docs/release.md`).
 
 1. Prérequis : Node 20+ et pnpm, Rust stable (`rustup`), plus selon le système :
    - **Windows** : Visual Studio Build Tools avec « Développement Desktop en C++ » (Rust MSVC) ;
