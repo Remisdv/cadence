@@ -57,7 +57,7 @@ export function AppRail() {
           aria-hidden="true"
           className="inline-flex size-7 items-center justify-center rounded-lg bg-clay text-clay-ink"
         >
-          <Icon name="sprint" size={17} />
+          <Icon name="cadence" size={21} />
         </span>
       </div>
 
