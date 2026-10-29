@@ -64,7 +64,7 @@ facultatives pour un essai (le workflow avertit et construit des binaires non si
 | `WINDOWS_CERTIFICATE` | secret | Windows, voie **certificat** : `.pfx` de signature de code encodé en base64 |
 | `WINDOWS_CERTIFICATE_PASSWORD` | secret | mot de passe du `.pfx` |
 | `CADENCE_GITHUB_CLIENT_ID` | variable | facultatif : OAuth App de Cadence, figée dans le binaire |
-| `CADENCE_GITHUB_CLIENT_SECRET` | secret | facultatif : son client secret (voir le README, il ne peut pas rester confidentiel dans une app native) |
+| `CADENCE_GITHUB_CLIENT_SECRET` | secret | facultatif : son client secret (voir [technique.md](technique.md#optionnel--oauth-app-propre-à-cadence), il ne peut pas rester confidentiel dans une app native) |
 
 Encodage base64 d'un certificat :
 

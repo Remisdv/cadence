@@ -1,14 +1,18 @@
 # Documentation de Cadence
 
-> **Cadence 2 en cours (0.3.0).** Cadence devient un hôte entre les IA de code (Claude Code,
-> Codex CLI, OpenCode) et des plugins ; les agents sont supprimés et la gestion de projet devient
-> le plugin `gestion-projet`. Les pages ci-dessous décrivent encore la 0.2 (tag `v0.2-final`) et
-> seront réécrites avec la documentation des plugins.
+- **[Guide d'utilisation](utilisation.md)** (Cadence 2, 0.3) : installer, premier lancement, chat,
+  plugins, connexion GitHub, réglages.
+- **[Documentation technique](technique.md)** : construire depuis les sources, mode mock,
+  architecture, recettes, état d'avancement.
+- **[Processus de release](release.md)** : secrets, clé de mise à jour, tag, signature.
 
-Cadence est un cockpit de projet logiciel adossé à GitHub : un sprint est une version, une
-version est un milestone. C'est une application de bureau (macOS, Windows, Linux).
+## Pages de Cadence 0.2
 
-## Utiliser Cadence
+> Les pages ci-dessous décrivent encore la 0.2 (tag `v0.2-final`), avant que Cadence devienne un
+> hôte d'IA et de plugins ; elles seront réécrites avec la documentation des plugins.
+
+Cadence 0.2 était un cockpit de projet logiciel adossé à GitHub : un sprint est une version, une
+version est un milestone.
 
 1. [Installation](installation.md) — télécharger, installer, mettre à jour, par système.
 2. [Premiers pas](premiers-pas.md) — connexion à GitHub, agents de code, choix du dépôt.
@@ -20,8 +24,8 @@ version est un milestone. C'est une application de bureau (macOS, Windows, Linux
 ## Maintenir Cadence
 
 - [Processus de release](release.md) — secrets, clé de mise à jour, tag, signature, notarisation.
-- Développement : voir le [README du dépôt](../README.md) (démarrer, mode mock, architecture,
-  recettes).
+- Développement : voir la [documentation technique](technique.md) (démarrer, mode mock,
+  architecture, recettes).
 
 ## Principes à retenir
 

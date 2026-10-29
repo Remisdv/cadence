@@ -1,7 +1,7 @@
 # Cadence — conventions
 
 App de bureau Tauri 2 (Rust) + React 19 / TS / Tailwind v4. Tout le texte d'interface est en français.
-Voir README.md pour l'arborescence et les recettes.
+Voir docs/technique.md pour l'arborescence et les recettes.
 
 ## Sources de vérité
 
