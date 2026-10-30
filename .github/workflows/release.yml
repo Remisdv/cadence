@@ -1,8 +1,9 @@
 # Release : lancée À LA MAIN (Actions › Release › Run workflow, « Use workflow from » = le tag,
 # ex. `v1.0.0`), jamais automatiquement, pour économiser les minutes GitHub Actions : pendant le
-# développement, chacun construit l'app depuis les sources (README). Construit macOS (universel),
-# Windows et Linux, signe et notarise quand les secrets sont présents, signe les paquets de mise
-# à jour et publie une release GitHub EN BROUILLON avec `latest.json` pour l'updater.
+# développement, chacun construit l'app depuis les sources (README). Construit Windows et Linux,
+# plus macOS (universel) si l'option « macos » est cochée (ses minutes comptent dix fois), signe
+# et notarise quand les secrets sont présents, signe les paquets de mise à jour et publie une
+# release GitHub EN BROUILLON avec `latest.json` pour l'updater.
 #
 # Rien n'est publié automatiquement : la release ne devient visible (et l'updater ne la voit)
 # qu'une fois publiée à la main. Secrets et procédure : docs/release.md.
@@ -10,6 +11,11 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      macos:
+        description: "Construire aussi macOS (universel)"
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -99,16 +105,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: macOS universel
-            platform: macos-latest
-            args: --target universal-apple-darwin
-          - name: Windows x64
-            platform: windows-latest
-            args: ""
-          - name: Linux x64
-            platform: ubuntu-22.04
-            args: ""
+        # macOS seulement sur demande (input `macos`).
+        include: ${{ fromJSON(inputs.macos && '[{"name":"macOS universel","platform":"macos-latest","args":"--target universal-apple-darwin"},{"name":"Windows x64","platform":"windows-latest","args":""},{"name":"Linux x64","platform":"ubuntu-22.04","args":""}]' || '[{"name":"Windows x64","platform":"windows-latest","args":""},{"name":"Linux x64","platform":"ubuntu-22.04","args":""}]') }}
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4

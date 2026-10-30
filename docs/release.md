@@ -8,7 +8,8 @@ Deux workflows GitHub Actions :
   Aucun secret.
 - **`release.yml`** — **lancé à la main** (Actions › Release › Run workflow, en choisissant le
   tag `vX.Y.Z` dans « Use workflow from ») pour économiser les minutes : vérifie les versions et les clés, crée un **brouillon**
-  de release, construit macOS (binaire universel Apple Silicon + Intel), Windows x64 et Linux x64
+  de release, construit Windows x64 et Linux x64 — plus macOS (binaire universel Apple Silicon +
+  Intel) si l'option « macos » est cochée au lancement —
   avec `tauri-apps/tauri-action`, signe, notarise, et dépose dans le brouillon les installeurs,
   leurs signatures de mise à jour et `latest.json`. **Rien n'est publié automatiquement.**
 
