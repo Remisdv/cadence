@@ -72,8 +72,10 @@ export interface HostApi {
   reposList(): Promise<string[]>;
   /** Modifie la liste des dépôts suivis ; renvoie la nouvelle liste. */
   reposSet(update: (repos: string[]) => string[]): Promise<string[]>;
-  /** Dépôt choisi dans la barre du plugin ; `null` = « Tous les dépôts ». */
+  /** Dépôt actif choisi dans la barre du plugin ; `null` quand le plugin n'en suit aucun. */
   reposSelection(): Promise<string | null>;
+  /** Rend un dépôt actif : suivi (en tête des récents) et sélectionné ; renvoie la liste suivie. */
+  reposSelect(repo: string): Promise<string[]>;
   /** Clone local de chaque dépôt suivi (`owner/nom` en minuscules → dossier), s'il existe. */
   reposLocalPaths(): Promise<Record<string, string>>;
   /** Clone au besoin et prépare le worktree de la tâche ; renvoie son chemin. */

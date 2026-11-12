@@ -221,6 +221,13 @@ export function publishedHandlers(
         await api.reposSet((list) => (list.includes(repo) ? list : [...list, repo])),
       );
     },
+    "repos.select": async (params) => {
+      const repo = text(params, "repo").trim();
+      if (!REPO.test(repo))
+        throw new BridgeError("invalid_params", `Dépôt invalide : « ${repo} ».`);
+      await api.reposSelect(repo);
+      return selectionOf(await api.reposSelection());
+    },
     "repos.unfollow": async (params) => {
       const repo = text(params, "repo");
       return repoInfos(api, await api.reposSet((list) => list.filter((r) => r !== repo)));

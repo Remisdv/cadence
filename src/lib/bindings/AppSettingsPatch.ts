@@ -20,6 +20,6 @@ catalogUrl?: string, pluginAutoUpdate?: boolean, devPlugins?: Array<string>, ign
  */
 trackedRepos?: Record<string, string[]>, 
 /**
- * Dépôt choisi dans la barre d'un plugin ; `null` = « Tous les dépôts ».
+ * Dépôt actif d'un plugin ; `null` = le premier dépôt suivi.
  */
 repoSelection?: Record<string, string | null>, };

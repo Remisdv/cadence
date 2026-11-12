@@ -6,7 +6,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call } from "@/lib/ipc/transport";
 import { buildThread } from "@/lib/domain/chat";
 import { startLog, type ToolRunLog } from "@/lib/domain/tools";
+import { activateRepo } from "@/lib/domain/repos";
 import type {
+  AppSettings,
   ActionRunInput,
   ApprovalDecision,
   AppSettingsPatch,
@@ -50,6 +52,31 @@ export function useSaveAppSettings() {
       // IA par défaut, IA ignorées, outils écartés : les demandeurs changent.
       void qc.invalidateQueries({ queryKey: keys.toolsReport() });
     },
+  });
+}
+
+/**
+ * Rend `repo` actif pour un plugin du service Dépôts : suivi (en tête des récents) et
+ * sélectionné dans la barre, en une seule écriture.
+ */
+export function useActivatePluginRepo(plugin: string) {
+  const save = useSaveAppSettings();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (repo: string) => {
+      const settings = qc.getQueryData<AppSettings>(keys.appSettings()) ?? (await call("app_settings_get"));
+      const tracked = activateRepo(settings.trackedRepos[plugin] ?? [], repo);
+      return save.mutateAsync({ trackedRepos: { [plugin]: tracked }, repoSelection: { [plugin]: repo } });
+    },
+  });
+}
+
+/** Crée un dépôt GitHub (sans l'ouvrir comme « projet ») ; la liste du compte est rafraîchie. */
+export function useCreateGithubRepo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RepoCreateInput) => call("repos_create", { input }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["project", "repos"] }),
   });
 }
 

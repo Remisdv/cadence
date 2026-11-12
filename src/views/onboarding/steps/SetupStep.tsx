@@ -18,9 +18,10 @@ import { StatusDot } from "@/components/ui/StatusDot";
 import { PluginTile } from "@/components/domain/PluginTile";
 import { OnboardingActions, OnboardingFrame } from "@/components/layout/OnboardingFrame";
 import { LoadingState } from "@/components/layout/EmptyState";
+import { CreateRepoForm } from "@/components/layout/CreateRepoForm";
+import { activeRepo } from "@/lib/domain/repos";
 import { formatAgo } from "@/lib/domain/format";
 import {
-  parseRepoInput,
   setupTasks,
   stepIndex,
   taskKey,
@@ -28,13 +29,13 @@ import {
   type SetupTask,
 } from "@/lib/domain/onboarding";
 import {
+  useActivatePluginRepo,
   useAppSettings,
   useAuthStatus,
   usePlugins,
   usePluginSecret,
   useRepoOwners,
   useRepos,
-  useSaveAppSettings,
   useSetPluginSecret,
   useSignOut,
 } from "@/lib/query/queries";
@@ -383,31 +384,28 @@ const serviceFacts: { icon: IconName; title: string; text: ReactNode }[] = [
 function ReposTask({ plugin, nav }: { plugin: InstalledPluginView; nav: TaskNav }) {
   const auth = useAuthStatus();
   const settings = useAppSettings();
-  const save = useSaveAppSettings();
   const [query, setQuery] = useState("");
   const [owner, setOwner] = useState("");
   const repos = useRepos("");
   const github = auth.data?.github;
   const connected = github?.status === "connected";
   const owners = useRepoOwners(connected);
-  const [picked, setPicked] = useState<string[] | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [url, setUrl] = useState("");
-  const [urlError, setUrlError] = useState<string | null>(null);
+  // Un seul dépôt actif par plugin : tout ce que le plugin gère est enregistré dans ce dépôt.
+  const [picked, setPicked] = useState<string | null | undefined>(undefined);
+  const [creating, setCreating] = useState(false);
+  const activate = useActivatePluginRepo(plugin.id);
 
-  const selected = picked ?? settings.data?.trackedRepos[plugin.id] ?? [];
-  const isSelected = (name: string) => selected.some((r) => r.toLowerCase() === name.toLowerCase());
-  const toggle = (name: string) =>
-    setPicked(
-      isSelected(name)
-        ? selected.filter((r) => r.toLowerCase() !== name.toLowerCase())
-        : [...selected, name],
-    );
+  const tracked = settings.data?.trackedRepos[plugin.id] ?? [];
+  const selected =
+    picked === undefined ? activeRepo(tracked, settings.data?.repoSelection[plugin.id]) : picked;
+  const isSelected = (name: string) => selected?.toLowerCase() === name.toLowerCase();
+  const toggle = (name: string) => setPicked(isSelected(name) ? null : name);
 
   const all = repos.data ?? [];
-  const extra = selected.filter(
-    (name) => !all.some((r) => r.fullName.toLowerCase() === name.toLowerCase()),
-  );
+  const extra =
+    selected && !all.some((r) => r.fullName.toLowerCase() === selected.toLowerCase())
+      ? [selected]
+      : [];
   const q = query.trim().toLowerCase();
   const visible = all.filter(
     (r) =>
@@ -415,27 +413,14 @@ function ReposTask({ plugin, nav }: { plugin: InstalledPluginView; nav: TaskNav 
       (!q || r.fullName.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q)),
   );
 
-  const addUrl = () => {
-    const name = parseRepoInput(url);
-    if (!name) {
-      setUrlError("Adresse GitHub ou owner/nom attendu.");
-      return;
-    }
-    if (!isSelected(name)) setPicked([...selected, name]);
-    setUrl("");
-    setUrlError(null);
-    setAdding(false);
-  };
-
-  const follow = () =>
-    save.mutate({ trackedRepos: { [plugin.id]: selected } }, { onSuccess: nav.next });
+  const follow = () => (selected ? activate.mutate(selected, { onSuccess: nav.next }) : nav.next());
 
   if (!connected) {
     return (
       <>
         <Callout tone="warning">
-          Le service Dépôts GitHub n'est pas connecté : connectez un compte pour choisir les dépôts
-          suivis, ou configurez-les plus tard depuis la barre du plugin.
+          Le service Dépôts GitHub n'est pas connecté : connectez un compte pour choisir le dépôt
+          du plugin, ou choisissez-le plus tard depuis la barre du plugin.
         </Callout>
         <OnboardingActions onBack={nav.back}>
           <Button variant="primary" size="lg" icon="github" onClick={() => nav.restart("github")}>
@@ -495,12 +480,23 @@ function ReposTask({ plugin, nav }: { plugin: InstalledPluginView; nav: TaskNav 
               ))}
             </select>
             <div className="grow" />
-            <span className="text-small whitespace-nowrap text-tx3">
-              <span className="font-semibold text-clay">{selected.length}</span> suivi
-              {selected.length > 1 ? "s" : ""}
-            </span>
+            <Button variant="ghost" size="sm" icon="plus" onClick={() => setCreating(true)}>
+              Créer un dépôt
+            </Button>
           </div>
-          <div className="max-h-[416px] overflow-y-auto">
+          {creating && (
+            <div className="border-b border-line bg-p2">
+              <CreateRepoForm
+                initialName={query}
+                onBack={() => setCreating(false)}
+                onCreated={(repo) => {
+                  setPicked(repo.fullName);
+                  setCreating(false);
+                }}
+              />
+            </div>
+          )}
+          <div className="max-h-[416px] overflow-y-auto" role="radiogroup" aria-label="Dépôt du plugin">
             {repos.isPending && (
               <div className="flex h-24 items-center justify-center">
                 <Spinner />
@@ -548,55 +544,31 @@ function ReposTask({ plugin, nav }: { plugin: InstalledPluginView; nav: TaskNav 
                 <Icon name="layers" size={12} />
               </span>
               <span className="min-w-0 grow truncate text-body-sm font-medium">
-                {selected.length === 1 ? selected[0] : "Tous les dépôts"}
+                {selected ?? "Choisir un dépôt"}
               </span>
-              <span className="mono text-tiny text-tx3">{selected.length}</span>
               <span className="flex text-tx3">
                 <Icon name="chevronDown" size={13} />
               </span>
             </div>
           </div>
           <div className="text-caption leading-[1.55] text-tx3">
-            Un dépôt à la fois, ou « Tous les dépôts » pour les vues agrégées.
+            Un dépôt à la fois : issues, catégories, roadmap et sprints y sont enregistrés. Vous
+            en changez (ou en créez un) depuis ce sélecteur.
           </div>
         </div>
       </div>
-
-      {adding && (
-        <div className="flex max-w-[640px] items-center gap-2">
-          <input
-            autoFocus
-            aria-label="Adresse du dépôt"
-            placeholder="https://github.com/owner/nom ou owner/nom"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addUrl()}
-            className="h-8 min-w-0 grow rounded-control border border-line2 bg-p2 px-2.5 mono text-body-sm text-tx outline-none focus:border-clay-line"
-          />
-          <Button onClick={addUrl}>Ajouter</Button>
-          <Button variant="quiet" onClick={() => setAdding(false)}>
-            Annuler
-          </Button>
-          {urlError && <span className="text-caption text-red">{urlError}</span>}
-        </div>
-      )}
 
       <OnboardingActions onBack={nav.back}>
         <Button
           variant="primary"
           size="lg"
           iconRight="arrowRight"
-          disabled={save.isPending}
+          disabled={activate.isPending}
           onClick={follow}
         >
-          {selected.length === 0
-            ? "Continuer sans dépôt"
-            : `Suivre ${selected.length} dépôt${selected.length > 1 ? "s" : ""} et continuer`}
+          {selected ? `Travailler dans ${selected} et continuer` : "Continuer sans dépôt"}
         </Button>
-        <Button variant="ghost" icon="link" onClick={() => setAdding(true)}>
-          Ajouter par URL…
-        </Button>
-        {save.error && <span className="text-caption text-red">{save.error.message}</span>}
+        {activate.error && <span className="text-caption text-red">{activate.error.message}</span>}
       </OnboardingActions>
     </>
   );
@@ -623,7 +595,8 @@ function RepoLine({
       )}
     >
       <input
-        type="checkbox"
+        type="radio"
+        name="plugin-repo"
         checked={checked}
         onChange={onToggle}
         className="m-0 size-[15px] shrink-0 accent-clay"

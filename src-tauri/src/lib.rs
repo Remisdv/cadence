@@ -260,6 +260,7 @@ pub fn run() {
             commands::repos::repos_checkout,
             commands::repos::repos_link,
         ])
+            commands::repos::repos_create,
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {

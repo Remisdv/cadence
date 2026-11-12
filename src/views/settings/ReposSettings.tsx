@@ -1,8 +1,9 @@
 /**
  * Réglages › Services › Dépôts GitHub (V2-Settings.dc.html) : compte connecté au service,
- * emplacement des clones (sous la configuration de l'app), dépôts suivis par chaque plugin qui
- * déclare `services = ["repos"]`, avec l'état réel de leur copie locale (clonée par Cadence,
- * clone désigné par l'utilisateur, ou pas encore clonée).
+ * emplacement des clones (sous la configuration de l'app), dépôt actif de chaque plugin qui
+ * déclare `services = ["repos"]` (choisi parmi les dépôts du compte, ou créé) et ses dépôts
+ * récents, avec l'état réel de leur copie locale (clonée par Cadence, clone désigné par
+ * l'utilisateur, ou pas encore clonée).
  */
 import { useState } from "react";
 import type { InstalledPluginView, RepoCloneView } from "@/lib/types";
@@ -16,7 +17,8 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/Menu";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { SettingRow } from "@/components/domain/Panels";
 import { PluginTile } from "@/components/domain/PluginTile";
-import { parseRepoInput } from "@/lib/domain/onboarding";
+import { activeRepo } from "@/lib/domain/repos";
+import { PluginRepoSelector } from "@/components/layout/PluginRepoSelector";
 import { pickPaths } from "@/lib/platform";
 import {
   useAppSettings,
@@ -63,7 +65,7 @@ export function ReposSettings({ plugins }: { plugins: InstalledPluginView[] }) {
             <div className="min-w-0 grow">
               <div className="text-body font-semibold">Dépôts GitHub</div>
               <div className="truncate text-caption text-tx3">
-                <span className="mono">repos</span> · connexion GitHub, dépôts suivis, clones et
+                <span className="mono">repos</span> · connexion GitHub, dépôt de chaque plugin, clones et
                 worktrees
               </div>
             </div>
@@ -141,7 +143,7 @@ export function ReposSettings({ plugins }: { plugins: InstalledPluginView[] }) {
           </div>
         </div>
 
-        <SectionLabel className="mt-[22px]">Dépôts suivis</SectionLabel>
+        <SectionLabel className="mt-[22px]">Dépôt de chaque plugin</SectionLabel>
         {users.length === 0 ? (
           <Callout tone="info" icon="info" className="mt-2">
             Aucun plugin activé n'utilise le service : il s'activera avec le premier plugin qui
@@ -153,6 +155,7 @@ export function ReposSettings({ plugins }: { plugins: InstalledPluginView[] }) {
               key={plugin.id}
               plugin={plugin}
               repos={tracked[plugin.id] ?? []}
+              active={activeRepo(tracked[plugin.id] ?? [], settings?.repoSelection[plugin.id])}
               clones={clones}
             />
           ))
@@ -175,8 +178,8 @@ export function ReposSettings({ plugins }: { plugins: InstalledPluginView[] }) {
               <div key={p.id} className="flex items-center gap-2 py-1 text-body-sm">
                 <PluginTile color={p.color} icon={p.railIcon} size={18} />
                 <span className="min-w-0 grow truncate">{p.name}</span>
-                <span className="text-caption text-tx3">
-                  {(tracked[p.id] ?? []).length} suivi{(tracked[p.id] ?? []).length > 1 ? "s" : ""}
+                <span className="max-w-[120px] truncate text-caption text-tx3">
+                  {activeRepo(tracked[p.id] ?? [], settings?.repoSelection[p.id]) ?? "aucun dépôt"}
                 </span>
               </div>
             ))
@@ -226,10 +229,12 @@ function CloneState({ clone }: { clone: RepoCloneView | undefined }) {
 function TrackedRepos({
   plugin,
   repos,
+  active,
   clones,
 }: {
   plugin: InstalledPluginView;
   repos: string[];
+  active: string | null;
   clones: Map<string, RepoCloneView>;
 }) {
   const save = useSaveAppSettings();
@@ -243,29 +248,22 @@ function TrackedRepos({
     });
     if (path) link.mutate({ repo, path });
   };
-  const [input, setInput] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const update = (next: string[]) => save.mutate({ trackedRepos: { [plugin.id]: next } });
-  const add = () => {
-    const name = parseRepoInput(input);
-    if (!name) {
-      setError("Adresse GitHub ou owner/nom attendu.");
-      return;
-    }
-    setError(null);
-    setInput("");
-    if (!repos.some((r) => r.toLowerCase() === name.toLowerCase())) update([...repos, name]);
-  };
 
   return (
     <div className="mt-2 overflow-hidden rounded-card border border-line bg-panel">
       <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
         <PluginTile color={plugin.color} icon={plugin.railIcon} size={18} />
         <span className="grow text-body-sm font-medium">{plugin.name}</span>
-        <span className="text-caption text-tx3">
-          {repos.length} dépôt{repos.length > 1 ? "s" : ""} suivi{repos.length > 1 ? "s" : ""}
-        </span>
+        <div className="flex w-[280px] flex-col">
+          <PluginRepoSelector plugin={plugin.id} />
+        </div>
       </div>
+      {repos.length > 0 && (
+        <div className="border-b border-line bg-p2 px-3.5 py-1.5 text-micro text-tx3">
+          Dépôts récents : l'IA peut encore y finir une tâche lancée avant un changement de dépôt.
+        </div>
+      )}
       {repos.map((repo) => {
         const [owner, name] = repo.split("/");
         const clone = clones.get(repo.toLowerCase());
@@ -278,6 +276,7 @@ function TrackedRepos({
               <span className="text-tx3">{owner}/</span>
               {name}
             </span>
+            {repo === active && <Badge tone="clay">actif</Badge>}
             <CloneState clone={clone} />
             <Menu>
               <MenuTrigger asChild>
@@ -305,7 +304,7 @@ function TrackedRepos({
               variant="quiet"
               size="xs"
               iconOnly
-              aria-label={`Ne plus suivre ${repo}`}
+              aria-label={`Oublier ${repo}`}
               disabled={save.isPending}
               onClick={() => update(repos.filter((r) => r !== repo))}
             >
@@ -314,29 +313,9 @@ function TrackedRepos({
           </div>
         );
       })}
-      <form
-        className="flex items-center gap-2 px-3.5 py-2.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          add();
-        }}
-      >
-        <Input
-          size="sm"
-          mono
-          aria-label={`Suivre un dépôt avec ${plugin.name}`}
-          placeholder="https://github.com/owner/nom ou owner/nom"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          className="min-w-0 grow"
-        />
-        <Button type="submit" size="sm" icon="plus" disabled={!input.trim() || save.isPending}>
-          Suivre
-        </Button>
-      </form>
-      {(error || save.error || link.error) && (
-        <div className="px-3.5 pb-2.5 text-caption text-red">
-          {error ?? save.error?.message ?? link.error?.message}
+      {(save.error || link.error) && (
+        <div className="px-3.5 py-2.5 text-caption text-red">
+          {save.error?.message ?? link.error?.message}
         </div>
       )}
     </div>

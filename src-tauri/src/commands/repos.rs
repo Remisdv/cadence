@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::{
+    api::github::repos as gh_repos,
     error::{AppError, AppResult},
+    domain::project::{OwnerKind, Repo, RepoCreateInput},
     plugins::manifest::PluginService,
     repos::{RepoCheckout, RepoCloneView},
     state::AppState,
@@ -43,4 +45,20 @@ pub async fn repos_checkout(
 pub async fn repos_link(state: State<'_, AppState>, repo: String, path: Option<String>) -> AppResult<RepoCloneView> {
     let path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).map(PathBuf::from);
     state.repo_service.link(&repo, path.as_deref()).await
+}
+
+/// Crée un dépôt GitHub (compte ou organisation) depuis le sélecteur de la barre d'un plugin ;
+/// il rejoint en tête la liste des dépôts du compte. Le plugin le choisit ensuite (suivi et
+/// sélectionné), sans passer par l'ancien « projet ouvert ».
+#[tauri::command]
+pub async fn repos_create(state: State<'_, AppState>, input: RepoCreateInput) -> AppResult<Repo> {
+    input.validate()?;
+    let token = state.github_token()?;
+    let me = crate::api::github::fetch_user(&state.http, &token).await?;
+    let kind = if input.owner.eq_ignore_ascii_case(&me.login) { OwnerKind::User } else { OwnerKind::Organization };
+    let repo = gh_repos::create_repo(&state.http, &token, &input, kind).await?;
+    if let Some(list) = state.repos.write().await.as_mut() {
+        list.insert(0, repo.clone());
+    }
+    Ok(repo)
 }

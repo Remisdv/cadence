@@ -22,7 +22,9 @@ import type {
   PluginProcessView,
   PluginStateEvent,
   ProjectState,
+  Repo,
   RepoCloneView,
+  RepoCreateInput,
   ReposChanged,
 } from "@/lib/types";
 import type { CommandArgs, CommandName, CommandResult } from "../commands";
@@ -259,6 +261,35 @@ const handlers: Handlers = {
     }
     for (const [action, ai] of Object.entries(patch.actionAi ?? {})) {
       if (!/^[a-z0-9_-]+\/[a-z0-9_-]+$/.test(action))
+/** Création d'un dépôt simulée (nom validé, doublon refusé), en tête de la liste du compte. */
+async function mockCreateRepo(
+  command: "repos_create" | "project_create",
+  input: RepoCreateInput,
+): Promise<Repo> {
+  await delay(700);
+  const name = input.name.trim();
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(name) || name === "." || name === "..") {
+    fail(command, "Nom de dépôt invalide : lettres, chiffres, « - », « _ » et « . » uniquement.");
+  }
+  const fullName = `${input.owner}/${name}`;
+  if (data.repos.some((r) => r.fullName.toLowerCase() === fullName.toLowerCase())) {
+    fail(command, "Un dépôt porte déjà ce nom sur ce compte.");
+  }
+  const repo: Repo = {
+    fullName,
+    owner: input.owner,
+    name,
+    description: input.description?.trim() || null,
+    private: input.private ?? false,
+    defaultBranch: "main",
+    openIssues: 0,
+    milestones: 0,
+    pushedAt: new Date().toISOString(),
+  };
+  data.repos.unshift(repo);
+  return repo;
+}
+
         fail("app_settings_set", `« ${action} » n'est pas une action <plugin>/<action>.`);
       if (ai) next.actionAi[action] = ai;
       else delete next.actionAi[action];
@@ -808,30 +839,8 @@ const handlers: Handlers = {
   },
   project_owners: () => data.repoOwners,
   project_create: async ({ input }) => {
-    await delay(700);
-    const name = input.name.trim();
-    if (!/^[A-Za-z0-9._-]{1,100}$/.test(name) || name === "." || name === "..") {
-      fail(
-        "project_create",
-        "Nom de dépôt invalide : lettres, chiffres, « - », « _ » et « . » uniquement.",
-      );
-    }
-    const fullName = `${input.owner}/${name}`;
-    if (data.repos.some((r) => r.fullName.toLowerCase() === fullName.toLowerCase())) {
-      fail("project_create", "Un dépôt porte déjà ce nom sur ce compte.");
-    }
-    data.repos.unshift({
-      fullName,
-      owner: input.owner,
-      name,
-      description: input.description?.trim() || null,
-      private: input.private ?? false,
-      defaultBranch: "main",
-      openIssues: 0,
-      milestones: 0,
-      pushedAt: new Date().toISOString(),
-    });
-    state.project = data.projectFor(fullName);
+    await mockCreateRepo("project_create", input);
+    state.project = data.projectFor(`${input.owner}/${input.name.trim()}`);
     return state.project;
   },
   project_open: async ({ repo }) => {
@@ -842,6 +851,7 @@ const handlers: Handlers = {
 
   versions_list: () => data.versions,
   version_current: () => data.currentVersion,
+  repos_create: async ({ input }) => mockCreateRepo("repos_create", input),
   version_detail: ({ title }) => {
     const report = versionReport(title ?? state.project?.currentVersion ?? null);
     if (!report)

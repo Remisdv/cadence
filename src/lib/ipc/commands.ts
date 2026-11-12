@@ -123,6 +123,8 @@ export interface Commands {
   };
   /** « Désigner un clone existant… » ; `path` nul = revenir au clone de Cadence. */
   repos_link: { args: { repo: string; path: string | null }; result: RepoCloneView };
+  /** Crée un dépôt GitHub depuis le sélecteur de la barre d'un plugin (sans « projet ouvert »). */
+  repos_create: { args: { input: RepoCreateInput }; result: Repo };
   // Chat du cœur (réponses par `chat://event` et `chat://state`)
   /** Sans les conversations cachées (de groupe), sauf avec `group` (id préfixé par le plugin). */
   chat_sessions: {

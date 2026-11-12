@@ -6,6 +6,7 @@ import { CommandError } from "@/lib/ipc/errors";
 import { call, isMockIpc } from "@/lib/ipc/transport";
 import { openExternal, pickPaths } from "@/lib/platform";
 import type { AiId, InstalledPluginView } from "@/lib/types";
+import { activateRepo, activeRepo } from "@/lib/domain/repos";
 import { navigate } from "@/stores/navigation";
 import { useUiStore } from "@/stores/ui";
 import type { HostApi } from "./bridge";
@@ -104,7 +105,17 @@ export function hostApi(plugin: Pick<InstalledPluginView, "id" | "name">): HostA
       const saved = await call("app_settings_set", { patch: { trackedRepos: { [id]: next } } });
       return saved.trackedRepos[id] ?? [];
     },
-    reposSelection: async () => (await call("app_settings_get")).repoSelection[id] ?? null,
+    reposSelection: async () => {
+      const settings = await call("app_settings_get");
+      return activeRepo(settings.trackedRepos[id] ?? [], settings.repoSelection[id]);
+    },
+    reposSelect: async (repo) => {
+      const current = (await call("app_settings_get")).trackedRepos[id] ?? [];
+      const saved = await call("app_settings_set", {
+        patch: { trackedRepos: { [id]: activateRepo(current, repo) }, repoSelection: { [id]: repo } },
+      });
+      return saved.trackedRepos[id] ?? [];
+    },
     reposLocalPaths: async () =>
       Object.fromEntries(
         (await call("repos_status"))

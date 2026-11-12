@@ -133,8 +133,8 @@ pub struct AppSettings {
     pub ignored_tools: Vec<ToolId>,
     /// Service `repos` : dépôts GitHub suivis (`owner/name`) par plugin.
     pub tracked_repos: BTreeMap<String, Vec<String>>,
-    /// Service `repos` : dépôt choisi dans le sélecteur de la barre du plugin (absent = « Tous
-    /// les dépôts »). Toujours un des dépôts suivis par le plugin.
+    /// Service `repos` : dépôt actif choisi dans le sélecteur de la barre du plugin. Toujours un
+    /// des dépôts suivis ; un plugin qui suit au moins un dépôt en a toujours un d'actif.
     pub repo_selection: BTreeMap<String, String>,
     /// Service `repos` : clone local désigné par l'utilisateur, par dépôt (`owner/name` en
     /// minuscules → dossier). Écrit seulement par `repos_link`, après vérification du clone.
@@ -258,9 +258,15 @@ impl AppSettings {
                 }
             }
         }
-        // Un dépôt qui n'est plus suivi ne peut pas rester sélectionné : retour à « Tous ».
+        // Un seul dépôt actif par plugin (tout ce que le plugin gère vit dans ce dépôt) : une
+        // sélection absente, ou d'un dépôt qui n'est plus suivi, passe au premier dépôt suivi.
         let tracked = self.tracked_repos.clone();
         self.repo_selection.retain(|plugin, repo| tracked.get(plugin).is_some_and(|list| list.contains(repo)));
+        for (plugin, list) in &tracked {
+            if let Some(first) = list.first() {
+                self.repo_selection.entry(plugin.clone()).or_insert_with(|| first.clone());
+            }
+        }
         if let Some(mut ignored) = patch.ignored_tools {
             ignored.sort();
             ignored.dedup();
@@ -322,7 +328,7 @@ pub struct AppSettingsPatch {
     /// Liste complète des dépôts suivis d'un plugin ; liste vide = n'en suivre aucun.
     #[ts(optional, type = "Record<string, string[]>")]
     pub tracked_repos: Option<BTreeMap<String, Vec<String>>>,
-    /// Dépôt choisi dans la barre d'un plugin ; `null` = « Tous les dépôts ».
+    /// Dépôt actif d'un plugin ; `null` = le premier dépôt suivi.
     #[ts(optional, type = "Record<string, string | null>")]
     pub repo_selection: Option<BTreeMap<String, Option<String>>>,
 }
@@ -511,6 +517,7 @@ mod tests {
         };
         s.apply(track(&["RemiSDV/cadence", " remisdv/cadence ", "RemiSDV/cadence-plugins.git"])).unwrap();
         assert_eq!(s.tracked_repos["gestion-projet"], ["RemiSDV/cadence", "RemiSDV/cadence-plugins"]);
+        assert_eq!(s.repo_selection["gestion-projet"], "RemiSDV/cadence", "premier dépôt suivi : actif d'office");
         let select = |repo: Option<&str>| AppSettingsPatch {
             repo_selection: Some(BTreeMap::from([("gestion-projet".to_string(), repo.map(str::to_string))])),
             ..Default::default()
@@ -519,12 +526,13 @@ mod tests {
         assert_eq!(s.repo_selection["gestion-projet"], "RemiSDV/cadence", "écriture du dépôt suivi");
         assert!(s.apply(select(Some("autre/depot"))).is_err(), "seulement un dépôt suivi");
         s.apply(select(None)).unwrap();
-        assert!(s.repo_selection.is_empty(), "retour à « Tous les dépôts »");
+        assert_eq!(s.repo_selection["gestion-projet"], "RemiSDV/cadence", "jamais « tous » : le premier suivi");
         s.apply(select(Some("RemiSDV/cadence"))).unwrap();
         s.apply(track(&["RemiSDV/cadence-plugins"])).unwrap();
-        assert!(s.repo_selection.is_empty(), "dépôt retiré : sélection oubliée");
+        assert_eq!(s.repo_selection["gestion-projet"], "RemiSDV/cadence-plugins", "dépôt retiré : le suivant devient actif");
         s.apply(track(&[])).unwrap();
         assert!(s.tracked_repos.is_empty());
+        assert!(s.repo_selection.is_empty(), "plus aucun dépôt : plus de dépôt actif");
     }
 
     #[test]

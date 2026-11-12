@@ -45,8 +45,8 @@ ignoredTools: Array<ToolId>,
  */
 trackedRepos: { [key in string]: Array<string> }, 
 /**
- * Service `repos` : dépôt choisi dans le sélecteur de la barre du plugin (absent = « Tous
- * les dépôts »). Toujours un des dépôts suivis par le plugin.
+ * Service `repos` : dépôt actif choisi dans le sélecteur de la barre du plugin. Toujours un
+ * des dépôts suivis ; un plugin qui suit au moins un dépôt en a toujours un d'actif.
  */
 repoSelection: { [key in string]: string }, 
 /**

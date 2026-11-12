@@ -30,6 +30,7 @@ function setup(overrides: Partial<HostApi> = {}) {
     reposList: vi.fn(async () => ["RemiSDV/cadence"]),
     reposSet: vi.fn(async (update: (r: string[]) => string[]) => update(["RemiSDV/cadence"])),
     reposSelection: vi.fn(async () => "RemiSDV/cadence"),
+    reposSelect: vi.fn(async (repo: string) => [repo, "RemiSDV/cadence"]),
     reposLocalPaths: vi.fn(async () => ({ "remisdv/cadence": "C:/repos/remisdv/cadence" })),
     reposCheckout: vi.fn(
       async (repo: string, task: string | null) => `C:/repos/.worktrees/${repo}/${task}`,
@@ -258,6 +259,24 @@ describe("pont de l'iframe", () => {
       selection: { kind: "one", repo: "RemiSDV/cadence" },
     });
     expect((await reposChange(api, [], null)).selection).toEqual({ kind: "all" });
+  });
+
+  it("rend un dépôt actif depuis l'iframe (repos.select)", async () => {
+    const { bridge, sent, frame, api } = setup();
+    const ask = async (id: string, params: unknown) => {
+      await bridge.handle({
+        source: frame,
+        data: { channel: "cadence", api: 1, kind: "request", id, method: "repos.select", params },
+      });
+      return sent.find((m) => (m as unknown as { id?: string }).id === id) as unknown;
+    };
+    expect(await ask("s1", { repo: " me/neuf " })).toMatchObject({ ok: true });
+    expect(api.reposSelect).toHaveBeenCalledWith("me/neuf");
+    expect(await ask("s2", { repo: "https://github.com/me/x" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+    expect(api.reposSelect).toHaveBeenCalledTimes(1);
   });
 
   it("fusionne les réglages et pousse les événements", async () => {

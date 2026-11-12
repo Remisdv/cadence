@@ -648,7 +648,7 @@ function PluginDetail({
               <span className="grow text-body-sm font-medium">Dépôts GitHub</span>
             </div>
             <div className="mt-[7px] text-caption leading-[1.55] text-tx3">
-              Fourni par Cadence. Ce plugin aura sa propre liste de dépôts suivis.
+              Fourni par Cadence. Ce plugin travaille dans un dépôt que vous choisissez (ou créez).
             </div>
           </div>
         </DetailSection>
