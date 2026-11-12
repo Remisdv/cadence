@@ -45,23 +45,27 @@ export function PluginTile({ color, icon, size = 26, className }: PluginTileProp
   );
 }
 
-/** Tuile neutre (chat global, réglages) : fond p4, icône tx. */
+const neutralSizes = {
+  13: { box: "size-[13px] rounded-[4px] text-tx2", icon: 9 },
+  18: { box: "size-[18px] rounded-badge text-tx2", icon: 11 },
+  22: { box: "size-[22px] rounded-md text-tx", icon: 14 },
+} as const;
+
+/** Tuile neutre (chat global, réglages) : fond p4, icône tx ; 18px dans les listes. */
 export function NeutralTile({
   icon,
   size = 22,
 }: {
   icon: Parameters<typeof Icon>[0]["name"];
-  size?: 13 | 22;
+  size?: keyof typeof neutralSizes;
 }) {
+  const s = neutralSizes[size];
   return (
     <span
       aria-hidden="true"
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center bg-p4",
-        size === 22 ? "size-[22px] rounded-md text-tx" : "size-[13px] rounded-[4px] text-tx2",
-      )}
+      className={cn("inline-flex shrink-0 items-center justify-center bg-p4", s.box)}
     >
-      <Icon name={icon} size={size === 22 ? 14 : 9} />
+      <Icon name={icon} size={s.icon} />
     </span>
   );
 }

@@ -22,6 +22,13 @@
 //! attente, et celles du tour en cours, suivent tout de suite le nouveau mode (« Auto » les
 //! accepte, « Édition auto » accepte les modifications de fichiers).
 //!
+//! Dépôts d'une conversation (sélecteur du composeur, à côté du plugin) : chaque dépôt suivi
+//! choisi reçoit un worktree propre à la conversation (tâche `chat-<id>`, détaché sur la branche
+//! par défaut), ouvert à la CLI comme ceux de `cadence__repo_checkout`. Le tour qui suit un
+//! changement de la liste commence par une note qui donne à l'IA les dossiers de chaque dépôt ;
+//! un dépôt retiré est refermé (relance de la CLI au tour suivant), son worktree reste sur le
+//! disque avec le travail en cours.
+//!
 //! « Autoriser pour la session » vaut pour la famille de la demande (`ai::session_rules` :
 //! programmes d'une commande, modifications de fichiers, outil) jusqu'à la fermeture de Cadence :
 //! les demandes couvertes reçoivent un accord d'office, sans carte.
@@ -30,7 +37,7 @@ pub mod conversations;
 pub mod store;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc, Weak,
@@ -121,6 +128,55 @@ pub struct ChatSendInput {
     #[serde(default)]
     #[ts(optional)]
     pub plugin: Option<String>,
+    /// Dépôts suivis (`owner/name`) d'une nouvelle conversation, ouverts à l'IA dès le premier
+    /// tour ; ignoré pour une conversation existante (`chat_set_repos`).
+    #[serde(default)]
+    #[ts(optional)]
+    pub repos: Option<Vec<String>>,
+}
+
+/// Dépôts ouverts à une conversation, au plus.
+pub const MAX_CHAT_REPOS: usize = 8;
+
+/// Liste des dépôts d'une conversation : noms `owner/name` valides, sans doublon (casse
+/// ignorée), tous suivis par un plugin (`tracked`), dans l'ordre choisi.
+pub fn chat_repos(repos: &[String], tracked: impl Fn(&str) -> bool) -> AppResult<Vec<String>> {
+    let mut list: Vec<String> = Vec::new();
+    for repo in repos.iter().map(|r| r.trim().trim_end_matches(".git")).filter(|r| !r.is_empty()) {
+        if !crate::app_settings::is_repo_name(repo) {
+            return Err(AppError::Validation(format!("« {repo} » n'est pas un dépôt GitHub (owner/nom).")));
+        }
+        if !tracked(repo) {
+            return Err(AppError::Validation(format!(
+                "Le dépôt {repo} n'est suivi par aucun plugin : ajoutez-le d'abord (Réglages › Dépôts GitHub)."
+            )));
+        }
+        if !list.iter().any(|r| r.eq_ignore_ascii_case(repo)) {
+            list.push(repo.to_string());
+        }
+    }
+    if list.len() > MAX_CHAT_REPOS {
+        return Err(AppError::Validation(format!("{MAX_CHAT_REPOS} dépôts au plus par conversation.")));
+    }
+    Ok(list)
+}
+
+/// Tâche du worktree d'une conversation dans chacun de ses dépôts.
+pub fn chat_task(session: &str) -> String {
+    format!("chat-{session}")
+}
+
+/// Note placée en tête du tour qui suit un changement des dépôts : où se trouve chacun.
+pub fn repos_note(opened: &[(String, PathBuf)]) -> String {
+    if opened.is_empty() {
+        return "[Cadence] Plus aucun dépôt n'est ouvert à cette conversation.\n\n".into();
+    }
+    let list: Vec<String> = opened.iter().map(|(repo, path)| format!("- {repo} : {}", path.display())).collect();
+    format!(
+        "[Cadence] Dépôts GitHub ouverts à cette conversation, un worktree par dépôt, propre à la conversation \
+         (détaché sur la branche par défaut : crée une branche avant de modifier, ne pousse que si je le demande) :\n{}\n\n",
+        list.join("\n")
+    )
 }
 
 /// Origine d'une nouvelle conversation : `plugin:<id>` depuis la barre d'un plugin, sinon `user`.
@@ -289,6 +345,11 @@ pub struct ChatService {
     rules: StdMutex<HashMap<String, SessionRules>>,
     /// Demandes en attente de chaque conversation (tour en cours), dans l'ordre.
     waiting: StdMutex<HashMap<String, Vec<(String, Waiting)>>>,
+    /// Worktrees ouverts pour les dépôts de chaque conversation (dépôt → dossier), tant que
+    /// l'app tourne.
+    opened: StdMutex<HashMap<String, BTreeMap<String, PathBuf>>>,
+    /// Dépôts annoncés à l'IA par la dernière note (`repos_note`) de chaque conversation.
+    announced: StdMutex<HashMap<String, Vec<String>>>,
     /// Conversations dont l'utilisateur a arrêté le tour : sa fin, même en échec côté CLI
     /// (`error_during_execution` quand un accord attendait), est un arrêt (recette du 21/10, R05).
     stopping: StdMutex<HashSet<String>>,
@@ -328,6 +389,8 @@ impl ChatService {
             background,
             rules: StdMutex::default(),
             waiting: StdMutex::default(),
+            opened: StdMutex::default(),
+            announced: StdMutex::default(),
             stopping: StdMutex::default(),
         })
     }
@@ -488,6 +551,7 @@ impl ChatService {
         let id = match input.session {
             Some(id) => self.store.get(&id).await?.id,
             None => {
+                let repos = self.checked_repos(input.repos.as_deref().unwrap_or_default())?;
                 let ai = input.ai.unwrap_or(AiId::ClaudeCode);
                 let now = now_iso();
                 let row = ChatSessionRow {
@@ -503,6 +567,7 @@ impl ChatService {
                     updated_at: now,
                     group: None,
                     hidden: false,
+                    repos,
                     context: None,
                 };
                 self.store.create(&row).await?;
@@ -531,6 +596,14 @@ impl ChatService {
         mode: SessionMode,
         permit: Option<OwnedSemaphorePermit>,
     ) -> AppResult<()> {
+        let note = match self.open_repos(id).await {
+            Ok(note) => note,
+            Err(err) => {
+                self.record(id, turn, AiEvent::Error { kind: AiErrorKind::Other, message: err.to_string() }).await?;
+                self.set_state(id, ChatState::Failed).await?;
+                return Err(err);
+            }
+        };
         let (session, turn_slot) = match self.ensure_live(id, mode, permit).await {
             Ok(live) => live,
             Err(err) => {
@@ -542,7 +615,11 @@ impl ChatService {
         turn_slot.store(turn, Ordering::SeqCst);
         self.stopping.lock().unwrap().remove(id);
         self.set_state(id, ChatState::Running).await?;
-        if let Err(err) = session.send(text).await {
+        let text = match note {
+            Some(note) => format!("{note}{text}"),
+            None => text.to_string(),
+        };
+        if let Err(err) = session.send(&text).await {
             self.record(id, turn, AiEvent::Error { kind: AiErrorKind::Crash, message: err.to_string() }).await?;
             self.set_state(id, ChatState::Failed).await?;
             return Err(err);
@@ -570,6 +647,7 @@ impl ChatService {
             updated_at: now,
             group: start.group,
             hidden: start.hidden,
+            repos: Vec::new(),
             context: start.context,
         };
         self.store.create(&row).await?;
@@ -728,6 +806,75 @@ impl ChatService {
         Ok((session, turn))
     }
 
+    /// Dépôts validés pour une conversation : suivis par un plugin (service Dépôts requis dès
+    /// qu'il y en a un).
+    fn checked_repos(&self, repos: &[String]) -> AppResult<Vec<String>> {
+        if repos.iter().all(|r| r.trim().is_empty()) {
+            return Ok(Vec::new());
+        }
+        let service = self.repo_service()?;
+        chat_repos(repos, |repo| service.is_tracked(repo, None))
+    }
+
+    fn repo_service(&self) -> AppResult<Arc<crate::repos::RepoService>> {
+        self.gateway.as_ref().and_then(|g| g.context.repos().cloned()).ok_or_else(|| {
+            AppError::Validation("Le service Dépôts de Cadence n'est pas disponible : aucun dépôt ne peut être ouvert.".into())
+        })
+    }
+
+    /// Ouvre à la CLI les dépôts de la conversation pas encore ouverts (clone et worktree au
+    /// besoin) ; renvoie la note à placer en tête du tour quand la liste a changé depuis la
+    /// dernière annonce.
+    async fn open_repos(&self, id: &str) -> AppResult<Option<String>> {
+        let row = self.store.get(id).await?;
+        let known = self.opened.lock().unwrap().get(id).cloned().unwrap_or_default();
+        let mut opened = Vec::new();
+        for repo in &row.repos {
+            let path = match known.get(repo) {
+                Some(path) => path.clone(),
+                None => {
+                    let service = self.repo_service()?;
+                    let path = service
+                        .checkout(repo, Some(&chat_task(id)))
+                        .await
+                        .map_err(|err| AppError::Validation(format!("Dépôt {repo} non ouvert : {err}")))?;
+                    if let Some(gateway) = &self.gateway {
+                        gateway.context.grant(id, path.clone());
+                    }
+                    self.opened.lock().unwrap().entry(id.to_string()).or_default().insert(repo.clone(), path.clone());
+                    path
+                }
+            };
+            opened.push((repo.clone(), path));
+        }
+        let mut announced = self.announced.lock().unwrap();
+        let before = announced.get(id).cloned().unwrap_or_default();
+        if before == row.repos {
+            return Ok(None);
+        }
+        announced.insert(id.to_string(), row.repos.clone());
+        Ok(Some(repos_note(&opened)))
+    }
+
+    /// Change les dépôts de la conversation. Les nouveaux s'ouvrent au tour suivant ; un dépôt
+    /// retiré est refermé (la CLI est relancée au tour suivant), son worktree reste sur le disque.
+    pub async fn set_repos(&self, id: &str, repos: &[String]) -> AppResult<ChatSessionRow> {
+        let repos = self.checked_repos(repos)?;
+        let row = self.store.set_repos(id, &repos).await?;
+        let removed: Vec<PathBuf> = {
+            let mut opened = self.opened.lock().unwrap();
+            let entry = opened.entry(id.to_string()).or_default();
+            let gone: Vec<String> = entry.keys().filter(|repo| !repos.contains(repo)).cloned().collect();
+            gone.iter().filter_map(|repo| entry.remove(repo)).collect()
+        };
+        if let Some(gateway) = &self.gateway {
+            for dir in &removed {
+                gateway.context.revoke(id, dir);
+            }
+        }
+        Ok(row)
+    }
+
     /// Worktrees ouverts à la conversation (`cadence__repo_checkout`).
     fn granted(&self, id: &str) -> Vec<PathBuf> {
         self.gateway.as_ref().map(|g| g.context.granted(id)).unwrap_or_default()
@@ -824,6 +971,8 @@ impl ChatService {
         }
         self.rules.lock().unwrap().remove(id);
         self.waiting.lock().unwrap().remove(id);
+        self.opened.lock().unwrap().remove(id);
+        self.announced.lock().unwrap().remove(id);
         self.store.delete(id).await?;
         let dir = self.config.sessions_root.join(id);
         if dir.exists() && std::fs::remove_dir_all(&dir).is_err() {
@@ -1212,6 +1361,33 @@ mod tests {
         assert!(text.starts_with("Résume\n\nPièces jointes") && text.ends_with("- pieces-jointes/notes"));
         assert_eq!(with_attachments("Bonjour", &[]), "Bonjour");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn conversation_repos_are_tracked_unique_and_bounded() {
+        let tracked = |repo: &str| repo.to_lowercase().starts_with("remisdv/");
+        let list = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            chat_repos(&list(&["RemiSDV/poc", " remisdv/POC ", "RemiSDV/prod.git", ""]), tracked).unwrap(),
+            ["RemiSDV/poc", "RemiSDV/prod"],
+            "doublons (casse ignorée) et `.git` retirés, ordre gardé"
+        );
+        assert!(chat_repos(&list(&["autre/depot"]), tracked).is_err(), "seulement un dépôt suivi");
+        assert!(chat_repos(&list(&["pas-un-depot"]), tracked).is_err());
+        let many: Vec<String> = (0..=MAX_CHAT_REPOS).map(|i| format!("RemiSDV/r{i}")).collect();
+        assert!(chat_repos(&many, tracked).is_err(), "plafond");
+        assert_eq!(chat_task("c18f"), "chat-c18f");
+    }
+
+    #[test]
+    fn the_repos_note_lists_each_worktree() {
+        let note = repos_note(&[("o/poc".into(), PathBuf::from("/r/poc")), ("o/prod".into(), PathBuf::from("/r/prod"))]);
+        assert!(note.starts_with("[Cadence] Dépôts GitHub ouverts"));
+        assert!(note.contains("- o/poc : /r/poc
+- o/prod : /r/prod
+
+"), "{note}");
+        assert!(repos_note(&[]).contains("Plus aucun dépôt"));
     }
 
     #[test]

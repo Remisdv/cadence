@@ -121,6 +121,13 @@ impl GatewayContext {
         self.grants.lock().unwrap().get(session).map(|dirs| dirs.iter().cloned().collect()).unwrap_or_default()
     }
 
+    /// Referme `dir` à la session (dépôt retiré de la conversation).
+    pub fn revoke(&self, session: &str, dir: &std::path::Path) {
+        if let Some(dirs) = self.grants.lock().unwrap().get_mut(session) {
+            dirs.remove(dir);
+        }
+    }
+
     /// La conversation disparaît : ses accès aussi.
     pub fn forget_grants(&self, session: &str) {
         self.grants.lock().unwrap().remove(session);

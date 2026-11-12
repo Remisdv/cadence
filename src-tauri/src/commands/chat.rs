@@ -102,6 +102,12 @@ pub async fn chat_set_permissions(state: State<'_, AppState>, session: String, p
     chat(&state)?.set_permissions(&session, permissions).await
 }
 
+/// Dépôts de la conversation (sélecteur du composeur) ; ouverts ou refermés au tour suivant.
+#[tauri::command]
+pub async fn chat_set_repos(state: State<'_, AppState>, session: String, repos: Vec<String>) -> AppResult<ChatSessionRow> {
+    chat(&state)?.set_repos(&session, &repos).await
+}
+
 /// Supprime la conversation, son historique et son dossier de travail.
 #[tauri::command]
 pub async fn chat_session_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {

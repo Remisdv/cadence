@@ -40,6 +40,7 @@ function session(id: string, title: string, minutesAgo: number, origin = "user")
     updatedAt: at(minutesAgo),
     group: null,
     hidden: false,
+    repos: [],
   };
 }
 

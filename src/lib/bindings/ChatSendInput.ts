@@ -24,4 +24,9 @@ permissions?: ChatPermissions,
  * Nouvelle conversation ouverte depuis la barre d'un plugin (« + » de ses conversations) :
  * origine `plugin:<id>`, listée dans cette barre avec la puce du plugin.
  */
-plugin?: string, };
+plugin?: string, 
+/**
+ * Dépôts suivis (`owner/name`) d'une nouvelle conversation, ouverts à l'IA dès le premier
+ * tour ; ignoré pour une conversation existante (`chat_set_repos`).
+ */
+repos?: Array<string>, };

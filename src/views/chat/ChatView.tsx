@@ -5,14 +5,27 @@
  *
  * Le composeur porte le mode de la conversation (Demander, Édition auto, Auto), mémorisé avec
  * elle ; l'en-tête, l'interrupteur « Commandes » (préférence gardée dans `stores/ui`).
+ *
+ * Comme dans Claude Code, le composeur porte aussi le contexte : le plugin de la conversation
+ * (sa catégorie dans la colonne, fixé à la création) et, pour un plugin du service Dépôts, les
+ * dépôts ouverts à l'IA — par défaut le dépôt actif du plugin, plusieurs possibles, modifiables
+ * en cours de conversation.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { ChatBar, SessionContext } from "@/components/layout/ChatBar";
 import { Page } from "@/components/layout/Page";
 import { Icon } from "@/components/icons/Icon";
 import { cn } from "@/lib/cn";
 import { ChatThread } from "@/components/domain/ChatThread";
 import { ChatModeMenu } from "@/components/domain/ChatModeMenu";
+import { ChatPluginMenu, ChatReposMenu } from "@/components/domain/ChatContextMenus";
 import { PluginTile } from "@/components/domain/PluginTile";
 import { Button } from "@/components/ui/Button";
 import {
@@ -37,11 +50,15 @@ import { aiTileClass } from "@/components/domain/AiCard";
 import { aiLabels, aiOrder } from "@/lib/domain/ai";
 import { toolIcons, toolOfAi } from "@/lib/domain/tools";
 import {
+  chatRepoChoices,
+  contextPlugin,
+  defaultChatRepos,
   formatDuration,
   groupReturnLabel,
   localGroup,
   originPlugin,
   parseCadenceLink,
+  usesRepos,
   type ChatItem,
 } from "@/lib/domain/chat";
 import { useFrames } from "@/plugin-host/FramePool";
@@ -59,6 +76,7 @@ import {
   useRenameChat,
   useSendChat,
   useSetChatPermissions,
+  useSetChatRepos,
   useTools,
 } from "@/lib/query/queries";
 import type {
@@ -101,6 +119,34 @@ export default function ChatView({ view }: ViewProps<"chat">) {
     else setPickedMode(next);
   };
 
+  /**
+   * Plugin choisi dans le composeur pour une nouvelle conversation (`null` = Global) : celui de
+   * la catégorie d'où on l'ouvre, sinon Global. Fixé ensuite (origine de la conversation).
+   */
+  const [pickedPlugin, setPickedPlugin] = useState<string | null>(fromPlugin);
+  /** Dépôts choisis pour une nouvelle conversation ; `null` = ceux par défaut du plugin. */
+  const [pickedRepos, setPickedRepos] = useState<string[] | null>(null);
+  const setRepos = useSetChatRepos();
+  useEffect(() => {
+    if (sessionId !== null) return;
+    setPickedPlugin(fromPlugin);
+    setPickedRepos(null);
+  }, [sessionId, fromPlugin]);
+  const contextId = session ? contextPlugin(session.origin) : pickedPlugin;
+  const contextView = plugins.find((p) => p.id === contextId);
+  const repoChoices = chatRepoChoices(settings, contextId);
+  const defaultRepos = usesRepos(contextView) ? defaultChatRepos(settings, contextId) : [];
+  const repos = session ? session.repos : (pickedRepos ?? defaultRepos);
+  const showRepos = usesRepos(contextView) || repos.length > 0;
+  const onRepos = (next: string[]) => {
+    if (sessionId) setRepos.mutate({ session: sessionId, repos: next });
+    else setPickedRepos(next);
+  };
+  const onPlugin = (plugin: string | null) => {
+    setPickedPlugin(plugin);
+    setPickedRepos(null);
+  };
+
   const tools = useTools().data;
   /** IA choisie dans le composeur pour une nouvelle conversation (fixée ensuite). */
   const [picked, setPicked] = useState<AiId | null>(null);
@@ -125,7 +171,8 @@ export default function ChatView({ view }: ViewProps<"chat">) {
       ai: sessionId ? null : aiId,
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(sessionId ? {} : { permissions: pickedMode }),
-      ...(fromPlugin ? { plugin: fromPlugin } : {}),
+      ...(!sessionId && pickedPlugin ? { plugin: pickedPlugin } : {}),
+      ...(!sessionId && repos.length > 0 ? { repos } : {}),
     });
     if (id !== sessionId) replace({ id: "chat", session: id });
   };
@@ -148,7 +195,12 @@ export default function ChatView({ view }: ViewProps<"chat">) {
 
   return (
     <>
-      <ChatBar active={sessionId ?? undefined} onSelect={open} onNew={() => open(null)} />
+      <ChatBar
+        active={sessionId ?? undefined}
+        onSelect={open}
+        onNew={() => open(null)}
+        onNewIn={(plugin) => navigate(plugin ? { id: "chat", plugin } : { id: "chat" })}
+      />
       <Page
         title={
           <span className="flex items-center gap-[9px]">
@@ -156,7 +208,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             <ContextChip
               session={
                 session ??
-                (fromPlugin ? { origin: `plugin:${fromPlugin}`, state: "idle" } : undefined)
+                (pickedPlugin ? { origin: `plugin:${pickedPlugin}`, state: "idle" } : undefined)
               }
               plugins={plugins}
             />
@@ -164,7 +216,14 @@ export default function ChatView({ view }: ViewProps<"chat">) {
           </span>
         }
         subtitle={[
-          group ? `Rattachée à ${group.label}` : "Chat global",
+          group
+            ? `Rattachée à ${group.label}`
+            : contextView
+              ? `Rangée dans ${contextView.name}`
+              : "Chat global",
+          ...(repos.length > 0
+            ? [`${repos.length} dépôt${repos.length > 1 ? "s" : ""} ouvert${repos.length > 1 ? "s" : ""}`]
+            : []),
           ai ?? "aucune IA choisie",
           n > 0
             ? `voit les outils des ${n} plugin${n > 1 ? "s" : ""} activé${n > 1 ? "s" : ""}`
@@ -228,6 +287,7 @@ export default function ChatView({ view }: ViewProps<"chat">) {
             running={running}
             plugins={plugins}
             showCommands={showCommands}
+            repos={repos}
             onApprove={(request, decision) => approve.mutate({ request, decision })}
             onAnswer={(request, answers) => answer.mutateAsync({ request, answers })}
             onLink={onLink}
@@ -245,12 +305,33 @@ export default function ChatView({ view }: ViewProps<"chat">) {
               interrupt.error?.message ??
               approve.error?.message ??
               answer.error?.message ??
-              setPermissions.error?.message
+              setPermissions.error?.message ??
+              setRepos.error?.message
             }
             onSend={onSend}
             onStop={() => sessionId && interrupt.mutate(sessionId)}
             plugins={plugins}
             waitingReply={session?.state === "waiting-reply"}
+            context={
+              <>
+                <ChatPluginMenu
+                  value={contextId}
+                  plugins={plugins}
+                  onChange={onPlugin}
+                  locked={!!session}
+                />
+                {showRepos && (
+                  <ChatReposMenu
+                    value={repos}
+                    own={repoChoices.own}
+                    others={repoChoices.others}
+                    pluginName={contextView?.name}
+                    onChange={onRepos}
+                    onManage={() => navigate({ id: "settings", section: "repos" })}
+                  />
+                )}
+              </>
+            }
           />
         </div>
         <SessionPanel
@@ -328,6 +409,7 @@ function Thread({
   running,
   plugins,
   showCommands,
+  repos,
   onApprove,
   onAnswer,
   onLink,
@@ -340,6 +422,8 @@ function Thread({
   running: boolean;
   plugins: InstalledPluginView[];
   showCommands: boolean;
+  /** Dépôts ouverts à l'IA (accueil d'une nouvelle conversation). */
+  repos: string[];
   onApprove: (request: string, decision: "allow" | "allow-session" | "deny") => void;
   onAnswer: (request: string, answers: QuestionAnswer[]) => Promise<unknown>;
   onLink: (href: string) => boolean;
@@ -367,7 +451,7 @@ function Thread({
         {error ? (
           <p className="pt-16 text-center text-body-sm text-red">{error}</p>
         ) : loading ? null : items.length === 0 ? (
-          <Welcome ai={ai} plugins={plugins} />
+          <Welcome ai={ai} plugins={plugins} repos={repos} />
         ) : (
           <ChatThread
             items={items}
@@ -385,7 +469,15 @@ function Thread({
   );
 }
 
-function Welcome({ ai, plugins }: { ai: string | null; plugins: InstalledPluginView[] }) {
+function Welcome({
+  ai,
+  plugins,
+  repos,
+}: {
+  ai: string | null;
+  plugins: InstalledPluginView[];
+  repos: string[];
+}) {
   return (
     <div className="flex flex-col items-center gap-4 pt-16 text-center">
       <span className="inline-flex size-10 items-center justify-center rounded-tile bg-clay text-ink">
@@ -395,9 +487,25 @@ function Welcome({ ai, plugins }: { ai: string | null; plugins: InstalledPluginV
         {ai ? `Discuter avec ${ai}` : "Choisissez une IA de code"}
       </h2>
       <p className="max-w-[520px] text-body-sm leading-[1.6] text-tx2">
-        Le chat global voit les outils de tous les plugins activés. L'IA travaille dans un dossier
-        neutre de Cadence, jamais dans un de vos dépôts.
+        {repos.length > 0
+          ? `Le chat voit les outils de tous les plugins activés. ${
+              repos.length > 1 ? "Les dépôts choisis sont ouverts" : "Le dépôt choisi est ouvert"
+            } à l'IA dans un worktree propre à cette conversation : vos clones ne sont pas touchés.`
+          : "Le chat global voit les outils de tous les plugins activés. L'IA travaille dans un dossier neutre de Cadence, jamais dans un de vos dépôts."}
       </p>
+      {repos.length > 0 && (
+        <div className="flex flex-wrap justify-center gap-1.5">
+          {repos.map((repo) => (
+            <span
+              key={repo}
+              className="inline-flex h-[26px] items-center gap-1.5 rounded-control border border-line bg-p2 px-2 mono text-small text-tx2"
+            >
+              <Icon name="branch" size={12} className="text-green" />
+              {repo}
+            </span>
+          ))}
+        </div>
+      )}
       {plugins.length > 0 && (
         <div className="flex flex-wrap justify-center gap-1.5">
           {plugins.map((p) => (
@@ -443,7 +551,10 @@ function Composer({
   onStop,
   plugins,
   waitingReply = false,
+  context,
 }: {
+  /** Plugin et dépôts de la conversation (menus à droite de l'IA). */
+  context?: ReactNode;
   ai: AiId | null;
   /** IA proposées pour une nouvelle conversation ; vide = IA fixée (conversation existante). */
   choices: AiId[];
@@ -594,6 +705,7 @@ function Composer({
                 <AiChip ai={aiId} />
               </span>
             )}
+            {context}
             <ChatModeMenu value={mode} onChange={onMode} running={running} />
             {withSkills.length > 0 && (
               <Menu>

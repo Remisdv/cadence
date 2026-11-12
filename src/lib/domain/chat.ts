@@ -415,18 +415,20 @@ export function globalConversations<T extends Pick<ChatSessionRow, "hidden">>(ro
   return rows.filter((row) => !row.hidden);
 }
 
-const DAY_GROUPS = ["Aujourd'hui", "Hier", "Cette semaine", "Plus ancien"];
-
-/** Section de la colonne des conversations ; `attached` : conversations rangées dans un groupe. */
+/**
+ * Section de la colonne des conversations ; `attached` : conversations rangées dans un groupe ;
+ * `plugin` : catégorie d'un plugin (son id), ou `null` pour le chat global.
+ */
 export interface ChatBarSection<T> {
   title: string;
   rows: T[];
   attached?: boolean;
+  plugin?: string | null;
 }
 
 type BarRow = Pick<
   ChatSessionRow,
-  "id" | "title" | "hidden" | "group" | "mode" | "state" | "updatedAt"
+  "id" | "title" | "hidden" | "group" | "mode" | "state" | "updatedAt" | "origin"
 >;
 
 /**
@@ -434,12 +436,17 @@ type BarRow = Pick<
  * hors de la liste, même en attente (recette du 21/10, R06 : celle d'un sprint clos y restait
  * indéfiniment), sauf celle ouverte et, pendant une recherche, celles qui correspondent (titre
  * ou nom du groupe) : section « Rattachées », en tête.
+ *
+ * Les autres conversations sont rangées par catégorie, comme les projets de Claude Code :
+ * « Global », puis un plugin par section dans l'ordre du rail (`plugins`), puis les plugins
+ * désactivés ou désinstallés qui ont encore des conversations. Chaque section garde l'ordre de
+ * la liste (la plus récente d'abord).
  */
 export function chatBarSections<T extends BarRow>(
   rows: T[],
   query: string,
   active: string | null,
-  now = new Date(),
+  plugins: { id: string; name: string }[] = [],
 ): ChatBarSection<T>[] {
   const q = query.trim().toLowerCase();
   const matches = (s: T) =>
@@ -451,11 +458,76 @@ export function chatBarSections<T extends BarRow>(
     { title: "Rattachées", rows: attached, attached: true },
     // Exécutions de fond des actions : leur propre groupe (panneau Activité).
     { title: "En fond", rows: listed.filter((s) => s.mode === "background") },
-    ...DAY_GROUPS.map((title) => ({
-      title,
-      rows: chats.filter((s) => conversationGroup(s.updatedAt, now) === title),
-    })),
+    ...chatCategories(chats, plugins),
   ].filter((section) => section.rows.length > 0);
+}
+
+/** Conversations rangées par catégorie : « Global », puis chaque plugin. */
+function chatCategories<T extends Pick<ChatSessionRow, "origin">>(
+  rows: T[],
+  plugins: { id: string; name: string }[],
+): ChatBarSection<T>[] {
+  const order: (string | null)[] = [null, ...plugins.map((p) => p.id)];
+  for (const row of rows) {
+    const plugin = contextPlugin(row.origin);
+    if (!order.includes(plugin)) order.push(plugin);
+  }
+  return order.map((plugin) => ({
+    title: plugin === null ? "Global" : (plugins.find((p) => p.id === plugin)?.name ?? plugin),
+    plugin,
+    rows: rows.filter((row) => contextPlugin(row.origin) === plugin),
+  }));
+}
+
+/** Le plugin donne accès à des dépôts GitHub (`services = ["repos"]`) : sélecteur de dépôts. */
+export function usesRepos(plugin: { services: string[] } | null | undefined): boolean {
+  return !!plugin?.services.includes("repos");
+}
+
+type RepoSettings = {
+  trackedRepos: Record<string, string[]>;
+  repoSelection: Record<string, string>;
+};
+
+/**
+ * Dépôts proposés dans le composeur pour une conversation du plugin : ceux qu'il suit, puis
+ * ceux des autres plugins (le back n'ouvre qu'un dépôt suivi). Sans doublon, casse ignorée.
+ */
+export function chatRepoChoices(
+  settings: RepoSettings | undefined,
+  plugin: string | null,
+): { own: string[]; others: string[] } {
+  const own = plugin ? (settings?.trackedRepos[plugin] ?? []) : [];
+  const seen = new Set(own.map((r) => r.toLowerCase()));
+  const others: string[] = [];
+  for (const [id, list] of Object.entries(settings?.trackedRepos ?? {})) {
+    if (id === plugin) continue;
+    for (const repo of list) {
+      if (seen.has(repo.toLowerCase())) continue;
+      seen.add(repo.toLowerCase());
+      others.push(repo);
+    }
+  }
+  return { own, others };
+}
+
+/**
+ * Dépôts d'une nouvelle conversation du plugin, avant tout choix : le dépôt actif de sa barre
+ * (sinon le premier qu'il suit).
+ */
+export function defaultChatRepos(settings: RepoSettings | undefined, plugin: string | null): string[] {
+  if (!plugin) return [];
+  const active = settings?.repoSelection[plugin] ?? settings?.trackedRepos[plugin]?.[0];
+  return active ? [active] : [];
+}
+
+/** Libellé court des dépôts d'une conversation (`owner/nom`, `nom + 1`, `3 dépôts`). */
+export function reposLabel(repos: string[]): string {
+  if (repos.length === 0) return "Aucun dépôt";
+  if (repos.length === 1) return repos[0]!;
+  const name = (repo: string) => repo.split("/").pop() ?? repo;
+  if (repos.length === 2) return `${name(repos[0]!)} + ${name(repos[1]!)}`;
+  return `${repos.length} dépôts`;
 }
 
 /** Groupe d'une conversation vu par son plugin : l'id sans le préfixe `<plugin>:` de l'hôte. */

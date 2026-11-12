@@ -5,6 +5,7 @@ import {
   awaitsUser,
   buildThread,
   chatBarSections,
+  chatRepoChoices,
   cliMessage,
   contextPlugin,
   conversationOriginLabel,
@@ -12,6 +13,7 @@ import {
   compactArgs,
   composeAnswer,
   conversationGroup,
+  defaultChatRepos,
   formatDuration,
   globalConversations,
   groupReturnLabel,
@@ -23,7 +25,9 @@ import {
   pluginApprovals,
   pluginToolOf,
   railWaiting,
+  reposLabel,
   toolLabel,
+  usesRepos,
   waitingLabel,
   waitingSummary,
 } from "./chat";
@@ -307,7 +311,6 @@ describe("activité d'un tour", () => {
 });
 
 describe("colonne du chat et barre du plugin (recette du 21/10)", () => {
-  const now = new Date("2026-10-21T12:00:00");
   const row = (id: string, extra: Partial<ChatSessionRow> = {}): ChatSessionRow => ({
     id,
     title: id,
@@ -321,6 +324,7 @@ describe("colonne du chat et barre du plugin (recette du 21/10)", () => {
     updatedAt: "2026-10-21T09:00:00",
     group: null,
     hidden: false,
+    repos: [],
     ...extra,
   });
   const sprint = { id: "gestion-projet:sprint:o/n:3", label: "Sprint 0.2.0 · o/n" };
@@ -343,21 +347,69 @@ describe("colonne du chat et barre du plugin (recette du 21/10)", () => {
     sections.map((s) => `${s.title}: ${s.rows.map((r) => r.id).join(", ")}`);
 
   it("garde les conversations de sprint hors de la liste, même en attente, sauf ouverte (R06)", () => {
-    expect(titles(chatBarSections(all, "", null, now))).toEqual([
+    expect(titles(chatBarSections(all, "", null))).toEqual([
       "En fond: fond",
-      "Aujourd'hui: libre",
+      "Global: libre",
     ]);
-    const opened = chatBarSections(all, "", "Relire et valider", now);
+    const opened = chatBarSections(all, "", "Relire et valider");
     expect(opened[0]!.attached).toBe(true);
     expect(opened[0]!.rows.map((r) => r.id)).toEqual(["Relire et valider"]);
   });
 
   it("la recherche trouve les conversations de sprint par titre ou nom du sprint (P18)", () => {
-    expect(titles(chatBarSections(all, "relire", null, now))).toEqual([
+    expect(titles(chatBarSections(all, "relire", null))).toEqual([
       "Rattachées: Relire et valider",
     ]);
-    expect(chatBarSections(all, "sprint 0.2.0", null, now)[0]!.rows).toHaveLength(2);
-    expect(chatBarSections(all, "introuvable", null, now)).toEqual([]);
+    expect(chatBarSections(all, "sprint 0.2.0", null)[0]!.rows).toHaveLength(2);
+    expect(chatBarSections(all, "introuvable", null)).toEqual([]);
+  });
+
+  it("range les conversations par plugin, dans l'ordre du rail, Global en tête", () => {
+    const rows = [
+      row("doc", { origin: "plugin:documents" }),
+      row("gp", { origin: "plugin:gestion-projet" }),
+      row("libre"),
+      row("action", { origin: "action:gestion-projet/extraire-issues" }),
+      row("ancien", { origin: "plugin:minuteur" }),
+    ];
+    const plugins = [
+      { id: "gestion-projet", name: "Gestion de projet" },
+      { id: "documents", name: "Documents" },
+    ];
+    const sections = chatBarSections(rows, "", null, plugins);
+    expect(titles(sections)).toEqual([
+      "Global: libre",
+      "Gestion de projet: gp, action",
+      "Documents: doc",
+      "minuteur: ancien",
+    ]);
+    expect(sections.map((s) => s.plugin)).toEqual([null, "gestion-projet", "documents", "minuteur"]);
+    expect(titles(chatBarSections(rows, "doc", null, plugins))).toEqual(["Documents: doc"]);
+  });
+
+  it("propose les dépôts du plugin d'abord, et son dépôt actif par défaut", () => {
+    const settings = {
+      trackedRepos: {
+        "gestion-projet": ["o/prod", "o/poc"],
+        documents: ["O/POC", "o/notes"],
+      },
+      repoSelection: { "gestion-projet": "o/poc" },
+    };
+    expect(chatRepoChoices(settings, "gestion-projet")).toEqual({
+      own: ["o/prod", "o/poc"],
+      others: ["o/notes"],
+    });
+    expect(chatRepoChoices(settings, null).own).toEqual([]);
+    expect(defaultChatRepos(settings, "gestion-projet")).toEqual(["o/poc"]);
+    expect(defaultChatRepos(settings, "documents")).toEqual(["O/POC"]);
+    expect(defaultChatRepos(settings, null)).toEqual([]);
+    expect(defaultChatRepos(undefined, "gestion-projet")).toEqual([]);
+    expect(usesRepos({ services: ["repos"] })).toBe(true);
+    expect(usesRepos({ services: [] })).toBe(false);
+    expect(reposLabel([])).toBe("Aucun dépôt");
+    expect(reposLabel(["o/poc"])).toBe("o/poc");
+    expect(reposLabel(["o/poc", "o/prod"])).toBe("poc + prod");
+    expect(reposLabel(["a/1", "a/2", "a/3"])).toBe("3 dépôts");
   });
 
   it("liste les conversations non cachées d'un plugin et leur origine (P19)", () => {
@@ -433,7 +485,7 @@ describe("attente de l'utilisateur (N10) et outils de plugin (N12)", () => {
       origin: "action:gestion-projet/relire-valider",
       state: "waiting-reply" as const,
     };
-    expect(chatBarSections([relire], "", null, new Date("2026-10-21T12:00:00"))).toEqual([]);
+    expect(chatBarSections([relire], "", null)).toEqual([]);
     expect(railWaiting([relire])).toEqual({ reply: 0, approval: 0, sessions: [] });
     // Une réponse attendue (sprint clos ou non) n'allume pas non plus la tuile du plugin.
     expect(pluginApprovals([relire], "gestion-projet")).toEqual([]);

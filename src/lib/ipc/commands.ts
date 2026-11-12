@@ -159,6 +159,8 @@ export interface Commands {
     args: { session: string; permissions: ChatPermissions };
     result: ChatSessionRow;
   };
+  /** Dépôts de la conversation ; ouverts (worktree propre) ou refermés au tour suivant. */
+  chat_set_repos: { args: { session: string; repos: string[] }; result: ChatSessionRow };
   chat_session_delete: { args: { id: string }; result: null };
   // Auth
   auth_start_device_flow: { args: NoArgs; result: DeviceFlowStart };

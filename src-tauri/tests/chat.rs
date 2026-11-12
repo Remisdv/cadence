@@ -69,7 +69,7 @@ async fn service(dir: PathBuf, tweak: impl FnOnce(&mut ChatConfig)) -> Fixture {
 
 impl Fixture {
     async fn send(&self, session: Option<&str>, text: &str) -> String {
-        let input = ChatSendInput { session: session.map(str::to_string), text: text.into(), ai: None, attachments: None, permissions: None, plugin: None };
+        let input = ChatSendInput { session: session.map(str::to_string), text: text.into(), ai: None, attachments: None, permissions: None, plugin: None, repos: None };
         self.chat.send(input).await.unwrap().session
     }
 
@@ -309,14 +309,29 @@ async fn closes_idle_processes_caps_them_and_deletes_conversations() {
     assert!(!f.dir.join("sessions").join(&a).exists(), "dossier de travail supprimé");
     assert!(f.chat.detail(&a).await.is_err());
     assert_eq!(f.chat.rename(&b, "Renommée").await.unwrap().title, "Renommée");
-    assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None, attachments: None, permissions: None, plugin: None }).await.is_err());
+    assert!(f.chat.send(ChatSendInput { session: None, text: "  ".into(), ai: None, attachments: None, permissions: None, plugin: None, repos: None }).await.is_err());
+    // Sans service Dépôts, une conversation ne peut pas recevoir de dépôt (rien n'est créé).
+    let before = f.chat.sessions(None, false).await.unwrap().len();
+    let with_repo = ChatSendInput {
+        session: None,
+        text: "regarde".into(),
+        ai: None,
+        attachments: None,
+        permissions: None,
+        plugin: Some("gestion-projet".into()),
+        repos: Some(vec!["o/poc".into()]),
+    };
+    assert!(f.chat.send(with_repo).await.is_err());
+    assert_eq!(f.chat.sessions(None, false).await.unwrap().len(), before, "aucune conversation créée");
+    assert!(f.chat.set_repos(&b, &["o/poc".into()]).await.is_err());
+    assert!(f.chat.set_repos(&b, &[]).await.unwrap().repos.is_empty(), "retirer tous les dépôts reste possible");
     f.chat.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn applies_a_new_mode_from_the_next_turn_by_resuming_the_session() {
     let f = fixture("modes", |_| {}).await;
-    let input = ChatSendInput { session: None, text: "mode".into(), ai: None, attachments: None, permissions: Some(Permissions::AutoEdit), plugin: None };
+    let input = ChatSendInput { session: None, text: "mode".into(), ai: None, attachments: None, permissions: Some(Permissions::AutoEdit), plugin: None, repos: None };
     let id = f.chat.send(input).await.unwrap().session;
     f.wait(&id, ChatState::Idle).await;
     assert_eq!(f.replies(&id).await, ["mode : acceptEdits"], "mode choisi à la création");
@@ -578,7 +593,7 @@ async fn asks_choice_questions_and_returns_the_answers_even_in_auto_mode() {
     let answer = |id: &str, answers: &[&str]| QuestionAnswer { id: id.into(), answers: answers.iter().map(|s| s.to_string()).collect() };
     // « Auto » (bypassPermissions) compris : la question est posée à l'utilisateur.
     for permissions in [Permissions::Ask, Permissions::Full] {
-        let input = ChatSendInput { session: None, text: "question".into(), ai: None, attachments: None, permissions: Some(permissions), plugin: None };
+        let input = ChatSendInput { session: None, text: "question".into(), ai: None, attachments: None, permissions: Some(permissions), plugin: None, repos: None };
         let id = f.chat.send(input).await.unwrap().session;
         f.wait(&id, ChatState::WaitingApproval).await;
         let (request, questions) = f

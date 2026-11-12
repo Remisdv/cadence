@@ -231,6 +231,7 @@ pub fn run() {
             commands::chat::chat_approve,
             commands::chat::chat_session_rename,
             commands::chat::chat_set_permissions,
+            commands::chat::chat_set_repos,
             commands::chat::chat_session_delete,
             commands::auth::auth_start_device_flow,
             commands::auth::auth_start_web_flow,
@@ -259,8 +260,8 @@ pub fn run() {
             commands::repos::repos_status,
             commands::repos::repos_checkout,
             commands::repos::repos_link,
-        ])
             commands::repos::repos_create,
+        ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {

@@ -21,4 +21,9 @@ group: ChatGroup | null,
 /**
  * Absente du chat global (conversation de groupe) ; elle s'ouvre quand même dans le chat.
  */
-hidden: boolean, };
+hidden: boolean, 
+/**
+ * Dépôts suivis (`owner/name`) choisis dans le composeur : chacun reçoit un worktree propre
+ * à la conversation, ouvert à l'IA dès le tour suivant.
+ */
+repos: Array<string>, };

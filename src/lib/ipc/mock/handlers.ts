@@ -132,6 +132,34 @@ function installed(command: string, id: string): InstalledPluginView {
   return plugin;
 }
 
+/** Dépôts d'une conversation, comme `chat_repos` côté Rust : suivis, sans doublon, 8 au plus. */
+function chatRepos(command: string, repos: string[]): string[] {
+  const tracked = Object.values(state.settings.trackedRepos).flat();
+  const list: string[] = [];
+  for (const raw of repos) {
+    const repo = raw.trim().replace(/\.git$/, "");
+    if (!repo) continue;
+    if (!tracked.some((r) => r.toLowerCase() === repo.toLowerCase()))
+      fail(
+        command,
+        `Le dépôt ${repo} n'est suivi par aucun plugin : ajoutez-le d'abord (Réglages › Dépôts GitHub).`,
+      );
+    if (!list.some((r) => r.toLowerCase() === repo.toLowerCase())) list.push(repo);
+  }
+  if (list.length > 8) fail(command, "8 dépôts au plus par conversation.");
+  return list;
+}
+
+/** Dépôts de la conversation et leurs worktrees `chat-<id>` (panneau « Accès aux dépôts »). */
+function openChatRepos(session: string, repos: string[]) {
+  const chat = state.chats.get(session)!;
+  chat.session = { ...chat.session, repos };
+  chat.worktrees = repos.map((repo) =>
+    winPath(REPOS_DIR, ".worktrees", ...repo.toLowerCase().split("/"), `chat-${session}`),
+  );
+  return chat.session;
+}
+
 function declaredSecret(command: string, plugin: string, secret: string): string {
   const found = installed(command, plugin).secrets.some((s) => s.id === secret);
   if (!found) fail(command, `Le plugin « ${plugin} » ne déclare pas le secret « ${secret} ».`);
@@ -233,34 +261,6 @@ async function installFromMockCatalog(command: string, id: string) {
   return plugin;
 }
 
-const handlers: Handlers = {
-  app_status: () => ({
-    onboarded: state.settings.onboarded,
-    version: "0.3.0-dev",
-    gateway: "http://127.0.0.1:52417/mcp",
-    dirs: {
-      plugins: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins`,
-      pluginsData: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins-data`,
-      sessions: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\sessions`,
-      repos: REPOS_DIR,
-    },
-  }),
-  app_settings_get: () => state.settings,
-  app_export_config: ({ path }) => {
-    if (!path.trim()) fail("app_export_config", "Chemin d'export vide.");
-    return null;
-  },
-  app_settings_set: ({ patch }) => {
-    const next = structuredClone(state.settings);
-    if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
-    if (patch.defaultAi !== undefined) next.defaultAi = patch.defaultAi;
-    for (const change of patch.ai ?? []) {
-      const key = change.ai === "claude-code" ? "claudeCode" : change.ai;
-      if (change.path !== undefined) next.ai[key].path = change.path.trim() || null;
-      if (change.enabled !== undefined) next.ai[key].enabled = change.enabled;
-    }
-    for (const [action, ai] of Object.entries(patch.actionAi ?? {})) {
-      if (!/^[a-z0-9_-]+\/[a-z0-9_-]+$/.test(action))
 /** Création d'un dépôt simulée (nom validé, doublon refusé), en tête de la liste du compte. */
 async function mockCreateRepo(
   command: "repos_create" | "project_create",
@@ -290,6 +290,34 @@ async function mockCreateRepo(
   return repo;
 }
 
+const handlers: Handlers = {
+  app_status: () => ({
+    onboarded: state.settings.onboarded,
+    version: "0.3.0-dev",
+    gateway: "http://127.0.0.1:52417/mcp",
+    dirs: {
+      plugins: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins`,
+      pluginsData: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\plugins-data`,
+      sessions: String.raw`C:\Users\moi\AppData\Roaming\fr.cadence.app\sessions`,
+      repos: REPOS_DIR,
+    },
+  }),
+  app_settings_get: () => state.settings,
+  app_export_config: ({ path }) => {
+    if (!path.trim()) fail("app_export_config", "Chemin d'export vide.");
+    return null;
+  },
+  app_settings_set: ({ patch }) => {
+    const next = structuredClone(state.settings);
+    if (patch.onboarded !== undefined) next.onboarded = patch.onboarded;
+    if (patch.defaultAi !== undefined) next.defaultAi = patch.defaultAi;
+    for (const change of patch.ai ?? []) {
+      const key = change.ai === "claude-code" ? "claudeCode" : change.ai;
+      if (change.path !== undefined) next.ai[key].path = change.path.trim() || null;
+      if (change.enabled !== undefined) next.ai[key].enabled = change.enabled;
+    }
+    for (const [action, ai] of Object.entries(patch.actionAi ?? {})) {
+      if (!/^[a-z0-9_-]+\/[a-z0-9_-]+$/.test(action))
         fail("app_settings_set", `« ${action} » n'est pas une action <plugin>/<action>.`);
       if (ai) next.actionAi[action] = ai;
       else delete next.actionAi[action];
@@ -545,9 +573,11 @@ async function mockCreateRepo(
     if (!text) fail("chat_send", "Le message est vide.");
     const ai = input.ai ?? state.settings.defaultAi ?? "claude-code";
     const origin = input.plugin ? `plugin:${input.plugin}` : "user";
+    const repos = input.session ? [] : chatRepos("chat_send", input.repos ?? []);
     const id = input.session ?? newChat(state.chats, text, ai, input.permissions, origin).id;
     const chat = state.chats.get(id);
     if (!chat) fail("chat_send", `Conversation « ${id} » introuvable.`);
+    if (!input.session && repos.length) openChatRepos(id, repos);
     if (chat.session.state === "running" || chat.session.state === "waiting-approval")
       fail("chat_send", "Un tour est déjà en cours dans cette conversation.");
     // Comme le back : pièces jointes copiées dans `pieces-jointes/`, listées après le texte.
@@ -635,6 +665,11 @@ async function mockCreateRepo(
     chat.session = { ...chat.session, permissions };
     if (permissions === "full") allowPendingApprovals(session);
     return chat.session;
+  },
+  chat_set_repos: ({ session, repos }) => {
+    if (!state.chats.has(session))
+      fail("chat_set_repos", `Conversation « ${session} » introuvable.`);
+    return openChatRepos(session, chatRepos("chat_set_repos", repos));
   },
   chat_session_delete: ({ id }) => {
     if (!state.chats.delete(id)) fail("chat_session_delete", `Conversation « ${id} » introuvable.`);
@@ -838,6 +873,7 @@ async function mockCreateRepo(
     );
   },
   project_owners: () => data.repoOwners,
+  repos_create: async ({ input }) => mockCreateRepo("repos_create", input),
   project_create: async ({ input }) => {
     await mockCreateRepo("project_create", input);
     state.project = data.projectFor(`${input.owner}/${input.name.trim()}`);
@@ -851,7 +887,6 @@ async function mockCreateRepo(
 
   versions_list: () => data.versions,
   version_current: () => data.currentVersion,
-  repos_create: async ({ input }) => mockCreateRepo("repos_create", input),
   version_detail: ({ title }) => {
     const report = versionReport(title ?? state.project?.currentVersion ?? null);
     if (!report)

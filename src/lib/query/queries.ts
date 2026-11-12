@@ -441,6 +441,38 @@ export function useRenameChat() {
 }
 
 /**
+ * Dépôts d'une conversation (sélecteur du composeur). Affichés tout de suite ; l'IA les reçoit
+ * (ou les perd) au tour suivant.
+ */
+export function useSetChatRepos() {
+  const qc = useQueryClient();
+  const patch = (session: string, repos: string[]) => {
+    qc.setQueryData<ChatSessionDetail>(keys.chatSession(session), (prev) =>
+      prev ? { ...prev, session: { ...prev.session, repos } } : prev,
+    );
+    qc.setQueryData<ChatSessionRow[]>(keys.chatSessions(), (prev) =>
+      prev?.map((row) => (row.id === session ? { ...row, repos } : row)),
+    );
+  };
+  return useMutation({
+    mutationFn: ({ session, repos }: { session: string; repos: string[] }) =>
+      call("chat_set_repos", { session, repos }),
+    onMutate: ({ session, repos }) => {
+      const before = qc.getQueryData<ChatSessionDetail>(keys.chatSession(session))?.session;
+      patch(session, repos);
+      return { before };
+    },
+    onError: (_, { session }, context) => {
+      if (context?.before) patch(session, context.before.repos);
+    },
+    onSettled: (_, __, { session }) => {
+      void qc.invalidateQueries({ queryKey: keys.chatSession(session) });
+      void qc.invalidateQueries({ queryKey: keys.chatSessions() });
+    },
+  });
+}
+
+/**
  * Mode d'une conversation (Demander, Édition auto, Accès complet). Affiché tout de suite ; la
  * CLI le reçoit au tour suivant.
  */

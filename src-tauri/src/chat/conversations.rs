@@ -277,6 +277,7 @@ mod tests {
             updated_at: "2026-10-20T08:05:00Z".into(),
             group: Some(ChatGroup { id: "gestion-projet:sprint:o/n:3".into(), label: "Sprint 3".into() }),
             hidden: true,
+            repos: Vec::new(),
             context: Some(json!({ "type": "issue", "issue": 42 })),
         };
         let info = ConversationInfo::of("gestion-projet", &session, 2);

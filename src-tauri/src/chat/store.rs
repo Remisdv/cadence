@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     group_id TEXT,
     group_label TEXT,
     hidden INTEGER NOT NULL DEFAULT 0,
-    context TEXT
+    context TEXT,
+    repos TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -136,6 +137,9 @@ pub struct ChatSessionRow {
     pub group: Option<ChatGroup>,
     /// Absente du chat global (conversation de groupe) ; elle s'ouvre quand même dans le chat.
     pub hidden: bool,
+    /// Dépôts suivis (`owner/name`) choisis dans le composeur : chacun reçoit un worktree propre
+    /// à la conversation, ouvert à l'IA dès le tour suivant.
+    pub repos: Vec<String>,
     /// Contexte de l'action qui l'a ouverte (lu par son plugin, pas envoyé au chat).
     #[serde(skip)]
     #[ts(skip)]
@@ -169,6 +173,11 @@ fn kebab<T: Serialize>(value: &T) -> String {
 fn parse<T: for<'de> Deserialize<'de>>(text: &str) -> AppResult<T> {
     serde_json::from_value(serde_json::Value::String(text.to_string()))
         .map_err(|_| AppError::Internal(format!("valeur inattendue dans l'historique du chat : {text}")))
+}
+
+/// Colonne `repos` : liste JSON, `NULL` quand la conversation n'a aucun dépôt.
+fn repos_column(repos: &[String]) -> Option<String> {
+    (!repos.is_empty()).then(|| serde_json::to_string(repos).unwrap_or_default())
 }
 
 pub struct ChatStore {
@@ -206,6 +215,7 @@ impl ChatStore {
             ("group_label", "TEXT"),
             ("hidden", "INTEGER NOT NULL DEFAULT 0"),
             ("context", "TEXT"),
+            ("repos", "TEXT"),
         ] {
             let present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?")
                 .bind(column)
@@ -223,8 +233,8 @@ impl ChatStore {
     pub async fn create(&self, session: &ChatSessionRow) -> AppResult<()> {
         sqlx::query(
             "INSERT INTO sessions (id, title, ai, model, native_id, origin, mode, permissions, state, created_at, updated_at,
-                                   group_id, group_label, hidden, context)
-             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   group_id, group_label, hidden, context, repos)
+             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&session.id)
         .bind(&session.title)
@@ -240,6 +250,7 @@ impl ChatStore {
         .bind(session.group.as_ref().map(|g| g.label.as_str()))
         .bind(session.hidden)
         .bind(session.context.as_ref().map(Value::to_string))
+        .bind(repos_column(&session.repos))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -265,6 +276,10 @@ impl ChatStore {
                 None => None,
             },
             hidden: row.try_get("hidden")?,
+            repos: row
+                .try_get::<Option<String>, _>("repos")?
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .unwrap_or_default(),
             // Un contexte abîmé est ignoré, pas bloquant.
             context: row.try_get::<Option<String>, _>("context")?.and_then(|text| serde_json::from_str(&text).ok()),
         })
@@ -349,6 +364,13 @@ impl ChatStore {
         self.get(id).await
     }
 
+    /// Dépôts de la conversation ; ouverts à l'IA au tour suivant (voir `ChatService`).
+    pub async fn set_repos(&self, id: &str, repos: &[String]) -> AppResult<ChatSessionRow> {
+        self.get(id).await?;
+        sqlx::query("UPDATE sessions SET repos = ? WHERE id = ?").bind(repos_column(repos)).bind(id).execute(&self.pool).await?;
+        self.get(id).await
+    }
+
     pub async fn delete(&self, id: &str) -> AppResult<()> {
         sqlx::query("DELETE FROM events WHERE session_id = ?").bind(id).execute(&self.pool).await?;
         sqlx::query("DELETE FROM sessions WHERE id = ?").bind(id).execute(&self.pool).await?;
@@ -430,6 +452,7 @@ mod tests {
             updated_at: now,
             group: None,
             hidden: false,
+            repos: Vec::new(),
             context: None,
         }
     }
@@ -558,8 +581,10 @@ mod tests {
         let old = store.get("a").await.unwrap();
         assert_eq!(old.permissions, Permissions::Ask, "« Demander » par défaut");
         assert_eq!((old.group, old.hidden, old.context), (None, false, None), "colonnes des groupes ajoutées, visible");
+        assert!(old.repos.is_empty(), "colonne des dépôts ajoutée, vide");
         assert_eq!(store.list(SessionFilter::default()).await.unwrap().len(), 1, "reste dans le chat global");
         store.set_permissions("a", Permissions::Full).await.unwrap();
+        store.set_repos("a", &["o/poc".to_string(), "o/prod".to_string()]).await.unwrap();
         let mut grouped = session("b");
         grouped.group = Some(ChatGroup { id: "gp:sprint:1".into(), label: "Sprint 1".into() });
         grouped.hidden = true;
@@ -567,6 +592,8 @@ mod tests {
         drop(store);
         let store = ChatStore::open(&path).await.unwrap();
         assert_eq!(store.get("a").await.unwrap().permissions, Permissions::Full, "mémorisé");
+        assert_eq!(store.get("a").await.unwrap().repos, ["o/poc", "o/prod"], "dépôts mémorisés");
+        assert!(store.set_repos("a", &[]).await.unwrap().repos.is_empty(), "plus aucun dépôt");
         assert_eq!(store.get("b").await.unwrap().group.unwrap().label, "Sprint 1", "migration rejouée sans perte");
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
